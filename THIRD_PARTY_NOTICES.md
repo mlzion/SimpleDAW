@@ -4,7 +4,7 @@ SimpleDAW's original code is AGPL-3.0-only. The following notices record the pin
 
 - JUCE 8.0.6 at `19edd538429c93d277bf95b55aaa7e3eb545f951` is used under [AGPLv3](LICENSE). JUCE module files carry their respective upstream copyright notices.
 - Tracktion Engine v3.2.0 at `0a5f4e6a5f53d09c89b414a44386a12df7fa1ec6` is used under [GPLv3](LICENSES/GPL-3.0-only.txt). Copyright Tracktion Software Corporation and contributors.
-- The pinned Steinberg VST3 SDK uses [GPLv3](LICENSES/GPL-3.0-only.txt) for files covered by its dual-licence grant. Copyright (c) 2024 Steinberg Media Technologies GmbH. Individual SDK files can carry other embedded notices.
+- The pinned Steinberg VST3 SDK uses [GPLv3](LICENSES/GPL-3.0-only.txt) for files covered by its dual-licence grant. Copyright (c) 2024 Steinberg Media Technologies GmbH. The pinned SDK also supplies BSD-style licence texts in base and public.sdk, reproduced below. Individual SDK files can carry other embedded notices.
 - SoundTouch is enabled. Copyright Olli Parviainen. Its pinned headers grant [LGPL 2.1 or later](LICENSES/LGPL-2.1-or-later.txt). See the [pinned header](https://github.com/Tracktion/tracktion_engine/blob/0a5f4e6a5f53d09c89b414a44386a12df7fa1ec6/modules/tracktion_engine/3rd_party/soundtouch/include/SoundTouch.h).
 - JUCE's independent JPEG Group library uses the IJG licence. This software is based in part on the work of the Independent JPEG Group.
 - Tracktion's vendor inventory lists rpmalloc (public domain), expected (CC0), NanoRange and crill (BSL-1.0), doctest, magic_enum, farbot and MPMCQueue (MIT), ConcurrentQueue (BSD/BSL), libsamplerate (BSD-2-Clause), and CHOC (ISC). See the [pinned inventory](https://github.com/Tracktion/tracktion_engine/blob/0a5f4e6a5f53d09c89b414a44386a12df7fa1ec6/README.md#license) and the source file notices. The notice collection includes upstream texts for some components present in the source tree that may be disabled in this build.
@@ -1320,3 +1320,217 @@ SOFTWARE.
 - [magic_enum.hpp source notice](https://github.com/Tracktion/tracktion_engine/blob/0a5f4e6a5f53d09c89b414a44386a12df7fa1ec6/modules/3rd_party/magic_enum/magic_enum.hpp)
 - [nanorange.hpp source notice](https://github.com/Tracktion/tracktion_engine/blob/0a5f4e6a5f53d09c89b414a44386a12df7fa1ec6/modules/3rd_party/nanorange/nanorange.hpp)
 - [doctest.h source notice](https://github.com/Tracktion/tracktion_engine/blob/0a5f4e6a5f53d09c89b414a44386a12df7fa1ec6/modules/3rd_party/doctest/doctest.h)
+
+## Additional bundled notices
+
+### Steinberg VST3 SDK base and public.sdk
+
+[Upstream notice](https://github.com/juce-framework/JUCE/blob/19edd538429c93d277bf95b55aaa7e3eb545f951/modules/juce_audio_processors/format_types/VST3_SDK/base/LICENSE.txt)
+
+````text
+//-----------------------------------------------------------------------------
+// LICENSE
+// (c) 2024, Steinberg Media Technologies GmbH, All Rights Reserved
+//-----------------------------------------------------------------------------
+// Redistribution and use in source and binary forms, with or without modification,
+// are permitted provided that the following conditions are met:
+// 
+//   * Redistributions of source code must retain the above copyright notice, 
+//     this list of conditions and the following disclaimer.
+//   * Redistributions in binary form must reproduce the above copyright notice,
+//     this list of conditions and the following disclaimer in the documentation 
+//     and/or other materials provided with the distribution.
+//   * Neither the name of the Steinberg Media Technologies nor the names of its
+//     contributors may be used to endorse or promote products derived from this 
+//     software without specific prior written permission.
+// 
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+// ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED 
+// WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. 
+// IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, 
+// INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, 
+// BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
+// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF 
+// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE 
+// OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE  OF THIS SOFTWARE, EVEN IF ADVISED
+// OF THE POSSIBILITY OF SUCH DAMAGE.
+//-----------------------------------------------------------------------------
+````
+
+### libsamplerate
+
+[Upstream notice](https://github.com/libsndfile/libsamplerate/blob/0.1.9/COPYING)
+
+````text
+Copyright (c) 2012-2016, Erik de Castro Lopo <erikd@mega-nerd.com>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+````
+
+### doctest
+
+[Upstream notice](https://github.com/doctest/doctest/blob/v2.4.11/LICENSE.txt)
+
+````text
+The MIT License (MIT)
+
+Copyright (c) 2016-2023 Viktor Kirilov
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+````
+
+### concurrentqueue.h
+
+[Upstream notice](https://github.com/Tracktion/tracktion_engine/blob/0a5f4e6a5f53d09c89b414a44386a12df7fa1ec6/modules/tracktion_graph/3rd_party/concurrentqueue.h)
+
+````text
+
+// Simplified BSD license:
+// Copyright (c) 2013-2020, Cameron Desrochers.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without modification,
+// are permitted provided that the following conditions are met:
+//
+// - Redistributions of source code must retain the above copyright notice, this list of
+// conditions and the following disclaimer.
+// - Redistributions in binary form must reproduce the above copyright notice, this list of
+// conditions and the following disclaimer in the documentation and/or other materials
+// provided with the distribution.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+// THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
+// OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+// HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
+// TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+// EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+````
+
+### MPMCQueue.h
+
+[Upstream notice](https://github.com/Tracktion/tracktion_engine/blob/0a5f4e6a5f53d09c89b414a44386a12df7fa1ec6/modules/3rd_party/rigtorp/MPMCQueue.h)
+
+````text
+/*
+Copyright (c) 2020 Erik Rigtorp <erik@rigtorp.se>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+ */
+````
+
+### magic_enum.hpp
+
+[Upstream notice](https://github.com/Tracktion/tracktion_engine/blob/0a5f4e6a5f53d09c89b414a44386a12df7fa1ec6/modules/3rd_party/magic_enum/magic_enum.hpp)
+
+````text
+// Licensed under the MIT License <http://opensource.org/licenses/MIT>.
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2019 - 2023 Daniil Goncharov <neargye@gmail.com>.
+//
+// Permission is hereby  granted, free of charge, to any  person obtaining a copy
+// of this software and associated  documentation files (the "Software"), to deal
+// in the Software  without restriction, including without  limitation the rights
+// to  use, copy,  modify, merge,  publish, distribute,  sublicense, and/or  sell
+// copies  of  the Software,  and  to  permit persons  to  whom  the Software  is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE  IS PROVIDED "AS  IS", WITHOUT WARRANTY  OF ANY KIND,  EXPRESS OR
+// IMPLIED,  INCLUDING BUT  NOT  LIMITED TO  THE  WARRANTIES OF  MERCHANTABILITY,
+// FITNESS FOR  A PARTICULAR PURPOSE AND  NONINFRINGEMENT. IN NO EVENT  SHALL THE
+// AUTHORS  OR COPYRIGHT  HOLDERS  BE  LIABLE FOR  ANY  CLAIM,  DAMAGES OR  OTHER
+// LIABILITY, WHETHER IN AN ACTION OF  CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE  OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+````
+
+### nanorange.hpp
+
+[Upstream notice](https://github.com/Tracktion/tracktion_engine/blob/0a5f4e6a5f53d09c89b414a44386a12df7fa1ec6/modules/3rd_party/nanorange/nanorange.hpp)
+
+````text
+// nanorange.hpp
+//
+// Copyright (c) 2018 Tristan Brindle (tcbrindle at gmail dot com)
+// Distributed under the Boost Software License, Version 1.0. (See accompanying
+// file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
+````
+
+### expected.hpp
+
+[Upstream notice](https://github.com/Tracktion/tracktion_engine/blob/0a5f4e6a5f53d09c89b414a44386a12df7fa1ec6/modules/3rd_party/expected/expected.hpp)
+
+````text
+///
+// expected - An implementation of std::expected with extensions
+// Written in 2017 by Sy Brand (tartanllama@gmail.com, @TartanLlama)
+//
+// Documentation available at http://tl.tartanllama.xyz/
+//
+// To the extent possible under law, the author(s) have dedicated all
+// copyright and related and neighboring rights to this software to the
+// public domain worldwide. This software is distributed without any warranty.
+//
+// You should have received a copy of the CC0 Public Domain Dedication
+// along with this software. If not, see
+// <http://creativecommons.org/publicdomain/zero/1.0/>.
+````
