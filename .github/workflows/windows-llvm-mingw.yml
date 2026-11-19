@@ -81,6 +81,7 @@ jobs:
           } elseif ($output -match 'MinGW is not supported') {
             'supported=false' >> $env:GITHUB_OUTPUT
             'LLVM/MinGW qualification blocked by JUCE: MinGW is not supported.' >> $env:GITHUB_STEP_SUMMARY
+            exit 0
           } else {
             throw "LLVM/MinGW configure failed with exit code $result before the expected JUCE diagnostic."
           }

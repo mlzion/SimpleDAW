@@ -6,6 +6,12 @@ The MSVC workflow remains the supported Windows build. A separate Windows workfl
 
 Pinned JUCE 8.0.6 rejects Windows compilers defining `__MINGW32__` with the error `MinGW is not supported. Please use an alternative compiler.` Clang targeting MinGW uses this macro. JUCE removed MinGW support in version 8. The qualification leaves the pinned sources and their support checks in place. Clang in MSVC ABI mode, such as clang-cl, is a different build configuration and by itself does not replace the Microsoft runtime. [Pinned JUCE guard](https://github.com/juce-framework/JUCE/blob/19edd538429c93d277bf95b55aaa7e3eb545f951/modules/juce_core/system/juce_TargetPlatform.h#L112-L114) · [JUCE support discussion](https://forum.juce.com/t/cmake-windows/64753/2)
 
+## Windows results
+
+The Windows x64 probe built with `-static` and ran with PATH restricted to System32. Its PE import table listed `KERNEL32.dll` and nine Windows UCRT API-set DLLs. It imported no app-local LLVM, MinGW or Visual C++ redistributable DLLs. The linked probe is a toolchain check, so its import table does not measure SimpleDAW's imports.
+
+The matching archive was generated and extracted successfully. CMake reached JUCE's nested `juceaide` build using Clang in MinGW mode and hit the platform guard. The same compilation also reported pointer-width errors and missing Windows graphics and accessibility declarations. SimpleDAW and Tracktion were never linked, so there is no alternative application binary or application startup, smoke test or import result. [Windows diagnostic run](https://github.com/mlzion/SimpleDAW/actions/runs/44471557555)
+
 ## Runtime licences
 
 - LLVM's libc++, libc++abi, libunwind and compiler-rt use Apache-2.0 with LLVM exceptions. LLVM's policy describes the exception for code embedded in compiler output. Preserve the pinned runtime licence and notices when packaging runtime materials. [LLVM policy](https://llvm.org/docs/DeveloperPolicy.html#llvm-license) · [LLVM 21.1.6 runtime licence](https://github.com/llvm/llvm-project/blob/llvmorg-21.1.6/libcxx/LICENSE.TXT)
