@@ -26,3 +26,5 @@ The pinned SoundTouch files grant LGPL 2.1 or later. The intended distribution p
 - CI prepares a matching source archive and builds the EXE from that archive. Publish the matching source and notices beside any future EXE download with equivalent access at no extra charge, and retain access for the licence-required period. Keep the binary ZIP single-file. [Corresponding source instructions](corresponding-source.md) · [AGPLv3 §6](https://www.gnu.org/licenses/agpl-3.0.en.html#section6)
 - CI excludes ASIO. Review the exact SDK and notices separately before publishing a build with ASIO.
 - Artifact uploads are disabled pending the Microsoft runtime decision and confirmation of the release materials.
+
+The [LLVM/MinGW qualification](llvm-mingw.md) documents an alternative runtime and the pinned JUCE compatibility blocker. This investigation does not clear the MSVC build for redistribution.

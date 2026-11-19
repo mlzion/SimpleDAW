@@ -57,6 +57,11 @@ jobs:
       - name: Attempt LLVM MinGW configure from the archive
         id: configure
         run: |
+          # juceaide starts a nested CMake configure without the parent compiler cache.
+          $env:CC = (Get-Command x86_64-w64-mingw32-clang.exe).Source
+          $env:CXX = (Get-Command x86_64-w64-mingw32-clang++.exe).Source
+          $env:RC = (Get-Command x86_64-w64-mingw32-windres.exe).Source
+          $PSNativeCommandUseErrorActionPreference = $false
           $compilerArgs = @(
             '-DCMAKE_C_COMPILER=x86_64-w64-mingw32-clang.exe',
             '-DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-clang++.exe',
