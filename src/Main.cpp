@@ -296,6 +296,8 @@ private:
         if (paused)
             editCursor = edit->getTransport().getPosition();
 
+        // Reopening an edit can restore arming before the first playback context exists.
+        edit->getTransport().ensureContextAllocated();
         for (auto* instance : edit->getAllInputDevices())
             for (auto* track : te::getAudioTracks(*edit))
                 if (instance->isRecordingEnabled(track->itemID))
@@ -429,8 +431,12 @@ public:
         window->setUsingNativeTitleBar(true);
         window->setContentOwned(new MainGui(*engine), true);
         window->setResizable(true, false);
-        window->setResizeLimits(1080, 640, 7680, 4320);
-        window->centreWithSize(window->getWidth(), window->getHeight());
+        window->setResizeLimits(1060, 580, 7680, 4320);
+        auto bounds = window->getBounds();
+        if (const auto* display = ju::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+            bounds = bounds.withSize(ju::jmax(1060, ju::jmin(bounds.getWidth(), display->userArea.getWidth() - 16)),
+                                     ju::jmax(580, ju::jmin(bounds.getHeight(), display->userArea.getHeight() - 32)));
+        window->centreWithSize(bounds.getWidth(), bounds.getHeight());
         window->setVisible(true);
     }
 

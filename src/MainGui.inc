@@ -521,7 +521,8 @@ private:
         selection = trackCount() == 0 ? -1 : 0;
         selectedItem = {};
         editCursor = edit->getTransport().getPosition();
-        timeSelection.reset();
+        const auto savedRange = edit->getTransport().getLoopRange();
+        timeSelection = savedRange.getLength().inSeconds() > 0.001 ? std::optional(savedRange) : std::nullopt;
         paused = false;
         firstRow = 0;
         viewStart = 0.0;
