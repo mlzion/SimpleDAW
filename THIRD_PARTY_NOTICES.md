@@ -9,6 +9,10 @@ SimpleDAW's original code is AGPL-3.0-only. The following notices record the pin
 - JUCE's independent JPEG Group library uses the IJG licence. This software is based in part on the work of the Independent JPEG Group.
 - Tracktion's vendor inventory lists rpmalloc (public domain), expected (CC0), NanoRange and crill (BSL-1.0), doctest, magic_enum, farbot and MPMCQueue (MIT), ConcurrentQueue (BSD/BSL), libsamplerate (BSD-2-Clause), and CHOC (ISC). See the [pinned inventory](https://github.com/Tracktion/tracktion_engine/blob/0a5f4e6a5f53d09c89b414a44386a12df7fa1ec6/README.md#license) and the source file notices. The notice collection includes upstream texts for some components present in the source tree that may be disabled in this build.
 
+## Standard Windows build coverage
+
+The Windows build enables VST3, JUCE's bundled FLAC and Ogg Vorbis codecs, JUCE graphics (including HarfBuzz and SheenBidi), and Tracktion's bundled SoundTouch. Tracktion also embeds support code including libsamplerate, ConcurrentQueue, LightweightSemaphore, rpmalloc and the header libraries noted below. ASIO, LV2 hosting, JUCE's web browser, Airwindows, Cmajor, FFmpeg, Ableton Link, and the optional proprietary timestretch backends are outside this build. The matching archive retains upstream source files and their original notices, including components outside the Windows build.
+
 ## Upstream licence files and notices
 
 ### juce-framework/JUCE — LICENSE.md
@@ -1534,3 +1538,70 @@ SOFTWARE.
 // along with this software. If not, see
 // <http://creativecommons.org/publicdomain/zero/1.0/>.
 ````
+
+## Additional runtime dependencies and data
+
+### Tracktion LightweightSemaphore (zlib)
+
+[Upstream notice](https://github.com/Tracktion/tracktion_engine/blob/0a5f4e6a5f53d09c89b414a44386a12df7fa1ec6/modules/tracktion_graph/3rd_party/lightweightsemaphore.h)
+
+````text
+// LICENSE:
+// Copyright (c) 2015 Jeff Preshing
+//
+// This software is provided 'as-is', without any express or implied
+// warranty. In no event will the authors be held liable for any damages
+// arising from the use of this software.
+//
+// Permission is granted to anyone to use this software for any purpose,
+// including commercial applications, and to alter it and redistribute it
+// freely, subject to the following restrictions:
+//
+// 1. The origin of this software must not be misrepresented; you must not
+//	claim that you wrote the original software. If you use this software
+//	in a product, an acknowledgement in the product documentation would be
+//	appreciated but is not required.
+// 2. Altered source versions must be plainly marked as such, and must not be
+//	misrepresented as being the original software.
+// 3. This notice may not be removed or altered from any source distribution.
+````
+
+### HarfBuzz OpenType Unicode ranges (Old MIT)
+
+[Upstream notice](https://github.com/juce-framework/JUCE/blob/19edd538429c93d277bf95b55aaa7e3eb545f951/modules/juce_graphics/fonts/harfbuzz/hb-ot-os2-unicode-ranges.hh)
+
+````text
+/*
+ * Copyright © 2018  Google, Inc.
+ *
+ *  This is part of HarfBuzz, a text shaping library.
+ *
+ * Permission is hereby granted, without written agreement and without
+ * license or royalty fees, to use, copy, modify, and distribute this
+ * software and its documentation for any purpose, provided that the
+ * above copyright notice and the following two paragraphs appear in
+ * all copies of this software.
+ *
+ * IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE TO ANY PARTY FOR
+ * DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES
+ * ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS DOCUMENTATION, EVEN
+ * IF THE COPYRIGHT HOLDER HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH
+ * DAMAGE.
+ *
+ * THE COPYRIGHT HOLDER SPECIFICALLY DISCLAIMS ANY WARRANTIES, INCLUDING,
+ * BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS
+ * ON AN "AS IS" BASIS, AND THE COPYRIGHT HOLDER HAS NO OBLIGATION TO
+ * PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+ *
+ * Google Author(s): Garret Rieger
+ */
+````
+
+### Unicode data
+
+HarfBuzz includes generated Unicode 16.0.0 and Emoji 16.0 data. Copyright © 2024 Unicode, Inc. Unicode and the Unicode Logo are registered trademarks of Unicode, Inc. Data use is covered by the [Unicode License v3](LICENSES/Unicode-3.0.txt). [Generated UCD table](https://github.com/juce-framework/JUCE/blob/19edd538429c93d277bf95b55aaa7e3eb545f951/modules/juce_graphics/fonts/harfbuzz/hb-ucd-table.hh) · [Generated emoji table](https://github.com/juce-framework/JUCE/blob/19edd538429c93d277bf95b55aaa7e3eb545f951/modules/juce_graphics/fonts/harfbuzz/hb-unicode-emoji-table.hh) · [Unicode terms](https://www.unicode.org/terms_of_use.html)
+
+### SheenBidi
+
+Copyright (C) 2014–2018 Muhammad Tayyab Akram. The Apache 2.0 text is reproduced above. [Pinned source notice](https://github.com/juce-framework/JUCE/blob/19edd538429c93d277bf95b55aaa7e3eb545f951/modules/juce_graphics/unicode/sheenbidi/Headers/SheenBidi.h)
