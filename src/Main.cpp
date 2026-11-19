@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include <JuceHeader.h>
+#include <numeric>
 
 namespace te = tracktion;
 namespace ju = juce;
@@ -10,7 +11,7 @@ namespace
 {
 constexpr int maxTracks = 24;
 
-class PrototypeUIBehaviour final : public te::UIBehaviour
+class SimpleDawUIBehaviour final : public te::UIBehaviour
 {
 public:
     void runTaskWithProgressBar(te::ThreadPoolJobWithProgress& job) override
@@ -130,84 +131,13 @@ bool smokeTest(te::Engine& engine)
         && samples.getMagnitude(0, samples.getNumSamples()) > 0.01f;
 }
 
-class Prototype final : public ju::Component, private ju::Timer
+class MainGui final : public ju::Component, private ju::Timer, private ju::MenuBarModel,
+                      private ju::ApplicationCommandTarget
 {
-public:
-    explicit Prototype(te::Engine& e) : engine(e)
-    {
-        addAndMakeVisible(tracks);
-        addAndMakeVisible(status);
-        addAndMakeVisible(summary);
-
-        addButton("New project", [this] { chooseProject(true); });
-        addButton("Open project", [this] { chooseProject(false); });
-        addButton("Save", [this] { save(); });
-        addButton("Devices", [this] { configureDevices(); });
-        addButton("Play from start", [this] {
-            if (ready())
-                edit->getTransport().playFromStart(false);
-        });
-        addButton("Stop", [this] { stop(); });
-        addButton("Record", [this] { record(); });
-        addButton("Add track", [this] {
-            if (!ready())
-                return;
-            const int count = te::getAudioTracks(*edit).size();
-            if (count >= maxTracks)
-                return report("Track limit reached");
-            edit->ensureNumberOfAudioTracks(count + 1);
-            refreshTracks(count + 1);
-        });
-        addButton("Import WAV", [this] { importWave(); });
-        addButton("Arm audio input", [this] { armInput(false); });
-        addButton("Arm MIDI input", [this] { armInput(true); });
-        addButton("Add MIDI synth", [this] {
-            if (auto* track = selectedTrack())
-                report(insertBuiltIn<te::FourOscPlugin>(*track, true) ? "Synth inserted" : "Could not insert synth");
-        });
-        addButton("Add reverb", [this] {
-            if (auto* track = selectedTrack())
-                report(insertBuiltIn<te::ReverbPlugin>(*track) ? "Reverb inserted" : "Could not insert reverb");
-        });
-        addButton("Load VST3", [this] { loadVst3(); });
-        addButton("Export stereo WAV", [this] { exportProject(); });
-
-        report("Create or open a project to begin");
-        startTimerHz(5);
-        setSize(830, 285);
-    }
-
-    ~Prototype() override
-    {
-        stopTimer();
-        stop();
-    }
-
-    void resized() override
-    {
-        auto area = getLocalBounds().reduced(12);
-        for (int row = 0; row < 3; ++row)
-        {
-            auto line = area.removeFromTop(46);
-            const int width = line.getWidth() / 5;
-            for (int col = 0; col < 5; ++col)
-                buttons[row * 5 + col]->setBounds(line.removeFromLeft(width).reduced(3));
-        }
-
-        tracks.setBounds(area.removeFromTop(42).reduced(3));
-        summary.setBounds(area.removeFromTop(30));
-        status.setBounds(area.removeFromTop(42));
-    }
+    #include "MainGui.inc"
 
 private:
     using FileAction = std::function<void(const ju::File&)>;
-
-    void addButton(const ju::String& name, std::function<void()> action)
-    {
-        auto* button = buttons.add(new ju::TextButton(name));
-        button->onClick = std::move(action);
-        addAndMakeVisible(button);
-    }
 
     void report(const ju::String& text)
     {
@@ -267,32 +197,16 @@ private:
                     if (!te::EditFileOperations(*next).save(false, true, false))
                         return report("Could not create project file");
                 }
-                edit = std::move(next);
-                edit->playInStopEnabled = true;
-                projectFile = file;
-                refreshTracks(1);
+                setProject(std::move(next), file);
                 report("Project ready");
             });
-    }
-
-    void refreshTracks(int selection)
-    {
-        tracks.clear(ju::dontSendNotification);
-        int index = 1;
-        for (auto* track : te::getAudioTracks(*edit))
-        {
-            tracks.addItem(ju::String(index) + "  " + track->getName(), index);
-            ++index;
-        }
-        tracks.setSelectedId(selection, ju::dontSendNotification);
     }
 
     te::AudioTrack* selectedTrack()
     {
         if (!ready())
             return nullptr;
-
-        auto* track = te::getAudioTracks(*edit)[tracks.getSelectedItemIndex()];
+        auto* track = trackAt(selection);
         if (!track)
             report("Select a track first");
         return track;
@@ -375,6 +289,13 @@ private:
         if (!ready())
             return;
 
+        if (edit->recordingPunchInOut && !timeSelection)
+            return report("Drag across the ruler to select the punch range");
+        if (edit->recordingPunchInOut)
+            edit->getTransport().setLoopRange(*timeSelection);
+        if (paused)
+            editCursor = edit->getTransport().getPosition();
+
         for (auto* instance : edit->getAllInputDevices())
             for (auto* track : te::getAudioTracks(*edit))
                 if (instance->isRecordingEnabled(track->itemID))
@@ -394,6 +315,8 @@ private:
 
         const bool recording = edit->getTransport().isRecording();
         edit->getTransport().stop(false, false);
+        edit->getTransport().setPosition(editCursor);
+        paused = false;
         if (recording)
             save();
     }
@@ -475,27 +398,6 @@ private:
             });
     }
 
-    void timerCallback() override
-    {
-        if (!edit)
-            return;
-
-        auto& transport = edit->getTransport();
-        auto text = projectFile.getFileName() + "  |  "
-            + (transport.isRecording() ? "Recording" : transport.isPlaying() ? "Playing" : "Stopped");
-
-        if (auto* track = te::getAudioTracks(*edit)[tracks.getSelectedItemIndex()])
-            text += "  |  Selected track clips: " + ju::String(track->getClips().size());
-        summary.setText(text, ju::dontSendNotification);
-    }
-
-    te::Engine& engine;
-    std::unique_ptr<te::Edit> edit;
-    ju::File projectFile;
-    ju::OwnedArray<ju::TextButton> buttons;
-    ju::ComboBox tracks;
-    ju::Label summary;
-    ju::Label status;
     std::unique_ptr<ju::FileChooser> chooser;
 };
 
@@ -503,29 +405,31 @@ class Application final : public ju::JUCEApplication
 {
 public:
     const ju::String getApplicationName() override { return "SimpleDAW"; }
-    const ju::String getApplicationVersion() override { return "0.1.0"; }
+    const ju::String getApplicationVersion() override { return "0.21.0"; }
 
     void initialise(const ju::String& command) override
     {
         if (te::PluginManager::startChildProcessPluginScan(command))
             return;
 
-        const bool testing = command == "--smoke-test";
+        const bool testing = command == "--smoke-test" || command == "--gui-test";
         std::unique_ptr<te::EngineBehaviour> engineBehaviour;
         if (testing)
             engineBehaviour = std::make_unique<SmokeTestEngineBehaviour>();
         engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW",
-            std::make_unique<PrototypeUIBehaviour>(), std::move(engineBehaviour));
+            std::make_unique<SimpleDawUIBehaviour>(), std::move(engineBehaviour));
         if (testing)
         {
-            setApplicationReturnValue(smokeTest(*engine) ? 0 : 1);
+            setApplicationReturnValue((command == "--gui-test" ? MainGui::test(*engine) : smokeTest(*engine)) ? 0 : 1);
             quit();
             return;
         }
 
         window = std::make_unique<Window>();
         window->setUsingNativeTitleBar(true);
-        window->setContentOwned(new Prototype(*engine), true);
+        window->setContentOwned(new MainGui(*engine), true);
+        window->setResizable(true, false);
+        window->setResizeLimits(1080, 640, 7680, 4320);
         window->centreWithSize(window->getWidth(), window->getHeight());
         window->setVisible(true);
     }
@@ -539,7 +443,7 @@ public:
 private:
     struct Window final : ju::DocumentWindow
     {
-        Window() : DocumentWindow("SimpleDAW Phase 1", ju::Colours::darkgrey, closeButton) {}
+        Window() : DocumentWindow("SimpleDAW v0.21", ju::Colours::black, allButtons) {}
         void closeButtonPressed() override { ju::JUCEApplication::getInstance()->systemRequestedQuit(); }
     };
 

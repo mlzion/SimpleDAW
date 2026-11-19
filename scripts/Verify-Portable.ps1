@@ -92,12 +92,12 @@ try {
         if ($process.HasExited) {
             throw "Normal startup exited before creating a window (exit code $($process.ExitCode))."
         }
-        if ($process.MainWindowTitle -eq 'SimpleDAW Phase 1') {
+        if ($process.MainWindowTitle -eq 'SimpleDAW v0.21') {
             break
         }
         Start-Sleep -Milliseconds 200
     } while ([DateTime]::UtcNow -lt $deadline)
-    if ($process.MainWindowTitle -ne 'SimpleDAW Phase 1') {
+    if ($process.MainWindowTitle -ne 'SimpleDAW v0.21') {
         throw 'The main SimpleDAW window did not appear.'
     }
     if (!$process.CloseMainWindow() -or !$process.WaitForExit(10000) -or $process.ExitCode -ne 0) {

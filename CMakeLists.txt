@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(SimpleDAW VERSION 0.1.0 LANGUAGES C CXX)
+project(SimpleDAW VERSION 0.21.0 LANGUAGES C CXX)
 
 include(FetchContent)
 # Use the JUCE revision recorded by Tracktion Engine v3.2.0.
@@ -30,6 +30,9 @@ target_compile_features(SimpleDAW PRIVATE cxx_std_20)
 target_compile_definitions(SimpleDAW PRIVATE
     JUCE_PLUGINHOST_VST3=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0
     JUCE_MODAL_LOOPS_PERMITTED=1 TRACKTION_ENABLE_TIMESTRETCH_SOUNDTOUCH=1)
+if(MSVC)
+    target_compile_options(SimpleDAW PRIVATE /utf-8)
+endif()
 target_link_libraries(SimpleDAW PRIVATE tracktion::tracktion_engine juce::juce_audio_utils)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(SimpleDAW PRIVATE atomic)
@@ -45,5 +48,6 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     add_test(NAME project_round_trip COMMAND SimpleDAW --smoke-test)
-    set_tests_properties(project_round_trip PROPERTIES TIMEOUT 60)
+    add_test(NAME main_gui COMMAND SimpleDAW --gui-test)
+    set_tests_properties(project_round_trip main_gui PROPERTIES TIMEOUT 60)
 endif()
