@@ -18,7 +18,7 @@ SimpleDAW is a digital audio workstation for musicians who want an approachable 
 ## Work in Progress
 
 - `feature/phase1-audio-engine` — [PR #1](https://github.com/mlzion/SimpleDAW/pull/1), open against `main`. The branch implements device selection, audio and MIDI recording, multitrack playback, selected-path VST3 hosting, built-in reverb, project save and reopen, and stereo WAV export. Release and development builds pass CI. Review and hands-on acceptance are outstanding.
-- `docs/project-memory` — documentation-only setup for shared repository context.
+- `docs/project-memory` — [PR #2](https://github.com/mlzion/SimpleDAW/pull/2), open for review. Establishes shared repository context and documentation maintenance rules.
 - Separate GUI work is outside this assignment. Its branch, PR, scope and status are awaiting confirmation from a repository reference.
 
 ## Important Design Decisions
@@ -50,3 +50,5 @@ SimpleDAW is a digital audio workstation for musicians who want an approachable 
 - **2026-11-19** — Initialized the repository on `main` and opened PR #1 for the Phase 1 prototype. [Initial commit](https://github.com/mlzion/SimpleDAW/commit/99155b1a46e873d8fe9439755adddaeefe008d08) · [PR #1](https://github.com/mlzion/SimpleDAW/pull/1)
 - **2026-11-19** — Added AGPLv3 licensing and corresponding-source verification, investigated MinGW, and passed the MSVC `/MD` and `/MT` comparison. [Licensing commit](https://github.com/mlzion/SimpleDAW/commit/005893df49e5fb2956f25a438234dc077975c41f) · [MSVC verification](https://github.com/mlzion/SimpleDAW/actions/runs/44475680816)
 - **2026-11-19** — Made `/MD` the Windows release default and published the first source-paired Windows test artifact from PR #1. [Publishing run](https://github.com/mlzion/SimpleDAW/actions/runs/44478494087)
+
+- **2026-11-19** — Opened the documentation-only project memory PR. [PR #2](https://github.com/mlzion/SimpleDAW/pull/2)
