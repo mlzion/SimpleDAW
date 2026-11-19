@@ -1,0 +1,56 @@
+name: Windows prototype
+
+on:
+  push:
+    branches: [feature/phase1-audio-engine]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Windows x64 (${{ matrix.runtime }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: MT
+            dynamic: 'OFF'
+          - runtime: MD
+            dynamic: 'ON'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned source dependencies
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DSIMPLEDAW_ASIO_SDK:PATH= -DSIMPLEDAW_MSVC_DYNAMIC_RUNTIME=${{ matrix.dynamic }}
+      - name: Create matching source archive
+        run: |
+          ./scripts/New-WindowsSourceArchive.ps1 -BinaryBuildDirectory build -OutputDirectory source-package |
+            Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+      - name: Extract matching source archive
+        run: |
+          New-Item -Path archive-source -ItemType Directory | Out-Null
+          tar.exe -xzf source-package/SimpleDAW-Windows-x64-source.tar.gz -C archive-source
+          if ($LASTEXITCODE -ne 0) { throw 'Could not extract the source archive.' }
+      - name: Configure from extracted source without dependency downloads
+        run: >
+          cmake -S archive-source/SimpleDAW -B archive-build -G "Visual Studio 17 2022" -A x64
+          -DSIMPLEDAW_ASIO_SDK:PATH= -DSIMPLEDAW_MSVC_DYNAMIC_RUNTIME=${{ matrix.dynamic }} -DFETCHCONTENT_FULLY_DISCONNECTED=ON
+          "-DFETCHCONTENT_SOURCE_DIR_JUCE=${{ github.workspace }}/archive-source/JUCE"
+          "-DFETCHCONTENT_SOURCE_DIR_TRACKTION=${{ github.workspace }}/archive-source/Tracktion"
+      - name: Build
+        run: cmake --build archive-build --config Release --parallel 2
+      - name: Smoke test
+        run: ctest --test-dir archive-build -C Release --output-on-failure
+      - name: Inspect imports and test startup
+        run: >
+          ./scripts/Verify-Portable.ps1 -Executable archive-build/SimpleDAW_artefacts/Release/SimpleDAW.exe
+          -MsvcRuntime ${{ matrix.runtime }}
+      - name: Record executable checksum
+        run: |
+          $hash = (Get-FileHash archive-build/SimpleDAW_artefacts/Release/SimpleDAW.exe).Hash
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "SimpleDAW.exe (${{ matrix.runtime }}) SHA256 $hash"
