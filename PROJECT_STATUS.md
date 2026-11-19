@@ -10,6 +10,8 @@ Both Audio Track and MIDI Track commands create Tracktion audio tracks, which su
 
 ## Verification
 
+Windows 2022 x64 Release at `2f45cdc` built successfully with /MD. CTest passed both tests and the executable passed PE import inspection and isolated startup. The workflow published the executable with matching source and notices. [Windows build and tests](https://github.com/mlzion/SimpleDAW/actions/runs/44616864521) · [Feature-branch artifact](https://github.com/mlzion/SimpleDAW/actions/runs/44616864521/artifacts/14576730794)
+
 The existing generated-audio CTest covers import, project reopen, reverb persistence and non-silent stereo export. The v0.21 GUI CTest covers component initialization, track creation and selection, transport seek and loop state, timeline zoom, MIDI item insertion, project reopen and panel settings. Windows CI runs both tests and also inspects PE imports and launches the packaged executable from an isolated directory. Consult the workflow result for the exact commit. [Windows workflow](https://github.com/mlzion/SimpleDAW/actions/workflows/windows.yml)
 
 Live Windows 11, hardware recording, count-in and punch behavior, playback with real devices, and installed VST3 compatibility await user verification. [Live test checksheet](docs/testing/v0.21-live-test.md)
