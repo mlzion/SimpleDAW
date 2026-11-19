@@ -162,7 +162,9 @@ public:
         first.push_back(&position);
         addAndMakeVisible(tempo);
         tempo.setJustification(ju::Justification::centred);
+        tempo.setTitle("Tempo");
         tempo.setTooltip("Tempo in BPM. Press Enter to apply.");
+        tempo.onFocusLost = [this] { updateControls(); };
         tempo.onReturnKey = [this] { applyTempo(); };
         first.push_back(&tempo);
         combo(signature, first, { "2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "9/8", "12/8" }, "Time signature");
@@ -335,6 +337,7 @@ private:
         control.setColour(ju::TextButton::textColourOffId, ju::Colours::white);
         control.setColour(ju::TextButton::textColourOnId, ju::Colours::white);
         control.onClick = std::move(action);
+        control.setMouseClickGrabsKeyboardFocus(false);
         addAndMakeVisible(control);
         row.push_back(&control);
         return control;
@@ -427,6 +430,11 @@ private:
             "Arm Audio Input", "Arm MIDI Input", "Add MIDI Synth", "Add Reverb", "Load VST3",
             "Play / Stop", "Record"
         };
+        if (id < newProject || id > startRecording)
+        {
+            info.setActive(false);
+            return;
+        }
         const auto name = names[id - newProject];
         info.setInfo(name, name, "SimpleDAW", 0);
         const auto stopped = edit && !edit->getTransport().isPlaying();
@@ -598,8 +606,12 @@ private:
 
     void applyTempo()
     {
-        const auto bpm = tempo.getText().retainCharacters("0123456789.").getDoubleValue();
-        if (ready() && bpm >= 20.0 && bpm <= 300.0)
+        auto value = tempo.getText().trim();
+        if (value.startsWithIgnoreCase("BPM "))
+            value = value.substring(4).trim();
+        const auto bpm = value.getDoubleValue();
+        if (ready() && value.containsOnly("0123456789.") && value.indexOfChar('.') == value.lastIndexOfChar('.')
+            && bpm >= 20.0 && bpm <= 300.0)
         {
             edit->getUndoManager().beginNewTransaction("Tempo");
             edit->tempoSequence.getTempoAt(editCursor).setBpm(bpm);
@@ -621,7 +633,7 @@ private:
         const auto barStart = barTime(sequence.toBarsAndBeats(time).bars);
         const auto beat = sequence.toBeats(time);
         const auto origin = sequence.toBeats(barStart);
-        const auto increment = 4.0 / (sequence.getTimeSigAt(time).denominator.get() * subdivisions);
+        const auto increment = sequence.getTimeSigAt(time).denominator.get() / (4.0 * subdivisions);
         const auto steps = std::round((beat - origin).inBeats() / increment);
         return sequence.toTime(origin + te::BeatDuration::fromBeats(steps * increment)).inSeconds();
     }
@@ -630,7 +642,8 @@ private:
     {
         if (!edit || edit->getTransport().isRecording())
             return;
-        editCursor = te::TimePosition::fromSeconds(quantise ? snapSeconds(seconds) : seconds);
+        const auto target = quantise ? snapSeconds(seconds) : seconds;
+        editCursor = te::TimePosition::fromSeconds(ju::jlimit(0.0, te::Edit::getMaximumEditEnd().inSeconds(), target));
         edit->getTransport().setPosition(editCursor);
         reveal(editCursor);
         updateControls();
@@ -701,7 +714,9 @@ private:
     double visibleSeconds() const { return ju::jmax(1, arrangement.getWidth() - headerWidth) / pixelsPerSecond; }
     double totalSeconds() const
     {
-        return ju::jmax(120.0, edit ? edit->getLength().inSeconds() + 60.0 : 120.0);
+        const auto contentEnd = edit ? edit->getLength().inSeconds() : 0.0;
+        const auto head = edit ? edit->getTransport().getPosition().inSeconds() : 0.0;
+        return ju::jmax(120.0, ju::jmax(contentEnd, editCursor.inSeconds(), head) + visibleSeconds());
     }
 
     void scrollRows(int rows)
@@ -724,7 +739,9 @@ private:
             return scrollTime(delta * 2.0);
         const auto start = te::TimePosition::fromSeconds(viewStart);
         const auto bar = edit->tempoSequence.toBarsAndBeats(start).bars;
-        const auto end = barTime(ju::jmax(0, bar + delta));
+        if (bar == 0 && delta < 0)
+            return setViewStart(0.0);
+        const auto end = barTime(bar + delta);
         scrollTime((end - barTime(bar)).inSeconds());
     }
 
@@ -787,7 +804,7 @@ private:
     {
         const auto selected = selection == row;
         auto bounds = ju::Rectangle<int>(2, y + 2, headerWidth - 5, rowHeight() - 4);
-        g.setColour(ju::Colour(0xff242424));
+        g.setColour(ju::Colour(0xff242424).interpolatedWith(colour, selected ? 0.25f : 0.12f));
         g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
         if (selected)
         {
@@ -921,11 +938,10 @@ private:
                 }
                 const auto signatureAtBar = edit->tempoSequence.getTimeSigAt(barStart).numerator.get();
                 const auto startBeat = edit->tempoSequence.toBeats(barStart);
-                const auto beatStep = 4.0 / edit->tempoSequence.getTimeSigAt(barStart).denominator.get();
                 if (signatureAtBar > 0 && (next - x) / signatureAtBar >= 9)
                     for (int beat = 1; beat < signatureAtBar; ++beat)
                     {
-                        const auto at = edit->tempoSequence.toTime(startBeat + te::BeatDuration::fromBeats(beat * beatStep));
+                        const auto at = edit->tempoSequence.toTime(startBeat + te::BeatDuration::fromBeats(beat));
                         g.setColour(ju::Colour(0xff282828));
                         g.drawVerticalLine(timeX(at), 8, static_cast<float>(area.getHeight()));
                     }
@@ -952,7 +968,13 @@ private:
         const ju::Graphics::ScopedSaveState state(g);
         g.reduceClipRegion(area.withTrimmedLeft(headerWidth));
         g.setColour(ju::Colours::white);
-        g.drawVerticalLine(timeX(editCursor), 0, static_cast<float>(area.getHeight()));
+        const auto cursorX = timeX(editCursor);
+        g.drawVerticalLine(cursorX, 0, static_cast<float>(area.getHeight()));
+        ju::Path cursorMarker;
+        cursorMarker.addTriangle(static_cast<float>(cursorX - 5), 0.0f,
+                                 static_cast<float>(cursorX + 5), 0.0f,
+                                 static_cast<float>(cursorX), 7.0f);
+        g.fillPath(cursorMarker);
         if (edit->getTransport().isPlaying() || paused)
         {
             g.setColour(edit->getTransport().isRecording() ? ju::Colours::red : ju::Colours::limegreen);
@@ -1057,6 +1079,13 @@ private:
             getCommandInfo(info.commandID, info);
             editButtons[i]->setEnabled((info.flags & ju::ApplicationCommandInfo::isDisabled) == 0);
         }
+
+        const bool canChangePlaybackSettings = edit && !edit->getTransport().isPlaying();
+        signature.setEnabled(canChangePlaybackSettings);
+        recordMode.setEnabled(canChangePlaybackSettings);
+        tempo.setEnabled(canChangePlaybackSettings);
+        countButton->setEnabled(canChangePlaybackSettings);
+        pauseButton->setEnabled(edit && !edit->getTransport().isRecording());
 
         if (edit)
         {
