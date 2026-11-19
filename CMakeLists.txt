@@ -17,7 +17,7 @@ set(SIMPLEDAW_ASIO_SDK "" CACHE PATH "Optional directory containing iasiodrv.h")
 
 juce_add_gui_app(SimpleDAW PRODUCT_NAME "SimpleDAW")
 if(MSVC)
-    option(SIMPLEDAW_MSVC_DYNAMIC_RUNTIME "Use the DLL-based MSVC runtime (/MD)" OFF)
+    option(SIMPLEDAW_MSVC_DYNAMIC_RUNTIME "Use the DLL-based MSVC runtime (/MD)" ON)
     if(SIMPLEDAW_MSVC_DYNAMIC_RUNTIME)
         set_property(TARGET SimpleDAW PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     else()

@@ -1,4 +1,4 @@
-name: Windows prototype
+name: Windows x64
 
 on:
   push:
@@ -17,10 +17,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runtime: MT
-            dynamic: 'OFF'
           - runtime: MD
             dynamic: 'ON'
+          - runtime: MT
+            dynamic: 'OFF'
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
@@ -54,3 +54,33 @@ jobs:
         run: |
           $hash = (Get-FileHash archive-build/SimpleDAW_artefacts/Release/SimpleDAW.exe).Hash
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "SimpleDAW.exe (${{ matrix.runtime }}) SHA256 $hash"
+      - name: Stage executable, corresponding source and notices
+        if: matrix.runtime == 'MD' && github.repository == 'mlzion/SimpleDAW' && github.event_name == 'push' && github.ref == 'refs/heads/feature/phase1-audio-engine'
+        run: |
+          New-Item -Path windows-download -ItemType Directory | Out-Null
+          $payload = @(
+            'archive-build/SimpleDAW_artefacts/Release/SimpleDAW.exe'
+            'source-package/SimpleDAW-Windows-x64-source.tar.gz'
+            'archive-source/SimpleDAW/LICENSE'
+            'archive-source/SimpleDAW/COPYRIGHT'
+            'archive-source/SimpleDAW/THIRD_PARTY_NOTICES.md'
+            'archive-source/BUILD.md'
+            'archive-source/SOURCE-REVISIONS.txt'
+            'archive-source/SimpleDAW/docs/windows-download.md'
+          )
+          foreach ($file in $payload) {
+            Copy-Item -LiteralPath $file -Destination windows-download -ErrorAction Stop
+          }
+      - name: Upload Windows x64 download
+        if: matrix.runtime == 'MD' && github.repository == 'mlzion/SimpleDAW' && github.event_name == 'push' && github.ref == 'refs/heads/feature/phase1-audio-engine'
+        id: download
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleDAW-Windows-x64
+          path: windows-download/
+          if-no-files-found: error
+          compression-level: 0
+      - name: Link the executable and corresponding source download
+        if: steps.download.outputs.artifact-url != ''
+        run: |
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '[Download SimpleDAW.exe, corresponding source and notices](${{ steps.download.outputs.artifact-url }})'

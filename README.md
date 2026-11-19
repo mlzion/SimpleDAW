@@ -4,11 +4,13 @@ SimpleDAW is a beginner-friendly recording workstation. Phase 1 is a small Windo
 
 SimpleDAW is free and open-source software. Its original code is released under the GNU Affero General Public License, version 3. See [LICENSE](LICENSE), [COPYRIGHT](COPYRIGHT), and the [third-party notices](THIRD_PARTY_NOTICES.md).
 
-## Run the portable build
+## Download and run on Windows x64
 
-The target is one Windows 11 x64 file, `SimpleDAW.exe`. Copy a locally built executable to any folder you can read and execute from, then double-click it. The app uses Windows system libraries and statically links the MSVC runtime, JUCE and Tracktion Engine. The executable folder can be read-only. Preferences live in the user's application-data folder, and projects and recorded media need a writable project location. Keep files referenced by an edit available at their original paths.
+1. Open a successful feature-branch run of the Windows workflow. Under **Artifacts**, download `SimpleDAW-Windows-x64`. GitHub may ask you to sign in. [Windows workflow runs](https://github.com/mlzion/SimpleDAW/actions/workflows/windows.yml?query=branch%3Afeature%2Fphase1-audio-engine)
+2. Install Microsoft's x64 Visual C++ v14 Redistributable if a compatible version is absent. [Official Microsoft x64 download](https://aka.ms/vc14/vc_redist.x64.exe)
+3. Extract `SimpleDAW.exe` to any folder you can read and execute from, then double-click it. SimpleDAW has no installer. Preferences live under your application-data folder. Projects and recorded media need a writable project location.
 
-The standard build uses Windows audio backends and can host separately installed x64 VST3 plugins. The optional ASIO build uses a separately installed vendor driver. Driver and plugin installers may have their own requirements. GitHub Actions builds and tests the standard executable but publication is disabled pending the [remaining redistribution checks](docs/licensing.md). See the [source retrieval instructions](docs/corresponding-source.md) for the exact inputs to a CI build.
+The download also contains the exact corresponding source archive, build instructions, revision list and notices. Keep the source archive if you want to rebuild this exact version. The distributed build uses `/MD`, the system runtime, and Windows audio backends. It can host separately installed x64 VST3 plugins. [Licence and distribution details](docs/licensing.md)
 
 ## Build on Windows 11
 
