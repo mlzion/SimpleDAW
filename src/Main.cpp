@@ -107,12 +107,19 @@ bool smokeTest(te::Engine& engine)
     if (reopened.size() != 2 || reopened[0]->getClips().size() != 1 || reopened[1]->getClips().size() != 1)
         return false;
 
+    bool reverbReopened = false;
+    for (auto* plugin : reopened[0]->pluginList.getPlugins())
+        reverbReopened |= plugin->getPluginType() == te::ReverbPlugin::xmlTypeName;
+    if (!reverbReopened)
+        return false;
+
     auto output = folder.getChildFile("mix.wav");
     if (!exportWave(*edit, output))
         return false;
 
     std::unique_ptr<ju::AudioFormatReader> reader(wave.createReaderFor(output.createInputStream().release(), true));
-    if (!reader || reader->numChannels != 2 || reader->lengthInSamples < 4410)
+    if (!reader || reader->numChannels != 2 || reader->sampleRate != 44100.0
+        || reader->bitsPerSample != 24 || reader->lengthInSamples < 4410)
         return false;
 
     ju::AudioBuffer<float> samples(2, 4410);

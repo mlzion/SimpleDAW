@@ -15,11 +15,10 @@ FetchContent_MakeAvailable(juce tracktion)
 
 set(SIMPLEDAW_ASIO_SDK "" CACHE PATH "Optional directory containing iasiodrv.h")
 
-if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif()
-
 juce_add_gui_app(SimpleDAW PRODUCT_NAME "SimpleDAW")
+if(MSVC)
+    set_property(TARGET SimpleDAW PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 juce_generate_juce_header(SimpleDAW)
 target_sources(SimpleDAW PRIVATE src/Main.cpp)
 target_compile_features(SimpleDAW PRIVATE cxx_std_20)

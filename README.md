@@ -2,6 +2,12 @@
 
 SimpleDAW is a beginner-friendly recording workstation. Phase 1 is a small Windows 11 feasibility prototype with a transport, track selector, and device controls.
 
+## Run the portable build
+
+The target is one Windows 11 x64 file, `SimpleDAW.exe`. Copy a locally built executable to any folder you can read and execute from, then double-click it. The app uses Windows system libraries and statically links the MSVC runtime, JUCE and Tracktion Engine. The executable folder can be read-only. Preferences live in the user's application-data folder, and projects and recorded media need a writable project location. Keep files referenced by an edit available at their original paths.
+
+The standard build uses Windows audio backends and can host separately installed x64 VST3 plugins. The optional ASIO build uses a separately installed vendor driver. Driver and plugin installers may have their own requirements. GitHub Actions builds and tests the standard executable but publication is disabled pending the [redistribution requirements](docs/licensing.md).
+
 ## Build on Windows 11
 
 Install Git, CMake 3.22 or newer, and Visual Studio 2022 or Build Tools with **Desktop development with C++**, MSVC v143, and the Windows SDK. Run these commands in PowerShell from the repository root. CMake downloads Tracktion Engine v3.2.0 and the JUCE revision pinned by that release on the first configure.
@@ -24,4 +30,4 @@ The default build uses JUCE's Windows audio backends, including WASAPI. For ASIO
 5. Use **Add reverb** or **Load VST3** on the selected track. VST3 scanning inspects the selected installed file or bundle in the application process.
 6. Save, reopen the project, then export to a new stereo WAV. Keep recorded files and imported source files available at their original paths. Save explicitly before closing.
 
-The Windows workflow builds the standard configuration and runs a generated-audio smoke test. See [feasibility](docs/feasibility.md) for verification status, [architecture](docs/architecture.md) for the engine boundaries, and [licensing](docs/licensing.md) before sharing executable builds.
+The Windows workflow runs a generated-audio smoke test, inspects the executable's DLL imports, and launches a copy from a write-denied directory with a separate working directory. The hosted runner has Visual Studio. See the feasibility notes for clean-machine and hardware testing still needed. See [feasibility](docs/feasibility.md) for verification status, [architecture](docs/architecture.md) for the engine boundaries, and [licensing](docs/licensing.md) before sharing executable builds.

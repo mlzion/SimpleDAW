@@ -6,11 +6,6 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      publish_artifact:
-        description: Upload executable after confirming redistribution terms
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -27,10 +22,5 @@ jobs:
         run: cmake --build build --config Release --parallel 2
       - name: Smoke test
         run: ctest --test-dir build -C Release --output-on-failure
-      - name: Upload executable
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_artifact }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: SimpleDAW-Windows-x64
-          path: build/SimpleDAW_artefacts/Release/SimpleDAW.exe
-          if-no-files-found: error
+      - name: Inspect and launch standalone executable
+        run: ./scripts/Verify-Portable.ps1 -Executable build/SimpleDAW_artefacts/Release/SimpleDAW.exe

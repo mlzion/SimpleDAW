@@ -1,30 +1,31 @@
 # Phase 1 feasibility
 
-## Dependency choice
+## Portable Windows x64 executable
 
-Tracktion Engine v3.2.0 requires C++20. Its RecordingDemo, MidiRecordingDemo and PluginDemo exercise the Edit, transport, input-device and plugin APIs used here. The release pins JUCE at `19edd538429c93d277bf95b55aaa7e3eb545f951`. The build uses this pair to avoid combining Tracktion with a newer, independently released JUCE major version. CMake loads only the library modules. [Tracktion release](https://github.com/Tracktion/tracktion_engine/releases/tag/v3.2.0) · [Pinned JUCE source](https://github.com/juce-framework/JUCE/tree/19edd538429c93d277bf95b55aaa7e3eb545f951)
+CMake builds Tracktion Engine v3.2.0 and its pinned JUCE 8 revision (`19edd538429c93d277bf95b55aaa7e3eb545f951`) into `SimpleDAW.exe`. The Windows Release target uses the static MSVC runtime. Windows-provided DLLs and API sets supply operating-system functionality, including graphics and audio. The optional ASIO host backend uses an installed x64 driver. Installed VST3 plugins can bring their own dependencies. These components are supplied by Windows or the hardware and plugin vendors. [Tracktion release](https://github.com/Tracktion/tracktion_engine/releases/tag/v3.2.0) · [Pinned JUCE source](https://github.com/juce-framework/JUCE/tree/19edd538429c93d277bf95b55aaa7e3eb545f951)
 
-## Verification
+The Windows workflow checks load-time and delay-load imports reported by `dumpbin /dependents` and rejects Visual C++ redistributable DLLs and non-system imports. It stages only the EXE, verifies that its directory denies writes, restricts PATH to System32, and runs both the smoke test and normal window startup from a different working directory. Import inspection cannot inventory DLLs explicitly loaded at runtime. The GitHub runner is a Windows Server image with Visual Studio installed. A standard-user launch on a clean Windows 11 machine without Visual Studio or an added Visual C++ redistributable remains an acceptance test.
 
-| Capability | Implementation | Verification needed |
+Tracktion writes preferences under the user's application-data directory. The user chooses the project and export paths. Recordings are managed by Tracktion with the edit's media, while imported WAV files are referenced separately. Move the executable independently of these files. The project still needs writable data storage and does not package its media. [Tracktion property storage](https://github.com/Tracktion/tracktion_engine/blob/v3.2.0/modules/tracktion_engine/utilities/tracktion_PropertyStorage.cpp)
+
+## Verification coverage
+
+| Capability | Current coverage | Hands-on verification |
 | --- | --- | --- |
-| Device enumeration, sample rate and buffer selection | JUCE device selector | Windows interface and driver checks |
-| ASIO | Opt-in build with external SDK headers | Compile with SDK and test a vendor driver on Windows 11 |
-| Audio recording and multitrack playback | Tracktion transport and input routing | Record and replay real takes, check latency and dropouts |
-| MIDI input and recording | Physical MIDI routing and built-in synth | Record and replay notes from a real controller |
-| VST3 | Scan a selected file or bundle and insert a discovered plugin | Exercise x64 effect and instrument plugins, including reopen |
-| Reverb, save/reopen and stereo WAV | Implemented with an automated smoke test | Windows workflow result |
-| MP3 export | Investigated | Select an encoder and validate output and distribution terms |
-| MIDI control surfaces | Investigated | Pick a target controller and verify transport, faders and feedback |
+| Audio device, sample rate and buffer selection | Implemented via the JUCE device selector in the standard build. Startup test opens the app window. | Open Devices, switch backends and channels, and apply a supported rate and buffer. |
+| ASIO | Conditional code path using an externally supplied SDK. The standard CI build excludes ASIO. | Compile against the selected SDK and use an installed vendor driver on Windows 11. |
+| Audio record and playback | Implemented through the Tracktion transport and input routing. The smoke test imports generated audio. | Arm an input, record a take, stop, and listen to playback. Check latency and dropouts. |
+| Multiple audio tracks | The smoke test creates two tracks, reopens both with their clips, and renders the edit offline. | Record and listen to multiple tracks through a physical interface. |
+| MIDI input | Physical MIDI routing, record controls and a built-in synth are implemented. | Record and replay notes from a physical keyboard. |
+| VST3 | The standard build includes selected-path scanning and loading. | Scan, load and exercise an installed x64 effect and instrument. Reopen the project and verify plugin state. |
+| Built-in reverb | The smoke test inserts reverb, verifies it persisted across reopen, and renders the edit. | Audition the audible effect and compare it with dry playback. |
+| Project save and reopen | Automated round trip checks track, clip and reverb persistence. | Reopen a project with actual recordings and confirm media is available. |
+| Stereo WAV export | The automated test checks a non-silent output with two channels, 44.1 kHz, 24-bit depth and a minimum duration. | Compare the exported mix with playback from the real project. |
 
-The development workspace could inspect source through the GitHub connector. Its Git proxy was unreachable and CMake was unavailable. It could not compile the application or run CTest locally. The Windows workflow is the build and smoke-test gate. It cannot establish physical interface, ASIO latency, end-to-end MIDI or third-party VST3 compatibility.
+The [Windows workflow](https://github.com/mlzion/SimpleDAW/actions/workflows/windows.yml) records the build, dependency inspection, and runtime checks. [Licensing](licensing.md) describes why executable publication is on hold.
 
-## Open questions
+## Known limitations
 
-- VST3 discovery is limited to a user-selected path. In-process scanning can stall or crash if a plugin misbehaves. Validate plugin parameters and state after project reopen before adding a library scan or plugin editor.
-- JUCE's LAME format adapter invokes an external encoder. A Windows Media Foundation encoder or a separately packaged LAME integration can be evaluated after WAV export is stable. Compare availability, output quality and distribution terms for a chosen implementation. [JUCE LAME adapter](https://docs.juce.com/master/classjuce_1_1LAMEEncoderAudioFormat.html)
-- Tracktion Engine provides control-surface infrastructure for transport, faders and feedback. Begin with one physical controller and map a small set of commands. Verify reconnect, MIDI port ownership and interactions with note input. [Tracktion Engine features](https://github.com/Tracktion/tracktion_engine/blob/v3.2.0/FEATURES.md)
-
-## Next milestone
-
-Run a Windows 11 acceptance pass with a vendor ASIO interface, a MIDI keyboard and a known VST3 effect. Record two audio takes and one MIDI take, save and reopen the Edit, then compare stereo export with playback. Measure round-trip latency and watch for dropouts at common buffer settings before expanding the interface.
+- VST3 scanning inspects a user-selected path in the application process. A failing or stalled plugin can affect that process.
+- The smoke test renders offline with generated media. Device configuration, MIDI capture, real-time playback and third-party plugin compatibility need hands-on checks.
+- MP3 export and MIDI control surfaces remain investigation items. JUCE can invoke an external LAME encoder, and Tracktion provides control-surface infrastructure. [JUCE LAME adapter](https://docs.juce.com/master/classjuce_1_1LAMEEncoderAudioFormat.html) · [Tracktion Engine features](https://github.com/Tracktion/tracktion_engine/blob/v3.2.0/FEATURES.md)
