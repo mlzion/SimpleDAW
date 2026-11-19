@@ -2,11 +2,13 @@
 
 SimpleDAW is a beginner-friendly recording workstation. Phase 1 is a small Windows 11 feasibility prototype with a transport, track selector, and device controls.
 
+SimpleDAW is free and open-source software. Its original code is released under the GNU Affero General Public License, version 3. See [LICENSE](LICENSE), [COPYRIGHT](COPYRIGHT), and the [third-party notices](THIRD_PARTY_NOTICES.md).
+
 ## Run the portable build
 
 The target is one Windows 11 x64 file, `SimpleDAW.exe`. Copy a locally built executable to any folder you can read and execute from, then double-click it. The app uses Windows system libraries and statically links the MSVC runtime, JUCE and Tracktion Engine. The executable folder can be read-only. Preferences live in the user's application-data folder, and projects and recorded media need a writable project location. Keep files referenced by an edit available at their original paths.
 
-The standard build uses Windows audio backends and can host separately installed x64 VST3 plugins. The optional ASIO build uses a separately installed vendor driver. Driver and plugin installers may have their own requirements. GitHub Actions builds and tests the standard executable but publication is disabled pending the [redistribution requirements](docs/licensing.md).
+The standard build uses Windows audio backends and can host separately installed x64 VST3 plugins. The optional ASIO build uses a separately installed vendor driver. Driver and plugin installers may have their own requirements. GitHub Actions builds and tests the standard executable but publication is disabled pending the [remaining redistribution checks](docs/licensing.md). See the [source retrieval instructions](docs/corresponding-source.md) for the exact inputs to a CI build.
 
 ## Build on Windows 11
 

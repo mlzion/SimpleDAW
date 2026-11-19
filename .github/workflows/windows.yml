@@ -17,7 +17,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DSIMPLEDAW_ASIO_SDK:PATH=
+      - name: Record the build source revisions
+        run: |
+          foreach ($source in '.', 'build/_deps/juce-src', 'build/_deps/tracktion-src') {
+            $commit = git -C $source rev-parse HEAD
+            if ($LASTEXITCODE -ne 0) { throw "Cannot resolve source revision for $source" }
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "- $source @ $commit"
+          }
       - name: Build
         run: cmake --build build --config Release --parallel 2
       - name: Smoke test

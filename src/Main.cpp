@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 the SimpleDAW contributors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 #include <JuceHeader.h>
 
 namespace te = tracktion;

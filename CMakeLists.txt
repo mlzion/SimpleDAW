@@ -8,7 +8,7 @@ FetchContent_Declare(juce
     GIT_TAG 19edd538429c93d277bf95b55aaa7e3eb545f951)
 FetchContent_Declare(tracktion
     GIT_REPOSITORY https://github.com/Tracktion/tracktion_engine.git
-    GIT_TAG v3.2.0
+    GIT_TAG 0a5f4e6a5f53d09c89b414a44386a12df7fa1ec6 # v3.2.0
     GIT_SUBMODULES ""
     SOURCE_SUBDIR modules)
 FetchContent_MakeAvailable(juce tracktion)
