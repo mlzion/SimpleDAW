@@ -38,7 +38,7 @@ jobs:
           }
           '@ | Set-Content runtime-probe.cpp
           x86_64-w64-mingw32-clang++ --version
-          x86_64-w64-mingw32-clang++ -std=c++20 -static '-Wl,--trace' runtime-probe.cpp -o runtime-probe.exe
+          x86_64-w64-mingw32-clang++ -std=c++20 -static -v runtime-probe.cpp -o runtime-probe.exe
           if ($LASTEXITCODE -ne 0) { throw 'Could not build the runtime probe.' }
           llvm-readobj --coff-imports runtime-probe.exe
           if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the runtime probe.' }
