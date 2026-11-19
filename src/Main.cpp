@@ -1,11 +1,28 @@
 #include <JuceHeader.h>
 
-namespace te = tracktion::engine;
+namespace te = tracktion;
 namespace ju = juce;
 
 namespace
 {
 constexpr int maxTracks = 24;
+
+class PrototypeUIBehaviour final : public te::UIBehaviour
+{
+public:
+    void runTaskWithProgressBar(te::ThreadPoolJobWithProgress& job) override
+    {
+        while (job.runJob() == ju::ThreadPoolJob::jobNeedsRunningAgain)
+        {
+        }
+    }
+};
+
+class SmokeTestEngineBehaviour final : public te::EngineBehaviour
+{
+public:
+    bool autoInitialiseDeviceManager() override { return false; }
+};
 
 bool insertAudio(te::AudioTrack& track, const ju::File& file)
 {
@@ -484,7 +501,11 @@ public:
             return;
 
         const bool testing = command == "--smoke-test";
-        engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW");
+        std::unique_ptr<te::EngineBehaviour> engineBehaviour;
+        if (testing)
+            engineBehaviour = std::make_unique<SmokeTestEngineBehaviour>();
+        engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW",
+            std::make_unique<PrototypeUIBehaviour>(), std::move(engineBehaviour));
         if (testing)
         {
             setApplicationReturnValue(smokeTest(*engine) ? 0 : 1);

@@ -6,6 +6,6 @@ The prototype uses a button panel and a track selector. UI actions resolve the s
 
 Project files use Tracktion's .tracktionedit serialization. The application uses EditFileOperations to save an Edit associated with the chosen path. Recordings and imported media remain separate files. The prototype relies on Tracktion's media path handling and provides no project packaging or recovery UI.
 
-Export stops playback, renders the Edit offline through Tracktion, and moves the resulting temporary WAV into place only if rendering succeeds. The prototype uses 44.1 kHz, 24-bit stereo and includes track and master plugins. The render covers the Edit length.
+Export stops playback, renders the Edit offline through Tracktion, and moves the resulting temporary WAV into place only if rendering succeeds. The prototype uses 44.1 kHz, 24-bit stereo and includes track and master plugins. The render covers the Edit length and runs synchronously, so the window waits for export to finish.
 
 The Windows CTest runs the executable in smoke-test mode. It generates a short input WAV, imports it onto two tracks, inserts a native effect, saves and reloads the Edit, and checks the channel count, length, and signal level of an offline render. This test uses synthetic audio and does not depend on an attached interface.
