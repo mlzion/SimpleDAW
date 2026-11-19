@@ -18,6 +18,8 @@ ctest --test-dir build -C Release --output-on-failure
 ./SimpleDAW/scripts/Verify-Portable.ps1 -Executable build/SimpleDAW_artefacts/Release/SimpleDAW.exe
 ```
 
+For the experimental DLL-based MSVC runtime build, use a separate build directory and add `-DSIMPLEDAW_MSVC_DYNAMIC_RUNTIME=ON` to configure. Use `-MsvcRuntime MD` with the verification script. For example, choose `-B build-md`, run CTest against `build-md`, and inspect `build-md/SimpleDAW_artefacts/Release/SimpleDAW.exe`. A compatible x64 Microsoft Visual C++ Redistributable must already be installed on the test machine. The default build uses `/MT`.
+
 To replace SoundTouch, work on a copy of the archive, modify or replace its compatible sources under `Tracktion/modules/tracktion_engine/3rd_party/soundtouch`, and rerun the commands in a fresh build directory. Tracktion compiles the bundled source into the executable. The complete application source and scripts in the archive allow rebuilding and relinking with that modified version while retaining a single EXE.
 
 For a future binary release, publish the matching source archive and the applicable notices in the same download location, with equivalent no-charge access for recipients and clear directions. Use a durable feature-branch commit or release tag to identify the SimpleDAW revision. The EXE archive can contain one file. [AGPLv3 §6](https://www.gnu.org/licenses/agpl-3.0.en.html#section6)

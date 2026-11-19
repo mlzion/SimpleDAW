@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory)]
-    [string] $Executable
+    [string] $Executable,
+    [ValidateSet("MT", "MD")]
+    [string] $MsvcRuntime = "MT"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,6 +32,92 @@ if (!$dlls.Count) {
 
 $systemDirectory = Join-Path $env:SystemRoot 'System32'
 Write-Host ('PE imports (including delay imports listed by dumpbin) ' + ($dlls -join ', '))
+$vcRuntimePattern = '^(vcruntime|msvcp|msvcr|vcomp|concrt|vcamp|mfc|atl)\d.*\.dll
+    if ($dll -notmatch '^(api|ext)-ms-win-' -and
+        !(Test-Path -LiteralPath (Join-Path $systemDirectory $dll) -PathType Leaf)) {
+        throw "DLL dependency missing from System32: $dll"
+    }
+}
+
+$root = Join-Path ([System.IO.Path]::GetTempPath()) ('SimpleDAW-portable-' + [guid]::NewGuid())
+$exeDirectory = Join-Path $root 'Standalone executable'
+$workingDirectory = Join-Path $root 'Different working directory'
+$originalPath = $env:PATH
+$originalAcl = $null
+$process = $null
+try {
+    New-Item -ItemType Directory -Path $exeDirectory, $workingDirectory | Out-Null
+    $standalone = Join-Path $exeDirectory 'SimpleDAW.exe'
+    Copy-Item -LiteralPath $source -Destination $standalone
+    $originalAcl = Get-Acl -LiteralPath $exeDirectory
+    $restrictedAcl = Get-Acl -LiteralPath $exeDirectory
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    $denyWrite = [System.Security.AccessControl.FileSystemAccessRule]::new(
+        $identity, 'Write', 'ContainerInherit, ObjectInherit', 'None', 'Deny')
+    $restrictedAcl.AddAccessRule($denyWrite)
+    Set-Acl -LiteralPath $exeDirectory -AclObject $restrictedAcl
+
+    $probe = Join-Path $exeDirectory 'write-probe'
+    try {
+        [System.IO.File]::WriteAllText($probe, 'probe')
+        throw 'The standalone executable directory is writable.'
+    }
+    catch [System.UnauthorizedAccessException] {
+        Write-Host 'Confirmed write access is denied in the executable directory.'
+    }
+
+    $env:PATH = $systemDirectory
+    $process = Start-Process -FilePath $standalone -ArgumentList '--smoke-test' -WorkingDirectory $workingDirectory -PassThru
+    if (!$process.WaitForExit(60000) -or $process.ExitCode -ne 0) {
+        throw 'The isolated project round-trip smoke test failed or timed out.'
+    }
+    Write-Host 'Standalone smoke test passed from an unrelated working directory.'
+
+    $process = Start-Process -FilePath $standalone -WorkingDirectory $workingDirectory -PassThru
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $process.Refresh()
+        if ($process.HasExited) {
+            throw "Normal startup exited before creating a window (exit code $($process.ExitCode))."
+        }
+        if ($process.MainWindowTitle -eq 'SimpleDAW Phase 1') {
+            break
+        }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($process.MainWindowTitle -ne 'SimpleDAW Phase 1') {
+        throw 'The main SimpleDAW window did not appear.'
+    }
+    if (!$process.CloseMainWindow() -or !$process.WaitForExit(10000) -or $process.ExitCode -ne 0) {
+        throw 'The standalone window did not close cleanly.'
+    }
+    Write-Host 'Normal startup displayed the SimpleDAW window and closed cleanly.'
+}
+finally {
+    $env:PATH = $originalPath
+    if ($process -and !$process.HasExited) {
+        $process.Kill()
+        $process.WaitForExit()
+    }
+    if ($originalAcl) {
+        Set-Acl -LiteralPath $exeDirectory -AclObject $originalAcl
+    }
+    if (Test-Path -LiteralPath $root) {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+$vcRuntimeImports = @($dlls | Where-Object { $_ -match $vcRuntimePattern })
+if ($MsvcRuntime -eq 'MT' -and $vcRuntimeImports.Count) {
+    throw ('Unexpected Visual C++ redistributable dependencies ' + ($vcRuntimeImports -join ', '))
+}
+if ($MsvcRuntime -eq 'MD' -and !$vcRuntimeImports.Count) {
+    throw 'The /MD build is missing the expected Visual C++ runtime imports.'
+}
+foreach ($dll in $vcRuntimeImports) {
+    $installed = Get-Item -LiteralPath (Join-Path $systemDirectory $dll)
+    Write-Host ("Installed Visual C++ runtime {0} ({1})" -f $dll, $installed.VersionInfo.FileVersion)
+}
 foreach ($dll in $dlls) {
     if ($dll -match '^(vcruntime|msvcp|msvcr|vcomp|concrt|vcamp|mfc|atl)\d.*\.dll$') {
         throw "Unexpected Visual C++ redistributable dependency $dll"

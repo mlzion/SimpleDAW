@@ -1,12 +1,6 @@
 name: Windows LLVM MinGW investigation
 
 on:
-  push:
-    branches: [feature/phase1-audio-engine]
-    paths:
-      - '.github/workflows/windows-llvm-mingw.yml'
-      - 'scripts/Install-LlvmMinGW.ps1'
-      - 'CMakeLists.txt'
   workflow_dispatch:
 
 permissions:
