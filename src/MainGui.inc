@@ -553,6 +553,10 @@ private:
         for (int i = 0; i < manager.getNumWaveInDevices(); ++i)
             if (auto* wave = manager.getWaveInDevice(i))
                 wave->setEnabled(true);
+        manager.deviceManager.dispatchPendingMessages();
+        manager.dispatchPendingUpdates();
+        ju::MessageManager::getInstance()->runDispatchLoopUntil(100);
+
         MainGui gui(engine, directory.getChildFile("routes.settings"));
         const auto path = directory.getChildFile("routes.tracktionedit");
         gui.setProject(te::createEmptyEdit(engine, path), path);
@@ -619,8 +623,12 @@ private:
             return false;
         };
         std::fprintf(stderr, "Checking live levels before route removal\n");
-        if (!waitForLevels(true))
+        if (!waitForLevels(true) || !transport.isPlaying())
+        {
+            std::fprintf(stderr, "Hosted playback failed to settle with both inputs active (playing=%d)\n",
+                         static_cast<int>(transport.isPlaying()));
             return false;
+        }
         const auto findInput = [&]() -> te::InputDeviceInstance* {
             for (auto* current : routeEdit->getAllInputDevices())
                 if (current->getInputDevice().getDeviceID() == deviceID)
@@ -637,8 +645,15 @@ private:
         if (!currentInput || toggleInput(*currentInput, first).failed() || !hasRoutes(false))
             return false;
         std::fprintf(stderr, "Checking live levels after route removal\n");
-        if (!waitForLevels(false) || !hasRoutes(false) || !transport.isPlaying())
+        const bool levelsCorrect = waitForLevels(false);
+        const bool routesCorrect = hasRoutes(false);
+        if (!levelsCorrect || !routesCorrect || !transport.isPlaying())
+        {
+            std::fprintf(stderr, "After removal: levels=%d routes=%d playing=%d\n",
+                         static_cast<int>(levelsCorrect), static_cast<int>(routesCorrect),
+                         static_cast<int>(transport.isPlaying()));
             return false;
+        }
         std::fprintf(stderr, "Stopping playback and starting hosted recording\n");
         if (!gui.invokeShortcut(playStop, ju::KeyPress::spaceKey, false) || !transport.isPlaying()
             || !gui.invokeShortcut(playStop, ju::KeyPress::spaceKey) || transport.isPlaying())
