@@ -185,7 +185,7 @@ private:
                     if (!xml || !xml->hasTagName("EDIT"))
                         return report("Could not read this project");
                 }
-                if (edit && !save())
+                if (!confirmProjectChanges())
                     return;
 
                 auto next = create ? te::createEmptyEdit(engine, file) : te::loadEditFromFile(engine, file);
@@ -199,7 +199,25 @@ private:
                 }
                 setProject(std::move(next), file);
                 report("Project ready");
+                warnUnavailablePlugins();
             });
+    }
+
+    bool confirmProjectChanges()
+    {
+        if (!edit)
+            return true;
+        if (!ready())
+            return false;
+
+        edit->getUndoManager().dispatchPendingMessages();
+        if (!edit->hasChangedSinceSaved())
+            return true;
+
+        const int choice = ju::AlertWindow::showYesNoCancelBox(ju::MessageBoxIconType::QuestionIcon,
+            "Unsaved changes", "Save changes to " + projectFile.getFileName() + "?",
+            "Save", "Don't Save", "Cancel", this);
+        return choice == 2 || (choice == 1 && save());
     }
 
     te::AudioTrack* selectedTrack()
@@ -312,7 +330,10 @@ private:
         edit->getTransport().setPosition(editCursor);
         paused = false;
         if (recording)
-            save();
+        {
+            edit->markAsChanged();
+            report("Recording stopped. Save the project to keep the new items.");
+        }
     }
 
     bool save()
@@ -436,6 +457,14 @@ public:
                                      ju::jmax(580, ju::jmin(bounds.getHeight(), display->userArea.getHeight() - 32)));
         window->centreWithSize(bounds.getWidth(), bounds.getHeight());
         window->setVisible(true);
+    }
+
+    void systemRequestedQuit() override
+    {
+        if (window)
+            if (auto* gui = dynamic_cast<MainGui*>(window->getContentComponent()); gui && !gui->prepareToQuit())
+                return;
+        quit();
     }
 
     void shutdown() override

@@ -6,7 +6,7 @@
         newProject = 100, openProject, saveProject, saveProjectAs, importAudio, exportAudio, exitApp,
         undo, redo, cut, copy, paste, duplicate, deleteItem,
         audioTrack, midiTrack, midiItem, devices, about, armAudio, armMidi, synth, reverb, vst3,
-        audioFile, playStop, startRecording
+        audioFile, locateFile, playStop, startRecording
     };
 
     struct PanelState
@@ -222,12 +222,17 @@ public:
             if (ready())
             {
                 edit->recordingPunchInOut = recordMode.getSelectedId() == 2;
+                edit->markAsChanged();
                 if (edit->recordingPunchInOut)
                     edit->getTransport().looping = false;
             }
         };
         clickButton = &button(second, "METRONOME", [this] {
-            if (edit) edit->clickTrackEnabled = !edit->clickTrackEnabled.get();
+            if (edit)
+            {
+                edit->clickTrackEnabled = !edit->clickTrackEnabled.get();
+                edit->markAsChanged();
+            }
         });
         countButton = &button(second, "COUNT-IN", [this] {
             if (ready())
@@ -280,6 +285,13 @@ public:
         menuBar.setModel(nullptr);
         stop();
         meters.clear();
+    }
+
+    bool prepareToQuit()
+    {
+        if (edit && edit->getTransport().isPlaying())
+            stop();
+        return confirmProjectChanges();
     }
 
     void paint(ju::Graphics& g) override { g.fillAll(ju::Colours::black); }
@@ -445,7 +457,7 @@ private:
         switch (index)
         {
             case 0: add({ newProject, openProject, saveProject, saveProjectAs, importAudio, exportAudio, exitApp }); break;
-            case 1: add({ undo, redo, cut, copy, paste, duplicate, deleteItem }); break;
+            case 1: add({ undo, redo, cut, copy, paste, duplicate, deleteItem, locateFile }); break;
             case 2: add({ audioTrack, midiTrack, midiItem, audioFile, synth, reverb, vst3 }); break;
             case 3: add({ devices, armAudio, armMidi }); break;
             case 4: add({ about }); break;
@@ -470,7 +482,7 @@ private:
             "Undo", "Redo", "Cut", "Copy", "Paste", "Duplicate", "Delete",
             "Audio Track", "MIDI Track", "MIDI Item", "Audio and MIDI Devices", "About SimpleDAW",
             "Arm Audio Input", "Arm MIDI Input", "Add MIDI Synth", "Add Reverb", "Load VST3",
-            "Audio File", "Play / Stop", "Record"
+            "Audio File", "Locate File", "Play / Stop", "Record"
         };
         if (id < newProject || id > startRecording)
         {
@@ -488,6 +500,7 @@ private:
             case redo: info.setActive(stopped && edit->getUndoManager().canRedo()); break;
             case cut: case copy: case paste: case duplicate: info.setActive(false); break;
             case deleteItem: info.setActive(stopped && selectedClip() != nullptr); break;
+            case locateFile: info.setActive(stopped && missingWave(selectedClip()) != nullptr); break;
             case audioTrack: case midiTrack: info.setActive(stopped && trackCount() < maxTracks); break;
             case midiItem: case audioFile: case importAudio: case armAudio: case armMidi: case synth: case reverb: case vst3:
                 info.setActive(stopped && hasTrack); break;
@@ -512,15 +525,8 @@ private:
             case exitApp: ju::JUCEApplication::getInstance()->systemRequestedQuit(); break;
             case undo: if (ready()) edit->getUndoManager().undo(); break;
             case redo: if (ready()) edit->getUndoManager().redo(); break;
-            case deleteItem:
-                if (ready())
-                    if (auto* clip = selectedClip())
-                    {
-                        edit->getUndoManager().beginNewTransaction("Delete item");
-                        clip->removeFromParent();
-                        selectedItem = {};
-                    }
-                break;
+            case deleteItem: deleteSelectedItem(); break;
+            case locateFile: locateSelectedFile(); break;
             case audioTrack: addTrack(false); break;
             case midiTrack: addTrack(true); break;
             case midiItem: insertMidi(); break;
@@ -553,6 +559,68 @@ private:
         return edit && selectedItem.isValid() ? te::findClipForID(*edit, selectedItem) : nullptr;
     }
 
+    static te::WaveAudioClip* missingWave(te::Clip* clip)
+    {
+        auto* wave = dynamic_cast<te::WaveAudioClip*>(clip);
+        return wave && !wave->getOriginalFile().existsAsFile() ? wave : nullptr;
+    }
+
+    static void replaceWaveSource(te::WaveAudioClip& clip, const ju::File& file)
+    {
+        auto& undoManager = clip.edit.getUndoManager();
+        undoManager.beginNewTransaction("Locate missing audio");
+        auto& reference = clip.getSourceFileReference();
+        const auto previous = reference.source.get();
+        const auto path = te::SourceFileReference::findPathFromFile(clip.edit, file, true);
+        for (auto take : clip.state.getChildWithName(te::IDs::TAKES))
+            if (take.getProperty(te::IDs::source).toString() == previous)
+                take.setProperty(te::IDs::source, path, &undoManager);
+        reference.setToDirectFileReference(file, true);
+        clip.edit.restartPlayback();
+    }
+
+    void locateSelectedFile()
+    {
+        if (!ready())
+            return;
+        auto* clip = missingWave(selectedClip());
+        if (!clip)
+            return;
+        const auto id = clip->itemID;
+        chooseFile("Locate " + clip->getOriginalFile().getFileName(), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3",
+            ju::FileBrowserComponent::openMode | ju::FileBrowserComponent::canSelectFiles,
+            [this, id](const ju::File& file) {
+                if (!ready())
+                    return;
+                auto* wave = missingWave(te::findClipForID(*edit, id));
+                if (!wave)
+                    return;
+                const te::AudioFile replacement(engine, file);
+                if (!replacement.isValid() || replacement.getLength() <= 0.0)
+                    return report("Choose a readable audio file");
+                replaceWaveSource(*wave, file);
+                arrangement.waves.erase(id);
+                report("Audio relinked");
+                updateControls();
+            });
+    }
+
+    void deleteSelectedItem()
+    {
+        if (!ready())
+            return;
+        if (auto* clip = selectedClip())
+        {
+            if (missingWave(clip) && !ju::AlertWindow::showOkCancelBox(ju::MessageBoxIconType::WarningIcon,
+                    "Delete missing audio item?", "Remove " + clip->getName() + " from the project?",
+                    "Delete Item", "Cancel", this))
+                return;
+            edit->getUndoManager().beginNewTransaction("Delete item");
+            clip->removeFromParent();
+            selectedItem = {};
+        }
+    }
+
     void setProject(std::unique_ptr<te::Edit> next, const ju::File& file)
     {
         meters.clear();
@@ -561,7 +629,10 @@ private:
         edit->playInStopEnabled = true;
         projectFile = file;
         selection = trackCount() == 0 ? -1 : 0;
-        selectedItem = {};
+        selectedItem = dragItem = {};
+        dragPreview.reset();
+        rangePreview.reset();
+        draggingRange = false;
         editCursor = edit->getTransport().getPosition();
         const auto savedRange = edit->getTransport().getLoopRange();
         timeSelection = savedRange.getLength().inSeconds() > 0.001 ? std::optional(savedRange) : std::nullopt;
@@ -569,6 +640,7 @@ private:
         firstRow = 0;
         viewStart = 0.0;
         edit->getUndoManager().clearUndoHistory();
+        edit->resetChangedStatus();
         if (auto* window = findParentComponentOfClass<ju::DocumentWindow>())
             window->setName("SimpleDAW v0.21 - " + file.getFileName());
         updateControls();
@@ -749,6 +821,7 @@ private:
         auto& transport = edit->getTransport();
         transport.setLoopRange(loopRange());
         transport.looping = !transport.looping.get();
+        edit->markAsChanged();
     }
 
     int rowHeight() const { return panels.tallTracks ? 76 : 44; }
@@ -945,18 +1018,30 @@ private:
         if (bounds.isEmpty())
             return;
         const auto selected = clip.itemID == selectedItem;
+        const auto* missing = missingWave(&clip);
+        if (missing)
+            colour = ju::Colours::grey;
         g.setColour(colour.withMultipliedBrightness(selected ? 0.56f : 0.27f));
         g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
         g.setColour(selected ? ju::Colours::white : colour);
         g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 4.0f, selected ? 2.0f : 1.0f);
 
+        if (missing)
+        {
+            const ju::Graphics::ScopedSaveState state(g);
+            g.reduceClipRegion(bounds.reduced(2));
+            g.setColour(ju::Colour(0xff6b6b6b));
+            for (int x = bounds.getX() - bounds.getHeight(); x < bounds.getRight(); x += 8)
+                g.drawLine(static_cast<float>(x), static_cast<float>(bounds.getBottom()),
+                           static_cast<float>(x + bounds.getHeight()), static_cast<float>(bounds.getY()));
+        }
         auto content = bounds.reduced(1, 2);
         const auto title = content.removeFromTop(16);
         {
             const ju::Graphics::ScopedSaveState state(g);
             g.reduceClipRegion(content);
             g.setColour(colour);
-            if (auto* audio = dynamic_cast<te::AudioClipBase*>(&clip))
+            if (auto* audio = dynamic_cast<te::AudioClipBase*>(&clip); audio && !missing)
             {
                 auto file = audio->getPlaybackFile().getFile();
                 if (!file.existsAsFile())
@@ -985,7 +1070,13 @@ private:
         }
         g.setFont(ju::FontOptions(13.0f, ju::Font::bold));
         g.setColour(ju::Colours::white);
-        g.drawFittedText(clip.getName(), title.reduced(4, 0), ju::Justification::centredLeft, 1);
+        auto name = clip.getName();
+        if (missing)
+        {
+            const auto filename = missing->getOriginalFile().getFileName();
+            name = "Missing: " + (filename.isNotEmpty() ? filename : name);
+        }
+        g.drawFittedText(name, title.reduced(4, 0), ju::Justification::centredLeft, 1);
     }
 
     void paintRecording(ju::Graphics& g, te::AudioTrack& track, int y, ju::Colour colour)
@@ -1112,8 +1203,9 @@ private:
 
     void arrangementDown(const ju::MouseEvent& event)
     {
-        if (!edit || !event.mods.isLeftButtonDown())
+        if (!edit || (!event.mods.isLeftButtonDown() && !event.mods.isPopupMenu()))
             return;
+        const bool context = event.mods.isPopupMenu();
         arrangement.grabKeyboardFocus();
         draggingRange = false;
         rangePreview.reset();
@@ -1129,6 +1221,8 @@ private:
 
         if (event.y < rulerHeight || event.mods.isShiftDown())
         {
+            if (context)
+                return;
             draggingRange = !edit->getTransport().isPlaying();
             dragAnchor = timeAt(event.x);
             seek(dragAnchor);
@@ -1145,17 +1239,27 @@ private:
                 if (event.x >= timeX(range.getStart()) && event.x < timeX(range.getEnd()))
                 {
                     selectedItem = clip->itemID;
-                    if (dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip))
+                    if (!context && (dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip)))
                     {
                         dragItem = clip->itemID;
                         dragAnchor = timeAt(event.x);
                     }
                     updateControls();
+                    if (context)
+                    {
+                        ju::PopupMenu menu;
+                        if (missingWave(clip))
+                            menu.addCommandItem(&commandManager, locateFile);
+                        menu.addCommandItem(&commandManager, deleteItem);
+                        menu.showMenuAsync(ju::PopupMenu::Options().withTargetScreenArea(
+                            ju::Rectangle<int>(event.getScreenX(), event.getScreenY(), 1, 1)));
+                    }
                     return;
                 }
             }
         }
-        seek(timeAt(event.x));
+        if (!context)
+            seek(timeAt(event.x));
     }
 
     void updateDragPreview(double pointerTime)
@@ -1187,6 +1291,7 @@ private:
         {
             timeSelection = rangePreview;
             edit->getTransport().setLoopRange(*timeSelection);
+            edit->markAsChanged();
             report("Time selection set");
         }
         else if (auto* clip = selectedClip(); clip && clip->itemID == dragItem && dragPreview
