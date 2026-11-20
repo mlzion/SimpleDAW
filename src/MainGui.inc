@@ -412,7 +412,9 @@ public:
             return false;
         gui.selectTrack(firstIndex);
         if (!check(!gui.selectedEffects().contains("No effects"), "original effect chain remains")
-            || !check(gui.hasProjectChanges() && gui.save() && !gui.hasProjectChanges(), "track edits mark project dirty"))
+            || !check(gui.hasProjectChanges(), "track edits mark project dirty")
+            || !check(gui.save(), "save project after track edits")
+            || !check(!gui.hasProjectChanges(), "saving clears dirty state"))
             return false;
 
         const auto from = te::TimePosition::fromSeconds(gui.snapSeconds(0.68));
@@ -500,8 +502,9 @@ private:
         host.initialise(params);
         host.prepareToPlay(params.sampleRate, params.blockSize);
         manager.dispatchPendingUpdates();
-        for (auto* wave : manager.getWaveInputDevices())
-            wave->setEnabled(true);
+        for (int i = 0; i < manager.getNumWaveInDevices(); ++i)
+            if (auto* wave = manager.getWaveInDevice(i))
+                wave->setEnabled(true);
         auto routeEdit = te::createEmptyEdit(engine, directory.getChildFile("routes.tracktionedit"));
         routeEdit->ensureNumberOfAudioTracks(2);
         auto& transport = routeEdit->getTransport();
@@ -909,6 +912,7 @@ private:
         {
             track->setName(ju::String(midi ? "MIDI " : "Audio ") + ju::String(count + 1));
             track->setColour(palette(count));
+            edit->markAsChanged();
             selectTrack(count);
             if (count >= firstRow + rowsOnScreen())
                 scrollRows(count - firstRow - rowsOnScreen() + 1);
