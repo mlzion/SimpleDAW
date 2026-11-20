@@ -494,10 +494,18 @@ public:
         const auto timeout = ju::Time::getMillisecondCounter() + 3000;
         while (!thumbnail.isFullyLoaded() && ju::Time::getMillisecondCounter() < timeout)
             ju::MessageManager::getInstance()->runDispatchLoopUntil(20);
-        return check(thumbnail.getNumChannels() == 1 && thumbnail.getApproximatePeak() > 0.01f,
-                     "reload non-flat waveform")
-            && check(gui.testDeleteShortcut(), "Delete edits items and ranges while preserving text editing and undo")
-            && check(testInputRoutes(engine, dir), "Space transport and independent shared-input audio and recording");
+        if (!check(thumbnail.getNumChannels() == 1 && thumbnail.getApproximatePeak() > 0.01f,
+                   "reload non-flat waveform"))
+            return false;
+        std::fprintf(stderr, "Checking Delete shortcuts\n");
+        if (!check(gui.testDeleteShortcut(), "Delete edits items and ranges while preserving text editing and undo"))
+            return false;
+        gui.stopTimer();
+        gui.meters.clear();
+        gui.arrangement.waves.clear();
+        gui.edit.reset();
+        std::fprintf(stderr, "Checking hosted input routes\n");
+        return check(testInputRoutes(engine, dir), "Space transport and independent shared-input audio and recording");
     }
 
 private:
@@ -561,13 +569,24 @@ private:
         auto& first = *tracks[0];
         auto& second = *tracks[1];
         input.getInputDevice().setMonitorMode(te::InputDevice::MonitorMode::automatic);
+        std::fprintf(stderr, "Assigning two hosted routes\n");
         if (toggleInput(input, first).failed() || toggleInput(input, second).failed()
             || !isArmed(input, first.itemID) || !isArmed(input, second.itemID))
             return false;
         if (toggleInput(input, first).failed() || isArmed(input, first.itemID)
             || !isArmed(input, second.itemID) || toggleInput(input, first).failed())
             return false;
+        auto* firstMeterPlugin = first.getLevelMeterPlugin();
+        auto* secondMeterPlugin = second.getLevelMeterPlugin();
+        if (!firstMeterPlugin || !secondMeterPlugin)
+        {
+            std::fprintf(stderr, "Tracks have no level meter plugins\n");
+            return false;
+        }
+        Meter firstMeter(*firstMeterPlugin);
+        Meter secondMeter(*secondMeterPlugin);
         routeEdit->setCountInMode(te::Edit::CountIn::none);
+        std::fprintf(stderr, "Starting hosted audio and transport\n");
         const auto deviceID = input.getInputDevice().getDeviceID();
         std::jthread processing([&](std::stop_token stop) {
             ju::AudioBuffer<float> buffer(2, params.blockSize);
@@ -585,8 +604,6 @@ private:
         if (gui.commandManager.getKeyMappings()->findCommandForKeyPress(ju::KeyPress(ju::KeyPress::spaceKey)) != playStop
             || !gui.invokeShortcut(playStop, ju::KeyPress::spaceKey) || !transport.isPlaying())
             return false;
-        Meter firstMeter(*first.getLevelMeterPlugin());
-        Meter secondMeter(*second.getLevelMeterPlugin());
         const auto waitForLevels = [&](bool firstAudible) {
             for (int i = 0; i < 50; ++i)
             {
@@ -601,9 +618,14 @@ private:
             }
             return false;
         };
-        if (!waitForLevels(true) || toggleInput(input, first).failed() || isArmed(input, first.itemID)
+        std::fprintf(stderr, "Checking live levels before route removal\n");
+        if (!waitForLevels(true))
+            return false;
+        std::fprintf(stderr, "Removing one route during playback\n");
+        if (toggleInput(input, first).failed() || isArmed(input, first.itemID)
             || !isArmed(input, second.itemID) || !waitForLevels(false) || !transport.isPlaying())
             return false;
+        std::fprintf(stderr, "Stopping playback and starting hosted recording\n");
         if (!gui.invokeShortcut(playStop, ju::KeyPress::spaceKey, false) || !transport.isPlaying()
             || !gui.invokeShortcut(playStop, ju::KeyPress::spaceKey) || transport.isPlaying()
             || toggleInput(input, first).failed())
