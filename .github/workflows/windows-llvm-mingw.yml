@@ -86,4 +86,4 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'LLVM/MinGW build failed.' }
           ctest --test-dir clang-build --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'LLVM/MinGW smoke test failed.' }
-          ./scripts/Verify-Portable.ps1 -Executable clang-build/SimpleDAW_artefacts/Release/SimpleDAW.exe
+          ./scripts/Verify-Portable.ps1 -BuildDirectory clang-build

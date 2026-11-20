@@ -2,7 +2,7 @@ name: Windows x64
 
 on:
   push:
-    branches: [feature/phase1-audio-engine]
+    branches: [feature/v0.21-main-gui]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -46,20 +46,22 @@ jobs:
         run: cmake --build archive-build --config Release --parallel 2
       - name: Smoke test
         run: ctest --test-dir archive-build -C Release --output-on-failure
-      - name: Inspect imports and test startup
-        run: >
-          ./scripts/Verify-Portable.ps1 -Executable archive-build/SimpleDAW_artefacts/Release/SimpleDAW.exe
-          -MsvcRuntime ${{ matrix.runtime }}
-      - name: Record executable checksum
+      - name: Verify version, runtime imports and isolated startup
+        id: release
         run: |
-          $hash = (Get-FileHash archive-build/SimpleDAW_artefacts/Release/SimpleDAW.exe).Hash
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "SimpleDAW.exe (${{ matrix.runtime }}) SHA256 $hash"
+          ./scripts/Verify-Portable.ps1 -BuildDirectory archive-build -MsvcRuntime ${{ matrix.runtime }}
+          $metadata = Get-Content -LiteralPath archive-build/SimpleDAW-Release.json -Raw | ConvertFrom-Json
+          "artifact=$($metadata.artifactName)" >> $env:GITHUB_OUTPUT
+          $exeName = Split-Path -Leaf $metadata.executable
+          $hash = (Get-FileHash -LiteralPath $metadata.executable).Hash
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "$exeName (${{ matrix.runtime }}) SHA256 $hash"
       - name: Stage executable, corresponding source and notices
-        if: matrix.runtime == 'MD' && github.repository == 'mlzion/SimpleDAW' && github.event_name == 'push' && github.ref == 'refs/heads/feature/phase1-audio-engine'
+        if: matrix.runtime == 'MD' && github.repository == 'mlzion/SimpleDAW' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         run: |
           New-Item -Path windows-download -ItemType Directory | Out-Null
+          $metadata = Get-Content -LiteralPath archive-build/SimpleDAW-Release.json -Raw | ConvertFrom-Json
           $payload = @(
-            'archive-build/SimpleDAW_artefacts/Release/SimpleDAW.exe'
+            $metadata.executable
             'source-package/SimpleDAW-Windows-x64-source.tar.gz'
             'archive-source/SimpleDAW/LICENSE'
             'archive-source/SimpleDAW/COPYRIGHT'
@@ -72,15 +74,15 @@ jobs:
             Copy-Item -LiteralPath $file -Destination windows-download -ErrorAction Stop
           }
       - name: Upload Windows x64 download
-        if: matrix.runtime == 'MD' && github.repository == 'mlzion/SimpleDAW' && github.event_name == 'push' && github.ref == 'refs/heads/feature/phase1-audio-engine'
+        if: matrix.runtime == 'MD' && github.repository == 'mlzion/SimpleDAW' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         id: download
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleDAW-Windows-x64
+          name: ${{ steps.release.outputs.artifact }}
           path: windows-download/
           if-no-files-found: error
           compression-level: 0
       - name: Link the executable and corresponding source download
         if: steps.download.outputs.artifact-url != ''
         run: |
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '[Download SimpleDAW.exe, corresponding source and notices](${{ steps.download.outputs.artifact-url }})'
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '[Download ${{ steps.release.outputs.artifact }}.zip](${{ steps.download.outputs.artifact-url }})'

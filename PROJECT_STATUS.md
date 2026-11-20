@@ -1,62 +1,41 @@
 # SimpleDAW project status
 
-Snapshot reviewed on **2026-11-19**. Update this file with verified changes at the end of each development assignment.
+## Current development
 
-## Specification and planning update — 2026-11-20
+Phase 1 audio engine and repository documentation have merged into main. The v0.21 Main GUI Foundation is on `feature/v0.21-main-gui` and completed user-reported Windows live acceptance in PR #3 (2026-11-20), with documented deferrals. [Phase 1 PR #1](https://github.com/mlzion/SimpleDAW/pull/1) · [Repository documentation PR #2](https://github.com/mlzion/SimpleDAW/pull/2)
 
-This documentation-only change adds the [specification and phase-plan index](docs/specifications/README.md) and three original PDFs. All files were parsed, all 14 pages rendered for visual inspection, and copied bytes verified with SHA-256. No application tests or live hardware acceptance ran for this import.
+The JUCE window adds a two-row transport, a shared track-list and arrangement view, and collapsible resizable Inspector and workspace panels. The view reads Tracktion's Edit and uses engine track, clip, metering and transport APIs. The shared row layout keeps vertical scrolling and MIN/MAX track heights synchronized. JUCE application properties persist panel sizes and visibility.
 
-The local `main` history at `d036d97` confirms PRs #1 (audio engine) and #2 (repository documentation) merged. The older snapshot below predates those merges. The current `origin/feature/v0.21-main-gui` status records v0.21 GUI implementation and automated verification evidence, with Windows/hardware acceptance still pending; consult [PR #3](https://github.com/mlzion/SimpleDAW/pull/3) and its branch status for current details. This change does not certify live acceptance or complete a development phase.
+Both Audio Track and MIDI Track commands create Tracktion audio tracks, which support both kinds of clips. The MIDI label is a workflow distinction. Input arming and plugin setup remain accessible from Options and Insert. Project format and the source-paired Windows /MD distribution are carried forward. [Phase 1 architecture](docs/architecture.md) · [Windows distribution](docs/windows-download.md)
 
-The supplied phase plan is Draft 0.1; accepted requirements, pending decisions, implementation and verification remain separate. Its phase numbers are planning identifiers and differ from the earlier audio-engine Phase 1. Next: review this documentation PR, then confirm v0.21 live acceptance before subsequent implementation assignments. The historical status below is retained as a dated record.
+## Specifications and planning
 
-## Project Overview
+PR #4 merged the [specification and phase-plan index](docs/specifications/README.md) and three original PDFs. The import verified SHA-256 hashes and visually inspected all 14 pages. The phase plan is Draft 0.1. Its phase identifiers differ from the earlier audio-engine Phase 1. Pending design decisions remain listed in the index. [Planning PR #4](https://github.com/mlzion/SimpleDAW/pull/4) · [Historical project status](https://github.com/mlzion/SimpleDAW/blob/2987bf4/PROJECT_STATUS.md)
 
-SimpleDAW is a digital audio workstation for musicians who want an approachable way to record and finish a project. Its design favors clear controls and a simple workflow. The current prototype is described on the Phase 1 branch. [Prototype README](https://github.com/mlzion/SimpleDAW/blob/feature/phase1-audio-engine/README.md)
+## PR #3 corrections
 
-## Current Development Phase
+Physical inputs retain independent track destinations. The assignment menu and temporary channel badges read Tracktion's enabled state. Timeline moves and ranges preview during drags, recording thumbnails use Tracktion's live cache, and finalized media can draw from its source while a playback proxy is unavailable. Both audio import commands use the snapped edit cursor.
 
-**Phase 1 — Audio engine feasibility.** The documented objectives are to demonstrate basic recording, MIDI and plugin hosting, project persistence, and stereo WAV export, and to validate a portable Windows x64 test build. The prototype is available for review and testing. The phase has no recorded acceptance or merge.
+Missing WAV sources remain in the Edit with relink and confirmed delete actions. New, Open and Exit prompt for unsaved edits. The read-only Effects workspace shows the selected track's actual chain. Missing external plugins remain in the project and are reported on open. [Live retest checksheet](docs/testing/v0.21-live-test.md)
 
-## Completed Work
+The audio monitoring report exposes the active device, buffer, reported delays, monitor routing and plugin latency without changing engine behavior. The driver/interface and physical loopback have yet to be measured. [Monitoring investigation](docs/testing/v0.21-monitoring.md)
 
-- `main` has the initial README and ignore rules. No feature or documentation pull request had merged at the initial review. [Main history](https://github.com/mlzion/SimpleDAW/commits/main/)
-- Windows CI built and published a Phase 1 test ZIP from the branch for PR #1. The ZIP pairs the `/MD` executable with its exact source archive, build instructions and licensing notices. This is a branch artifact. [Publishing run](https://github.com/mlzion/SimpleDAW/actions/runs/44478494087) · [Windows download](https://github.com/mlzion/SimpleDAW/actions/runs/44478494087/artifacts/14507831861)
+The `project()` version in `CMakeLists.txt` supplies the application and Windows properties. A zero patch on a three-part version is omitted from the title and release names. CMake generates the executable path and artifact name for CI. For v0.21, the executable is `SimpleDAW-v0.21.exe` and GitHub supplies `SimpleDAW-v0.21-Windows-x64.zip`. [Windows download guide](docs/windows-download.md)
 
-## Work in Progress
+Removing an input destination now requests Tracktion's graph update explicitly, including when another track still uses the input. Existing audio assignments can be removed during playback. Space and Delete are window shortcuts that act on key-down and respect text focus. Delete uses the existing item action first, or clears the ruler range and loop markers when no item is selected. [Final live acceptance checks](docs/testing/v0.21-live-test.md)
 
-- `feature/phase1-audio-engine` — [PR #1](https://github.com/mlzion/SimpleDAW/pull/1), open against `main`. The branch implements device selection, audio and MIDI recording, multitrack playback, selected-path VST3 hosting, built-in reverb, project save and reopen, and stereo WAV export. Release and development builds pass CI. Review and hands-on acceptance are outstanding.
-- `docs/project-memory` — [PR #2](https://github.com/mlzion/SimpleDAW/pull/2), open for review. Establishes shared repository context and documentation maintenance rules.
-- Separate GUI work is outside this assignment. Its branch, PR, scope and status are awaiting confirmation from a repository reference.
+## Verification
 
-## Important Design Decisions
+The final correction workflow at `53425ec` passed all three Windows x64 CTests, version properties, PE import inspection, and isolated startup for `/MD` and `/MT`. The correction tests cover hosted input meter checks across route removal, Space transport dispatch, and Delete selection precedence, undo, and text protection. [Final correction CI](https://github.com/mlzion/SimpleDAW/actions/runs/44679304999) · [Current PR checks](https://github.com/mlzion/SimpleDAW/pull/3/checks)
 
-- CMake and MSVC build a JUCE application with pinned JUCE 8 and Tracktion Engine v3.2.0. Tracktion owns the active Edit, transport, audio/MIDI graph, and recording. Application UI actions run on the message thread. [Phase 1 architecture](https://github.com/mlzion/SimpleDAW/blob/feature/phase1-audio-engine/docs/architecture.md)
-- The Phase 1 GUI uses a compact button panel, device controls and a track selector. Future GUI specifications are awaiting confirmation in the repository. Preserve the approved GUI scope for the active assignment.
-- Project edits use Tracktion's `.tracktionedit` format. Recordings and referenced media are kept separately from the edit. WAV export renders the edit offline. [Phase 1 architecture](https://github.com/mlzion/SimpleDAW/blob/feature/phase1-audio-engine/docs/architecture.md)
-- PR #1 uses AGPLv3 for SimpleDAW's original code. Windows downloads pair the single-file `/MD` executable with matching source and notices. A compatible Microsoft Visual C++ v14 x64 Redistributable is installed separately if needed. `/MT` is for development checks. ASIO is optional and excluded from the packaged build. [Licensing](https://github.com/mlzion/SimpleDAW/blob/feature/phase1-audio-engine/docs/licensing.md) · [Download guide](https://github.com/mlzion/SimpleDAW/blob/feature/phase1-audio-engine/docs/windows-download.md)
+The existing generated-audio CTest covers import, project reopen, reverb persistence and non-silent stereo export. The v0.21 GUI CTest covers component initialization, track creation and selection, transport seek and loop state, timeline zoom, MIDI item insertion, project reopen and panel settings. Windows CI runs these tests and also inspects PE imports and launches the packaged executable from an isolated directory. The correction CTest adds drag previews, snapped placement, dirty-state transitions, independent effects, unavailable plugin retention, missing-audio relinking, waveform reload and multiple recording targets on one hosted input. Consult the workflow result for the exact commit. [Windows workflow](https://github.com/mlzion/SimpleDAW/actions/workflows/windows.yml)
 
-## Testing Status
+User-reported Windows 11 live acceptance completed on 2026-11-20: 43 functional checks passed, D03 and E01 partial, F03 MIDI hardware test not performed. C06 final punch capture passed, but its live waveform preview is misaligned and deferred to v0.22. The post-recording Save/Delete prompt is also proposed for v0.22. The tested build is probably workflow #49 (not locally verified). Hardware: HD USB Audio Device, Windows Audio Exclusive Mode, 48 kHz / 480 samples; actual round-trip latency was not measured. VST3 amp modelers and built-in reverb passed, exact plugin names unrecorded. See the updated live acceptance checksheet. [Live test checksheet](docs/testing/v0.21-live-test.md)
 
-- **Passed on the hosted Windows runner.** Both `/MD` and `/MT` x64 Release built from extracted matching source at `2611123`, passed CTest 1/1, PE import inspection, and isolated normal startup. The smoke test covers generated audio on two tracks, reverb persistence after project reopen, and non-silent stereo WAV export. The runner had the Microsoft runtime installed. [Windows CI run](https://github.com/mlzion/SimpleDAW/actions/runs/44478494087)
-- **Failed qualification.** The MinGW runtime probe ran, but pinned JUCE 8.0.6 rejected MinGW while building its helper from the archive. No alternative SimpleDAW executable was produced. MSVC is the documented Windows toolchain. [LLVM/MinGW investigation](https://github.com/mlzion/SimpleDAW/blob/feature/phase1-audio-engine/docs/llvm-mingw.md)
-- **Awaiting hands-on testing.** Clean Windows 11 standard-user launch, device and buffer selection, physical audio recording and live playback, ASIO, MIDI capture, and installed VST3 compatibility. [Verification matrix](https://github.com/mlzion/SimpleDAW/blob/feature/phase1-audio-engine/docs/feasibility.md)
+## Known limitations
 
-## Known Issues
-
-- VST3 scanning runs in the application process. A stalled or failing plugin can affect the app. Offline export waits synchronously, and project packaging and recovery UI are outside the current prototype. [Feasibility](https://github.com/mlzion/SimpleDAW/blob/feature/phase1-audio-engine/docs/feasibility.md) · [Architecture](https://github.com/mlzion/SimpleDAW/blob/feature/phase1-audio-engine/docs/architecture.md)
-- MP3 export and MIDI control-surface support are investigation items. [Feasibility](https://github.com/mlzion/SimpleDAW/blob/feature/phase1-audio-engine/docs/feasibility.md)
-
-## Next Steps
-
-1. Review PR #1 and test the published build on a clean Windows 11 x64 machine with the Microsoft runtime installed.
-2. Verify the physical audio, MIDI and plugin workflows. Test ASIO separately with the optional SDK build and a vendor interface.
-3. Record acceptance results and remaining issues before treating Phase 1 as complete. Confirm any follow-on GUI work through its own specification or PR.
-
-## Recent Updates
-
-- **2026-11-19** — Initialized the repository on `main` and opened PR #1 for the Phase 1 prototype. [Initial commit](https://github.com/mlzion/SimpleDAW/commit/99155b1a46e873d8fe9439755adddaeefe008d08) · [PR #1](https://github.com/mlzion/SimpleDAW/pull/1)
-- **2026-11-19** — Added AGPLv3 licensing and corresponding-source verification, investigated MinGW, and passed the MSVC `/MD` and `/MT` comparison. [Licensing commit](https://github.com/mlzion/SimpleDAW/commit/005893df49e5fb2956f25a438234dc077975c41f) · [MSVC verification](https://github.com/mlzion/SimpleDAW/actions/runs/44475680816)
-- **2026-11-19** — Made `/MD` the Windows release default and published the first source-paired Windows test artifact from PR #1. [Publishing run](https://github.com/mlzion/SimpleDAW/actions/runs/44478494087)
-
-- **2026-11-19** — Opened the documentation-only project memory PR. [PR #2](https://github.com/mlzion/SimpleDAW/pull/2)
+- Inspector content and Mixer, Piano Roll and Drum Editor content are placeholders. Effects shows the chain read-only. The read-only 1 and 2 input badges are temporary until Inspector routing is available. Drum Master processing is planned for v0.26.
+- Cut, Copy, Paste and Duplicate are disabled. Basic clip moves work within a lane while stopped. Complex looping, stretched media and overlapping takes can have simplified previews. Locating audio updates the selected clip source and matching take references.
+- Save As creates a copy in the current folder so relative media paths still resolve. Source media remain in their original locations.
+- Count-in is off or one bar. Punch and Loop share the ruler selection. If a range has not been selected or set in the project, Loop uses the arrangement length or at least one bar.
+- VST3 scans run in-process and WAV export waits synchronously. The distributed build uses the system Microsoft x64 v14 runtime. The optional ASIO build remains separate. [Feasibility notes](docs/feasibility.md) · [Licensing](docs/licensing.md)

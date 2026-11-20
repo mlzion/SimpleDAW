@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include <JuceHeader.h>
+#include <cstdio>
+#include <numeric>
+#include <thread>
 
 namespace te = tracktion;
 namespace ju = juce;
@@ -9,8 +12,9 @@ namespace ju = juce;
 namespace
 {
 constexpr int maxTracks = 24;
+constexpr const char* applicationTitle = "SimpleDAW v" SIMPLEDAW_RELEASE_VERSION;
 
-class PrototypeUIBehaviour final : public te::UIBehaviour
+class SimpleDawUIBehaviour final : public te::UIBehaviour
 {
 public:
     void runTaskWithProgressBar(te::ThreadPoolJobWithProgress& job) override
@@ -27,14 +31,14 @@ public:
     bool autoInitialiseDeviceManager() override { return false; }
 };
 
-bool insertAudio(te::AudioTrack& track, const ju::File& file)
+bool insertAudio(te::AudioTrack& track, const ju::File& file, te::TimePosition start = {})
 {
     te::AudioFile audio(track.edit.engine, file);
     if (!audio.isValid() || audio.getLength() <= 0.0)
         return false;
 
     return track.insertWaveClip(file.getFileNameWithoutExtension(), file,
-        {{ {}, te::TimeDuration::fromSeconds(audio.getLength()) }, {}}, false) != nullptr;
+        {{ start, start + te::TimeDuration::fromSeconds(audio.getLength()) }, {}}, false) != nullptr;
 }
 
 template<typename PluginType>
@@ -69,6 +73,23 @@ bool exportWave(te::Edit& edit, const ju::File& destination)
         && output.overwriteTargetFileWithTemporary();
 }
 
+bool writeTestWave(const ju::File& file)
+{
+    ju::WavAudioFormat wave;
+    std::unique_ptr<ju::OutputStream> stream = file.createOutputStream();
+    if (!stream)
+        return false;
+    std::unique_ptr<ju::AudioFormatWriter> writer(
+        wave.createWriterFor(stream.get(), 44100.0, 1, 16, {}, 0));
+    if (!writer)
+        return false;
+    stream.release();
+    ju::AudioBuffer<float> samples(1, 4410);
+    for (int i = 0; i < samples.getNumSamples(); ++i)
+        samples.setSample(0, i, 0.15f * std::sin(ju::MathConstants<float>::twoPi * i / 100.0f));
+    return writer->writeFromAudioSampleBuffer(samples, 0, samples.getNumSamples());
+}
+
 bool smokeTest(te::Engine& engine)
 {
     auto folder = ju::File::getSpecialLocation(ju::File::tempDirectory)
@@ -78,22 +99,8 @@ bool smokeTest(te::Engine& engine)
 
     const ju::ScopeGuard cleanup{[&] { folder.deleteRecursively(); }};
     auto input = folder.getChildFile("input.wav");
-    ju::WavAudioFormat wave;
-    {
-        std::unique_ptr<ju::OutputStream> stream = input.createOutputStream();
-        if (!stream)
-            return false;
-        std::unique_ptr<ju::AudioFormatWriter> writer(
-            wave.createWriterFor(stream.get(), 44100.0, 1, 16, {}, 0));
-        if (!writer)
-            return false;
-        stream.release();
-        ju::AudioBuffer<float> samples(1, 4410);
-        for (int i = 0; i < samples.getNumSamples(); ++i)
-            samples.setSample(0, i, 0.15f * std::sin(ju::MathConstants<float>::twoPi * i / 100.0f));
-        if (!writer->writeFromAudioSampleBuffer(samples, 0, samples.getNumSamples()))
-            return false;
-    }
+    if (!writeTestWave(input))
+        return false;
 
     auto path = folder.getChildFile("test.tracktionedit");
     auto edit = te::createEmptyEdit(engine, path);
@@ -120,6 +127,7 @@ bool smokeTest(te::Engine& engine)
     if (!exportWave(*edit, output))
         return false;
 
+    ju::WavAudioFormat wave;
     std::unique_ptr<ju::AudioFormatReader> reader(wave.createReaderFor(output.createInputStream().release(), true));
     if (!reader || reader->numChannels != 2 || reader->sampleRate != 44100.0
         || reader->bitsPerSample != 24 || reader->lengthInSamples < 4410)
@@ -130,84 +138,13 @@ bool smokeTest(te::Engine& engine)
         && samples.getMagnitude(0, samples.getNumSamples()) > 0.01f;
 }
 
-class Prototype final : public ju::Component, private ju::Timer
+class MainGui final : public ju::Component, private ju::Timer, private ju::MenuBarModel,
+                      private ju::ApplicationCommandTarget
 {
-public:
-    explicit Prototype(te::Engine& e) : engine(e)
-    {
-        addAndMakeVisible(tracks);
-        addAndMakeVisible(status);
-        addAndMakeVisible(summary);
-
-        addButton("New project", [this] { chooseProject(true); });
-        addButton("Open project", [this] { chooseProject(false); });
-        addButton("Save", [this] { save(); });
-        addButton("Devices", [this] { configureDevices(); });
-        addButton("Play from start", [this] {
-            if (ready())
-                edit->getTransport().playFromStart(false);
-        });
-        addButton("Stop", [this] { stop(); });
-        addButton("Record", [this] { record(); });
-        addButton("Add track", [this] {
-            if (!ready())
-                return;
-            const int count = te::getAudioTracks(*edit).size();
-            if (count >= maxTracks)
-                return report("Track limit reached");
-            edit->ensureNumberOfAudioTracks(count + 1);
-            refreshTracks(count + 1);
-        });
-        addButton("Import WAV", [this] { importWave(); });
-        addButton("Arm audio input", [this] { armInput(false); });
-        addButton("Arm MIDI input", [this] { armInput(true); });
-        addButton("Add MIDI synth", [this] {
-            if (auto* track = selectedTrack())
-                report(insertBuiltIn<te::FourOscPlugin>(*track, true) ? "Synth inserted" : "Could not insert synth");
-        });
-        addButton("Add reverb", [this] {
-            if (auto* track = selectedTrack())
-                report(insertBuiltIn<te::ReverbPlugin>(*track) ? "Reverb inserted" : "Could not insert reverb");
-        });
-        addButton("Load VST3", [this] { loadVst3(); });
-        addButton("Export stereo WAV", [this] { exportProject(); });
-
-        report("Create or open a project to begin");
-        startTimerHz(5);
-        setSize(830, 285);
-    }
-
-    ~Prototype() override
-    {
-        stopTimer();
-        stop();
-    }
-
-    void resized() override
-    {
-        auto area = getLocalBounds().reduced(12);
-        for (int row = 0; row < 3; ++row)
-        {
-            auto line = area.removeFromTop(46);
-            const int width = line.getWidth() / 5;
-            for (int col = 0; col < 5; ++col)
-                buttons[row * 5 + col]->setBounds(line.removeFromLeft(width).reduced(3));
-        }
-
-        tracks.setBounds(area.removeFromTop(42).reduced(3));
-        summary.setBounds(area.removeFromTop(30));
-        status.setBounds(area.removeFromTop(42));
-    }
+    #include "MainGui.inc"
 
 private:
     using FileAction = std::function<void(const ju::File&)>;
-
-    void addButton(const ju::String& name, std::function<void()> action)
-    {
-        auto* button = buttons.add(new ju::TextButton(name));
-        button->onClick = std::move(action);
-        addAndMakeVisible(button);
-    }
 
     void report(const ju::String& text)
     {
@@ -255,7 +192,7 @@ private:
                     if (!xml || !xml->hasTagName("EDIT"))
                         return report("Could not read this project");
                 }
-                if (edit && !save())
+                if (!confirmProjectChanges())
                     return;
 
                 auto next = create ? te::createEmptyEdit(engine, file) : te::loadEditFromFile(engine, file);
@@ -267,32 +204,39 @@ private:
                     if (!te::EditFileOperations(*next).save(false, true, false))
                         return report("Could not create project file");
                 }
-                edit = std::move(next);
-                edit->playInStopEnabled = true;
-                projectFile = file;
-                refreshTracks(1);
+                setProject(std::move(next), file);
                 report("Project ready");
+                warnUnavailablePlugins();
             });
     }
 
-    void refreshTracks(int selection)
+    bool hasProjectChanges()
     {
-        tracks.clear(ju::dontSendNotification);
-        int index = 1;
-        for (auto* track : te::getAudioTracks(*edit))
-        {
-            tracks.addItem(ju::String(index) + "  " + track->getName(), index);
-            ++index;
-        }
-        tracks.setSelectedId(selection, ju::dontSendNotification);
+        edit->getUndoManager().dispatchPendingMessages();
+        return edit->hasChangedSinceSaved();
+    }
+
+    bool confirmProjectChanges()
+    {
+        if (!edit)
+            return true;
+        if (!ready())
+            return false;
+
+        if (!hasProjectChanges())
+            return true;
+
+        const int choice = ju::AlertWindow::showYesNoCancelBox(ju::MessageBoxIconType::QuestionIcon,
+            "Unsaved changes", "Save changes to " + projectFile.getFileName() + "?",
+            "Save", "Don't Save", "Cancel", this);
+        return choice == 2 || (choice == 1 && save());
     }
 
     te::AudioTrack* selectedTrack()
     {
         if (!ready())
             return nullptr;
-
-        auto* track = te::getAudioTracks(*edit)[tracks.getSelectedItemIndex()];
+        auto* track = trackAt(selection);
         if (!track)
             report("Select a track first");
         return track;
@@ -314,7 +258,12 @@ private:
 
     void armInput(bool midi)
     {
-        auto* track = selectedTrack();
+        if (!edit || edit->getTransport().isRecording())
+            return;
+        const bool playing = edit->getTransport().isPlaying();
+        if (midi && playing)
+            return;
+        auto* track = trackAt(selection);
         if (!track)
             return;
 
@@ -325,7 +274,7 @@ private:
                 if (input->getDeviceType() == te::InputDevice::physicalMidiDevice)
                     input->setEnabled(true);
         }
-        else
+        else if (!playing)
         {
             for (int i = 0; i < devices.getNumWaveInDevices(); ++i)
                 if (auto* input = devices.getWaveInDevice(i))
@@ -334,15 +283,17 @@ private:
 
         edit->getTransport().ensureContextAllocated();
         ju::PopupMenu menu;
-        ju::Array<te::InputDeviceInstance*> choices;
+        ju::StringArray choices;
+        const auto trackID = track->itemID;
         const auto type = midi ? te::InputDevice::physicalMidiDevice : te::InputDevice::waveDevice;
         for (auto* instance : edit->getAllInputDevices())
         {
             auto& device = instance->getInputDevice();
-            if (device.getDeviceType() == type)
+            if (device.getDeviceType() == type && device.isEnabled())
             {
-                choices.add(instance);
-                menu.addItem(choices.size(), device.getName());
+                choices.add(device.getDeviceID());
+                const bool armed = isArmed(*instance, trackID);
+                menu.addItem(choices.size(), device.getName(), !playing || armed, armed);
             }
         }
 
@@ -353,21 +304,84 @@ private:
         if (choice == 0)
             return;
 
-        auto* instance = choices[choice - 1];
-        if (instance->isRecordingEnabled(track->itemID))
+        if (!edit || edit->getTransport().isRecording())
+            return;
+        track = te::findAudioTrackForID(*edit, trackID);
+        if (!track)
+            return;
+
+        for (auto* input : edit->getAllInputDevices())
+            if (input->getInputDevice().getDeviceType() == type
+                && input->getInputDevice().getDeviceID() == choices[choice - 1])
+            {
+                if (edit->getTransport().isPlaying() && !isArmed(*input, trackID))
+                    return report("Stop playback before assigning a new input");
+                const auto inputName = input->getInputDevice().getName();
+                if (const auto result = toggleInput(*input, *track); result.failed())
+                    return report(result.getErrorMessage());
+                report(inputName + (isArmed(*input, trackID) ? " armed on " : " removed from ") + track->getName());
+                updateControls();
+                return;
+            }
+        report("The selected input is no longer available");
+    }
+
+    void showMonitoringReport()
+    {
+        auto& manager = engine.getDeviceManager().deviceManager;
+        auto* device = manager.getCurrentAudioDevice();
+        if (!device)
+            return report("Open Audio and MIDI Devices to select an interface first");
+
+        const auto rate = device->getCurrentSampleRate();
+        if (rate <= 0.0)
+            return report("The selected audio device is inactive");
+        const auto samples = [rate](int n) {
+            return ju::String(n) + " samples (" + ju::String(n * 1000.0 / rate, 2) + " ms)";
+        };
+        const auto setup = manager.getAudioDeviceSetup();
+        auto detail = manager.getCurrentAudioDeviceType()
+            + "\nInput: " + setup.inputDeviceName + " / " + ju::String(device->getActiveInputChannels().countNumberOfSetBits()) + " ch"
+            + "\nOutput: " + setup.outputDeviceName + " / " + ju::String(device->getActiveOutputChannels().countNumberOfSetBits()) + " ch"
+            + "\nSample rate: " + ju::String(rate, 0) + " Hz"
+            + "\nProcessing buffer: " + samples(device->getCurrentBufferSizeSamples())
+            + "\nDriver input delay: " + samples(device->getInputLatencyInSamples())
+            + "\nDriver output delay: " + samples(device->getOutputLatencyInSamples());
+
+        if (edit)
         {
-            instance->setRecordingEnabled(track->itemID, false);
-            return report("Input disarmed");
+            if (auto* context = edit->getTransport().getCurrentPlaybackContext())
+                detail += "\nTracktion graph latency: " + samples(context->getLatencySamples());
+            if (auto* track = trackAt(selection))
+            {
+                detail += "\n\nSelected track: " + track->getName();
+                bool routed = false;
+                for (auto* input : edit->getAllInputDevices())
+                    if (input->getInputDevice().getDeviceType() == te::InputDevice::waveDevice
+                        && input->getTargets().contains(track->itemID))
+                    {
+                        routed = true;
+                        const auto& source = input->getInputDevice();
+                        using Mode = te::InputDevice::MonitorMode;
+                        const auto mode = source.getMonitorMode();
+                        const auto* label = mode == Mode::automatic ? "Auto" : mode == Mode::on ? "On" : "Off";
+                        detail += "\n" + source.getName() + " - " + (isArmed(*input, track->itemID) ? "armed" : "disarmed")
+                            + ", monitor " + label + (input->isLivePlayEnabled(*track) ? " (audible)" : " (inactive)");
+                    }
+                if (!routed)
+                    detail += "\nNo physical audio input routed to this track.";
+            }
+
+            for (auto* plugin : te::getAllPlugins(*edit, true))
+                if (plugin->isEnabled() && plugin->getLatencySeconds() > 0.0)
+                {
+                    auto* owner = plugin->getOwnerTrack();
+                    detail += "\n" + (owner ? owner->getName() : ju::String("Master")) + " / " + plugin->getName()
+                        + ": " + ju::String(plugin->getLatencySeconds() * 1000.0, 2) + " ms";
+                }
         }
-
-        const auto target = instance->setTarget(track->itemID, true, &edit->getUndoManager(), 0);
-        if (!target)
-            return report(target.error());
-
-        instance->setRecordingEnabled(track->itemID, true);
-        const auto inputName = instance->getInputDevice().getName();
-        edit->restartPlayback();
-        report(inputName + " armed on " + track->getName());
+        detail += "\n\nReported delays are component values. Measuring guitar-to-speaker delay requires the interface.";
+        ju::AlertWindow::showMessageBoxAsync(ju::MessageBoxIconType::InfoIcon, "Audio Monitoring Report", detail);
     }
 
     void record()
@@ -375,9 +389,18 @@ private:
         if (!ready())
             return;
 
+        if (edit->recordingPunchInOut && !timeSelection)
+            return report("Drag across the ruler to select the punch range");
+        if (edit->recordingPunchInOut)
+            edit->getTransport().setLoopRange(*timeSelection);
+        if (paused)
+            editCursor = edit->getTransport().getPosition();
+
+        // Reopening an edit can restore arming before the first playback context exists.
+        edit->getTransport().ensureContextAllocated();
         for (auto* instance : edit->getAllInputDevices())
             for (auto* track : te::getAudioTracks(*edit))
-                if (instance->isRecordingEnabled(track->itemID))
+                if (isArmed(*instance, track->itemID))
                 {
                     edit->getTransport().record(false);
                     report(edit->getTransport().isRecording() ? "Recording" : "Could not start recording");
@@ -394,8 +417,13 @@ private:
 
         const bool recording = edit->getTransport().isRecording();
         edit->getTransport().stop(false, false);
+        edit->getTransport().setPosition(editCursor);
+        paused = false;
         if (recording)
-            save();
+        {
+            edit->markAsChanged();
+            report("Recording stopped. Save the project to keep the new items.");
+        }
     }
 
     bool save()
@@ -413,11 +441,17 @@ private:
         if (!selectedTrack())
             return;
 
-        chooseFile("Import WAV at start of selected track", "*.wav",
+        const auto trackID = trackAt(selection)->itemID;
+        const auto start = te::TimePosition::fromSeconds(snapSeconds(editCursor.inSeconds()));
+        chooseFile("Import WAV at the edit cursor", "*.wav",
             ju::FileBrowserComponent::openMode | ju::FileBrowserComponent::canSelectFiles,
-            [this](const ju::File& file) {
-                if (auto* track = selectedTrack())
-                    report(insertAudio(*track, file) ? "WAV imported" : "Could not import WAV");
+            [this, trackID, start](const ju::File& file) {
+                if (ready())
+                    if (auto* track = te::findAudioTrackForID(*edit, trackID))
+                    {
+                        edit->getUndoManager().beginNewTransaction("Import audio");
+                        report(insertAudio(*track, file, start) ? "WAV imported" : "Could not import WAV");
+                    }
             });
     }
 
@@ -475,27 +509,6 @@ private:
             });
     }
 
-    void timerCallback() override
-    {
-        if (!edit)
-            return;
-
-        auto& transport = edit->getTransport();
-        auto text = projectFile.getFileName() + "  |  "
-            + (transport.isRecording() ? "Recording" : transport.isPlaying() ? "Playing" : "Stopped");
-
-        if (auto* track = te::getAudioTracks(*edit)[tracks.getSelectedItemIndex()])
-            text += "  |  Selected track clips: " + ju::String(track->getClips().size());
-        summary.setText(text, ju::dontSendNotification);
-    }
-
-    te::Engine& engine;
-    std::unique_ptr<te::Edit> edit;
-    ju::File projectFile;
-    ju::OwnedArray<ju::TextButton> buttons;
-    ju::ComboBox tracks;
-    ju::Label summary;
-    ju::Label status;
     std::unique_ptr<ju::FileChooser> chooser;
 };
 
@@ -503,31 +516,54 @@ class Application final : public ju::JUCEApplication
 {
 public:
     const ju::String getApplicationName() override { return "SimpleDAW"; }
-    const ju::String getApplicationVersion() override { return "0.1.0"; }
+    const ju::String getApplicationVersion() override { return ProjectInfo::versionString; }
 
     void initialise(const ju::String& command) override
     {
         if (te::PluginManager::startChildProcessPluginScan(command))
             return;
 
-        const bool testing = command == "--smoke-test";
+        const bool testing = command == "--smoke-test" || command == "--gui-test" || command == "--correction-test";
         std::unique_ptr<te::EngineBehaviour> engineBehaviour;
         if (testing)
             engineBehaviour = std::make_unique<SmokeTestEngineBehaviour>();
         engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW",
-            std::make_unique<PrototypeUIBehaviour>(), std::move(engineBehaviour));
+            std::make_unique<SimpleDawUIBehaviour>(), std::move(engineBehaviour));
         if (testing)
         {
-            setApplicationReturnValue(smokeTest(*engine) ? 0 : 1);
+            bool passed = false;
+            if (command == "--gui-test")
+                passed = MainGui::test(*engine);
+            else if (command == "--correction-test")
+                passed = MainGui::testCorrections(*engine);
+            else
+                passed = smokeTest(*engine);
+            setApplicationReturnValue(passed ? 0 : 1);
             quit();
             return;
         }
 
         window = std::make_unique<Window>();
         window->setUsingNativeTitleBar(true);
-        window->setContentOwned(new Prototype(*engine), true);
-        window->centreWithSize(window->getWidth(), window->getHeight());
+        auto* gui = new MainGui(*engine);
+        window->setContentOwned(gui, true);
+        gui->installWindowShortcuts(*window);
+        window->setResizable(true, false);
+        window->setResizeLimits(1060, 580, 7680, 4320);
+        auto bounds = window->getBounds();
+        if (const auto* display = ju::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+            bounds = bounds.withSize(ju::jmax(1060, ju::jmin(bounds.getWidth(), display->userArea.getWidth() - 16)),
+                                     ju::jmax(580, ju::jmin(bounds.getHeight(), display->userArea.getHeight() - 32)));
+        window->centreWithSize(bounds.getWidth(), bounds.getHeight());
         window->setVisible(true);
+    }
+
+    void systemRequestedQuit() override
+    {
+        if (window)
+            if (auto* gui = dynamic_cast<MainGui*>(window->getContentComponent()); gui && !gui->prepareToQuit())
+                return;
+        quit();
     }
 
     void shutdown() override
@@ -539,7 +575,7 @@ public:
 private:
     struct Window final : ju::DocumentWindow
     {
-        Window() : DocumentWindow("SimpleDAW Phase 1", ju::Colours::darkgrey, closeButton) {}
+        Window() : DocumentWindow(applicationTitle, ju::Colours::black, allButtons) {}
         void closeButtonPressed() override { ju::JUCEApplication::getInstance()->systemRequestedQuit(); }
     };
 

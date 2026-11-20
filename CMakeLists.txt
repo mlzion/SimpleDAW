@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(SimpleDAW VERSION 0.1.0 LANGUAGES C CXX)
+project(SimpleDAW VERSION 0.21.0 LANGUAGES C CXX)
 
 include(FetchContent)
 # Use the JUCE revision recorded by Tracktion Engine v3.2.0.
@@ -15,7 +15,30 @@ FetchContent_MakeAvailable(juce tracktion)
 
 set(SIMPLEDAW_ASIO_SDK "" CACHE PATH "Optional directory containing iasiodrv.h")
 
-juce_add_gui_app(SimpleDAW PRODUCT_NAME "SimpleDAW")
+# Use major.minor for a zero patch release and keep nonzero patch or tweak numbers.
+set(SIMPLEDAW_RELEASE_VERSION "${PROJECT_VERSION}")
+if(PROJECT_VERSION STREQUAL "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.0")
+    set(SIMPLEDAW_RELEASE_VERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}")
+endif()
+
+juce_add_gui_app(SimpleDAW PRODUCT_NAME "SimpleDAW" VERSION "${PROJECT_VERSION}")
+if(WIN32)
+    set_target_properties(SimpleDAW PROPERTIES OUTPUT_NAME "SimpleDAW-v${SIMPLEDAW_RELEASE_VERSION}")
+    # Regenerate JUCE's version resource when its input changes in an existing build.
+    get_target_property(juce_sources SimpleDAW JUCE_GENERATED_SOURCES_DIRECTORY)
+    get_target_property(juce_info SimpleDAW JUCE_INFO_FILE)
+    add_custom_command(OUTPUT "${juce_sources}/SimpleDAW_resources.rc" APPEND DEPENDS "${juce_info}")
+
+    string(CONFIGURE [=[
+{
+  "version": "@PROJECT_VERSION@",
+  "windowTitle": "SimpleDAW v@SIMPLEDAW_RELEASE_VERSION@",
+  "executable": "$<TARGET_FILE:SimpleDAW>",
+  "artifactName": "SimpleDAW-v@SIMPLEDAW_RELEASE_VERSION@-Windows-x64"
+}
+]=] release_info @ONLY)
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/SimpleDAW-$<CONFIG>.json" CONTENT "${release_info}")
+endif()
 if(MSVC)
     option(SIMPLEDAW_MSVC_DYNAMIC_RUNTIME "Use the DLL-based MSVC runtime (/MD)" ON)
     if(SIMPLEDAW_MSVC_DYNAMIC_RUNTIME)
@@ -28,8 +51,12 @@ juce_generate_juce_header(SimpleDAW)
 target_sources(SimpleDAW PRIVATE src/Main.cpp)
 target_compile_features(SimpleDAW PRIVATE cxx_std_20)
 target_compile_definitions(SimpleDAW PRIVATE
+    SIMPLEDAW_RELEASE_VERSION="${SIMPLEDAW_RELEASE_VERSION}"
     JUCE_PLUGINHOST_VST3=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0
     JUCE_MODAL_LOOPS_PERMITTED=1 TRACKTION_ENABLE_TIMESTRETCH_SOUNDTOUCH=1)
+if(MSVC)
+    target_compile_options(SimpleDAW PRIVATE /utf-8)
+endif()
 target_link_libraries(SimpleDAW PRIVATE tracktion::tracktion_engine juce::juce_audio_utils)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(SimpleDAW PRIVATE atomic)
@@ -45,5 +72,7 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     add_test(NAME project_round_trip COMMAND SimpleDAW --smoke-test)
-    set_tests_properties(project_round_trip PROPERTIES TIMEOUT 60)
+    add_test(NAME main_gui COMMAND SimpleDAW --gui-test)
+    add_test(NAME gui_corrections COMMAND SimpleDAW --correction-test)
+    set_tests_properties(project_round_trip main_gui gui_corrections PROPERTIES TIMEOUT 60)
 endif()
