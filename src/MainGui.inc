@@ -621,14 +621,30 @@ private:
         std::fprintf(stderr, "Checking live levels before route removal\n");
         if (!waitForLevels(true))
             return false;
+        const auto findInput = [&]() -> te::InputDeviceInstance* {
+            for (auto* current : routeEdit->getAllInputDevices())
+                if (current->getInputDevice().getDeviceID() == deviceID)
+                    return current;
+            return nullptr;
+        };
+        const auto hasRoutes = [&](bool firstArmed) {
+            const auto current = findInput();
+            return current && isArmed(*current, first.itemID) == firstArmed
+                && isArmed(*current, second.itemID);
+        };
         std::fprintf(stderr, "Removing one route during playback\n");
-        if (toggleInput(input, first).failed() || isArmed(input, first.itemID)
-            || !isArmed(input, second.itemID) || !waitForLevels(false) || !transport.isPlaying())
+        auto* currentInput = findInput();
+        if (!currentInput || toggleInput(*currentInput, first).failed() || !hasRoutes(false))
+            return false;
+        std::fprintf(stderr, "Checking live levels after route removal\n");
+        if (!waitForLevels(false) || !hasRoutes(false) || !transport.isPlaying())
             return false;
         std::fprintf(stderr, "Stopping playback and starting hosted recording\n");
         if (!gui.invokeShortcut(playStop, ju::KeyPress::spaceKey, false) || !transport.isPlaying()
-            || !gui.invokeShortcut(playStop, ju::KeyPress::spaceKey) || transport.isPlaying()
-            || toggleInput(input, first).failed())
+            || !gui.invokeShortcut(playStop, ju::KeyPress::spaceKey) || transport.isPlaying())
+            return false;
+        currentInput = findInput();
+        if (!currentInput || toggleInput(*currentInput, first).failed())
             return false;
         transport.record(false);
         bool bothRecording = false;
@@ -1252,7 +1268,6 @@ private:
             // Tracktion can skip rebuilding on removal when other destinations remain.
             // Request the swap of the audio graph without stopping transport or changing other routes.
             track.edit.restartPlayback();
-            track.edit.dispatchPendingUpdatesSynchronously();
         }
         else
         {
