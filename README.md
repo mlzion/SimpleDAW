@@ -29,9 +29,9 @@ The default build uses JUCE's Windows audio backends, including WASAPI. For ASIO
 
 1. Open **Options → Audio and MIDI Devices** to choose an interface, active channels, sample rate, and buffer size.
 2. Create a project from **File → New**. Use **Insert → Audio Track** or **MIDI Track** and click a track header to select it.
-3. Use **File → Import Audio** to place a WAV at the start of the selected track. For recording, choose **Options → Arm Audio Input**, select an input, then press **Record** and **Stop**. Choose the same input again to disarm it.
+3. Use **File → Import Audio** or **Insert → Audio File** to place a WAV at the snapped edit cursor on the selected track. For recording, choose **Options → Arm Audio Input**, select an input, then press **Record** and **Stop**. Choose a checked input again to remove its assignment from the selected track. A physical input can feed multiple armed tracks.
 4. For MIDI, add the built-in synth from **Insert** and arm the controller through **Options**. Use **Insert → Add Reverb** or **Load VST3** for effects on the selected track.
 5. Use the ruler to position the edit cursor. Drag across the ruler to set a time range for Loop or Time-Selection Punch. Space plays or stops, R records, and Ctrl+S saves.
-6. Save explicitly before closing. Keep recorded and imported media at their original paths. Use **File → Export Audio** to render a new stereo WAV.
+6. Save after recording to retain the new items in the project. New, Open and Exit prompt if there are unsaved edits. Keep recorded and imported media at their original paths. Use **File → Export Audio** to render a new stereo WAV.
 
 The Windows workflow runs CTest, inspects DLL imports, and checks isolated startup. Use the [v0.21 live test checksheet](docs/testing/v0.21-live-test.md) for Windows hardware verification and [project status](PROJECT_STATUS.md) for current limits.

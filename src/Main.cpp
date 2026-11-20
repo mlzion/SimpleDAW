@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include <JuceHeader.h>
+#include <cstdio>
 #include <numeric>
+#include <thread>
 
 namespace te = tracktion;
 namespace ju = juce;
@@ -70,6 +72,23 @@ bool exportWave(te::Edit& edit, const ju::File& destination)
         && output.overwriteTargetFileWithTemporary();
 }
 
+bool writeTestWave(const ju::File& file)
+{
+    ju::WavAudioFormat wave;
+    std::unique_ptr<ju::OutputStream> stream = file.createOutputStream();
+    if (!stream)
+        return false;
+    std::unique_ptr<ju::AudioFormatWriter> writer(
+        wave.createWriterFor(stream.get(), 44100.0, 1, 16, {}, 0));
+    if (!writer)
+        return false;
+    stream.release();
+    ju::AudioBuffer<float> samples(1, 4410);
+    for (int i = 0; i < samples.getNumSamples(); ++i)
+        samples.setSample(0, i, 0.15f * std::sin(ju::MathConstants<float>::twoPi * i / 100.0f));
+    return writer->writeFromAudioSampleBuffer(samples, 0, samples.getNumSamples());
+}
+
 bool smokeTest(te::Engine& engine)
 {
     auto folder = ju::File::getSpecialLocation(ju::File::tempDirectory)
@@ -79,22 +98,8 @@ bool smokeTest(te::Engine& engine)
 
     const ju::ScopeGuard cleanup{[&] { folder.deleteRecursively(); }};
     auto input = folder.getChildFile("input.wav");
-    ju::WavAudioFormat wave;
-    {
-        std::unique_ptr<ju::OutputStream> stream = input.createOutputStream();
-        if (!stream)
-            return false;
-        std::unique_ptr<ju::AudioFormatWriter> writer(
-            wave.createWriterFor(stream.get(), 44100.0, 1, 16, {}, 0));
-        if (!writer)
-            return false;
-        stream.release();
-        ju::AudioBuffer<float> samples(1, 4410);
-        for (int i = 0; i < samples.getNumSamples(); ++i)
-            samples.setSample(0, i, 0.15f * std::sin(ju::MathConstants<float>::twoPi * i / 100.0f));
-        if (!writer->writeFromAudioSampleBuffer(samples, 0, samples.getNumSamples()))
-            return false;
-    }
+    if (!writeTestWave(input))
+        return false;
 
     auto path = folder.getChildFile("test.tracktionedit");
     auto edit = te::createEmptyEdit(engine, path);
@@ -121,6 +126,7 @@ bool smokeTest(te::Engine& engine)
     if (!exportWave(*edit, output))
         return false;
 
+    ju::WavAudioFormat wave;
     std::unique_ptr<ju::AudioFormatReader> reader(wave.createReaderFor(output.createInputStream().release(), true));
     if (!reader || reader->numChannels != 2 || reader->sampleRate != 44100.0
         || reader->bitsPerSample != 24 || reader->lengthInSamples < 4410)
@@ -203,6 +209,12 @@ private:
             });
     }
 
+    bool hasProjectChanges()
+    {
+        edit->getUndoManager().dispatchPendingMessages();
+        return edit->hasChangedSinceSaved();
+    }
+
     bool confirmProjectChanges()
     {
         if (!edit)
@@ -210,8 +222,7 @@ private:
         if (!ready())
             return false;
 
-        edit->getUndoManager().dispatchPendingMessages();
-        if (!edit->hasChangedSinceSaved())
+        if (!hasProjectChanges())
             return true;
 
         const int choice = ju::AlertWindow::showYesNoCancelBox(ju::MessageBoxIconType::QuestionIcon,
@@ -503,7 +514,7 @@ public:
         if (te::PluginManager::startChildProcessPluginScan(command))
             return;
 
-        const bool testing = command == "--smoke-test" || command == "--gui-test";
+        const bool testing = command == "--smoke-test" || command == "--gui-test" || command == "--correction-test";
         std::unique_ptr<te::EngineBehaviour> engineBehaviour;
         if (testing)
             engineBehaviour = std::make_unique<SmokeTestEngineBehaviour>();
@@ -511,7 +522,14 @@ public:
             std::make_unique<SimpleDawUIBehaviour>(), std::move(engineBehaviour));
         if (testing)
         {
-            setApplicationReturnValue((command == "--gui-test" ? MainGui::test(*engine) : smokeTest(*engine)) ? 0 : 1);
+            bool passed = false;
+            if (command == "--gui-test")
+                passed = MainGui::test(*engine);
+            else if (command == "--correction-test")
+                passed = MainGui::testCorrections(*engine);
+            else
+                passed = smokeTest(*engine);
+            setApplicationReturnValue(passed ? 0 : 1);
             quit();
             return;
         }

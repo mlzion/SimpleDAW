@@ -383,7 +383,171 @@ public:
             && tracks.size() >= 2 && tracks.getLast()->getClips().size() == 1;
     }
 
+    static bool testCorrections(te::Engine& engine)
+    {
+        auto dir = ju::File::getSpecialLocation(ju::File::tempDirectory).getNonexistentChildFile("SimpleDAW-corrections", {});
+        if (dir.createDirectory().failed())
+            return false;
+        const ju::ScopeGuard cleanup { [&] { dir.deleteRecursively(); } };
+        MainGui gui(engine, dir.getChildFile("ui.settings"));
+        const auto project = dir.getChildFile("corrections.tracktionedit");
+        const auto audio = dir.getChildFile("source.wav");
+        if (!writeTestWave(audio))
+            return false;
+
+        const auto check = [](bool passed, const char* name) {
+            if (!passed)
+                std::fprintf(stderr, "Correction check failed: %s\n", name);
+            return passed;
+        };
+        gui.setProject(te::createEmptyEdit(engine, project), project);
+        gui.addTrack(false);
+        const int firstIndex = gui.selection;
+        auto* firstTrack = gui.trackAt(firstIndex);
+        if (!check(firstTrack && insertBuiltIn<te::ReverbPlugin>(*firstTrack), "install track effect"))
+            return false;
+        gui.addTrack(false);
+        const int secondIndex = gui.selection;
+        if (!check(gui.selectedEffects().contains("No effects"), "new track effect independence"))
+            return false;
+        gui.selectTrack(firstIndex);
+        if (!check(!gui.selectedEffects().contains("No effects"), "original effect chain remains")
+            || !check(gui.hasProjectChanges() && gui.save() && !gui.hasProjectChanges(), "track edits mark project dirty"))
+            return false;
+
+        const auto from = te::TimePosition::fromSeconds(gui.snapSeconds(0.68));
+        if (!check(insertAudio(*firstTrack, audio, from), "import WAV"))
+            return false;
+        auto* wave = dynamic_cast<te::WaveAudioClip*>(firstTrack->getClips().getLast());
+        if (!check(wave && wave->getPosition().getStart() == from, "import at snapped edit cursor"))
+            return false;
+        const auto id = wave->itemID;
+        gui.selectedItem = gui.dragItem = id;
+        gui.dragAnchor = 0.0;
+        gui.updateDragPreview(0.27);
+        const auto moved = te::TimePosition::fromSeconds(gui.snapSeconds(from.inSeconds() + 0.27));
+        if (!check(gui.dragPreview == moved && moved != from && wave->getPosition().getStart() == from,
+                   "snapped live preview leaves edit alone"))
+            return false;
+        gui.finishDrag();
+        if (!check(wave->getPosition().getStart() == moved, "commit clip preview"))
+            return false;
+        gui.dragItem = {};
+        gui.dragPreview.reset();
+        gui.draggingRange = true;
+        gui.dragAnchor = 0.125;
+        const auto previousRange = gui.timeSelection;
+        gui.updateDragPreview(1.01);
+        if (!check(gui.rangePreview.has_value() && gui.timeSelection == previousRange, "live range preview"))
+            return false;
+        gui.finishDrag();
+        if (!check(gui.timeSelection == gui.rangePreview, "commit selected time range"))
+            return false;
+
+        const auto clipPosition = wave->getPosition();
+        const auto missing = dir.getChildFile("missing.wav");
+        replaceWaveSource(*wave, missing);
+        ju::PluginDescription unavailable;
+        unavailable.name = "Unavailable test VST3";
+        unavailable.pluginFormatName = "VST3";
+        unavailable.fileOrIdentifier = dir.getChildFile("Unavailable.vst3").getFullPathName();
+        unavailable.uniqueId = 121;
+        auto pluginState = te::ExternalPlugin::create(engine, unavailable);
+        pluginState.setProperty(te::IDs::wet, 0.42f, nullptr);
+        if (!check(gui.trackAt(secondIndex)->pluginList.insertPlugin(pluginState, 0) != nullptr
+                   && gui.save(), "save unresolved media and plugin"))
+            return false;
+
+        gui.setProject(te::loadEditFromFile(engine, project), project);
+        wave = missingWave(te::findClipForID(*gui.edit, id));
+        if (!check(wave && wave->getOriginalFile() == missing && wave->getPosition() == clipPosition,
+                   "reopen missing audio with original reference and position")
+            || !check(unavailablePlugins(*gui.edit).joinIntoString(" ").contains(unavailable.name),
+                      "reopen unavailable plugin"))
+            return false;
+        replaceWaveSource(*wave, audio);
+        if (!check(!missingWave(wave) && wave->getPosition() == clipPosition && gui.save(), "relink and save"))
+            return false;
+
+        gui.setProject(te::loadEditFromFile(engine, project), project);
+        wave = dynamic_cast<te::WaveAudioClip*>(te::findClipForID(*gui.edit, id));
+        if (!check(wave && !missingWave(wave) && wave->getOriginalFile() == audio, "reopen relinked audio"))
+            return false;
+        if (!check(unavailablePlugins(*gui.edit).joinIntoString(" ").contains(unavailable.name),
+                   "keep unavailable plugin through save"))
+            return false;
+        for (auto* plugin : gui.trackAt(secondIndex)->pluginList.getPlugins())
+            if (plugin->getName() == unavailable.name
+                && !check(std::abs(static_cast<double>(plugin->state[te::IDs::wet]) - 0.42) < 0.001,
+                          "retain unavailable plugin setting"))
+                return false;
+
+        auto& thumbnail = gui.arrangement.waveform(id, wave->getOriginalFile());
+        const auto timeout = ju::Time::getMillisecondCounter() + 3000;
+        while (!thumbnail.isFullyLoaded() && ju::Time::getMillisecondCounter() < timeout)
+            ju::MessageManager::getInstance()->runDispatchLoopUntil(20);
+        return check(thumbnail.getNumChannels() == 1 && thumbnail.getApproximatePeak() > 0.01f,
+                     "reload non-flat waveform")
+            && check(testInputRoutes(engine, dir), "shared input arms and starts separate recording targets");
+    }
+
 private:
+    static bool testInputRoutes(te::Engine& engine, const ju::File& directory)
+    {
+        auto& manager = engine.getDeviceManager();
+        auto& host = manager.getHostedAudioDeviceInterface();
+        const te::HostedAudioDeviceInterface::Parameters params;
+        host.initialise(params);
+        host.prepareToPlay(params.sampleRate, params.blockSize);
+        manager.dispatchPendingUpdates();
+        for (auto* wave : manager.getWaveInputDevices())
+            wave->setEnabled(true);
+        auto routeEdit = te::createEmptyEdit(engine, directory.getChildFile("routes.tracktionedit"));
+        routeEdit->ensureNumberOfAudioTracks(2);
+        auto& transport = routeEdit->getTransport();
+        transport.ensureContextAllocated();
+        auto tracks = te::getAudioTracks(*routeEdit);
+        auto inputs = routeEdit->getAllInputDevices();
+        inputs.removeIf([](auto* input) { return input->getInputDevice().getDeviceType() != te::InputDevice::waveDevice; });
+        if (inputs.isEmpty())
+            return false;
+        auto& input = *inputs.getFirst();
+        auto& first = *tracks[0];
+        auto& second = *tracks[1];
+        if (toggleInput(input, first).failed() || toggleInput(input, second).failed()
+            || !isArmed(input, first.itemID) || !isArmed(input, second.itemID))
+            return false;
+        if (toggleInput(input, first).failed() || isArmed(input, first.itemID)
+            || !isArmed(input, second.itemID) || toggleInput(input, first).failed())
+            return false;
+        routeEdit->setCountInMode(te::Edit::CountIn::none);
+        const auto deviceID = input.getInputDevice().getDeviceID();
+        std::jthread processing([&](std::stop_token stop) {
+            ju::AudioBuffer<float> buffer(2, params.blockSize);
+            ju::MidiBuffer midi;
+            while (!stop.stop_requested())
+            {
+                buffer.clear();
+                midi.clear();
+                host.processBlock(buffer, midi);
+                ju::Thread::sleep(4);
+            }
+        });
+        transport.record(false);
+        bool bothRecording = false;
+        for (auto* current : routeEdit->getAllInputDevices())
+            if (current->getInputDevice().getDeviceID() == deviceID)
+            {
+                const auto firstFile = current->getRecordingFile(first.itemID);
+                const auto secondFile = current->getRecordingFile(second.itemID);
+                bothRecording = transport.isRecording() && firstFile != ju::File{}
+                    && secondFile != ju::File{} && firstFile != secondFile;
+                break;
+            }
+        transport.stop(true, false);
+        return bothRecording;
+    }
+
     ju::TextButton& button(std::vector<ju::Component*>& row, const ju::String& label,
                            std::function<void()> action, uint32_t colour = 0xff292929)
     {
