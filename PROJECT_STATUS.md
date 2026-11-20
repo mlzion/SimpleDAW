@@ -2,6 +2,14 @@
 
 Snapshot reviewed on **2026-11-19**. Update this file with verified changes at the end of each development assignment.
 
+## Specification and planning update — 2026-11-20
+
+This documentation-only change adds the [specification and phase-plan index](docs/specifications/README.md) and three original PDFs. All files were parsed, all 14 pages rendered for visual inspection, and copied bytes verified with SHA-256. No application tests or live hardware acceptance ran for this import.
+
+The local `main` history at `d036d97` confirms PRs #1 (audio engine) and #2 (repository documentation) merged. The older snapshot below predates those merges. The current `origin/feature/v0.21-main-gui` status records v0.21 GUI implementation and automated verification evidence, with Windows/hardware acceptance still pending; consult [PR #3](https://github.com/mlzion/SimpleDAW/pull/3) and its branch status for current details. This change does not certify live acceptance or complete a development phase.
+
+The supplied phase plan is Draft 0.1; accepted requirements, pending decisions, implementation and verification remain separate. Its phase numbers are planning identifiers and differ from the earlier audio-engine Phase 1. Next: review this documentation PR, then confirm v0.21 live acceptance before subsequent implementation assignments. The historical status below is retained as a dated record.
+
 ## Project Overview
 
 SimpleDAW is a digital audio workstation for musicians who want an approachable way to record and finish a project. Its design favors clear controls and a simple workflow. The current prototype is described on the Phase 1 branch. [Prototype README](https://github.com/mlzion/SimpleDAW/blob/feature/phase1-audio-engine/README.md)
