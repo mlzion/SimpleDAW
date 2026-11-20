@@ -258,7 +258,12 @@ private:
 
     void armInput(bool midi)
     {
-        auto* track = selectedTrack();
+        if (!edit || edit->getTransport().isRecording())
+            return;
+        const bool playing = edit->getTransport().isPlaying();
+        if (midi && playing)
+            return;
+        auto* track = trackAt(selection);
         if (!track)
             return;
 
@@ -269,7 +274,7 @@ private:
                 if (input->getDeviceType() == te::InputDevice::physicalMidiDevice)
                     input->setEnabled(true);
         }
-        else
+        else if (!playing)
         {
             for (int i = 0; i < devices.getNumWaveInDevices(); ++i)
                 if (auto* input = devices.getWaveInDevice(i))
@@ -287,7 +292,8 @@ private:
             if (device.getDeviceType() == type && device.isEnabled())
             {
                 choices.add(device.getDeviceID());
-                menu.addItem(choices.size(), device.getName(), true, isArmed(*instance, trackID));
+                const bool armed = isArmed(*instance, trackID);
+                menu.addItem(choices.size(), device.getName(), !playing || armed, armed);
             }
         }
 
@@ -298,7 +304,7 @@ private:
         if (choice == 0)
             return;
 
-        if (!ready())
+        if (!edit || edit->getTransport().isRecording())
             return;
         track = te::findAudioTrackForID(*edit, trackID);
         if (!track)
@@ -308,6 +314,8 @@ private:
             if (input->getInputDevice().getDeviceType() == type
                 && input->getInputDevice().getDeviceID() == choices[choice - 1])
             {
+                if (edit->getTransport().isPlaying() && !isArmed(*input, trackID))
+                    return report("Stop playback before assigning a new input");
                 const auto inputName = input->getInputDevice().getName();
                 if (const auto result = toggleInput(*input, *track); result.failed())
                     return report(result.getErrorMessage());
@@ -537,7 +545,9 @@ public:
 
         window = std::make_unique<Window>();
         window->setUsingNativeTitleBar(true);
-        window->setContentOwned(new MainGui(*engine), true);
+        auto* gui = new MainGui(*engine);
+        window->setContentOwned(gui, true);
+        gui->installWindowShortcuts(*window);
         window->setResizable(true, false);
         window->setResizeLimits(1060, 580, 7680, 4320);
         auto bounds = window->getBounds();

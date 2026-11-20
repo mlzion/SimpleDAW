@@ -171,7 +171,6 @@ public:
         commandManager.registerAllCommandsForTarget(this);
         commandManager.setFirstCommandTarget(this);
         setApplicationCommandManagerToWatch(&commandManager);
-        addKeyListener(commandManager.getKeyMappings());
         addAndMakeVisible(menuBar);
         addAndMakeVisible(arrangement);
         addAndMakeVisible(inspector);
@@ -286,11 +285,18 @@ public:
     ~MainGui() override
     {
         stopTimer();
-        removeKeyListener(commandManager.getKeyMappings());
+        if (shortcutHost != nullptr)
+            shortcutHost->removeKeyListener(commandManager.getKeyMappings());
         setApplicationCommandManagerToWatch(nullptr);
         menuBar.setModel(nullptr);
         stop();
         meters.clear();
+    }
+
+    void installWindowShortcuts(ju::Component& host)
+    {
+        shortcutHost = &host;
+        host.addKeyListener(commandManager.getKeyMappings());
     }
 
     bool prepareToQuit()
@@ -490,10 +496,44 @@ public:
             ju::MessageManager::getInstance()->runDispatchLoopUntil(20);
         return check(thumbnail.getNumChannels() == 1 && thumbnail.getApproximatePeak() > 0.01f,
                      "reload non-flat waveform")
-            && check(testInputRoutes(engine, dir), "shared input arms and starts separate recording targets");
+            && check(gui.testDeleteShortcut(), "Delete edits items and ranges while preserving text editing and undo")
+            && check(testInputRoutes(engine, dir), "Space transport and independent shared-input audio and recording");
     }
 
 private:
+    bool invokeShortcut(Command command, int key, bool down = true, ju::Component* origin = nullptr)
+    {
+        InvocationInfo invocation(command);
+        invocation.invocationMethod = InvocationInfo::fromKeyPress;
+        invocation.keyPress = ju::KeyPress(key);
+        invocation.isKeyDown = down;
+        invocation.originatingComponent = origin;
+        return commandManager.invoke(invocation, false);
+    }
+
+    bool testDeleteShortcut()
+    {
+        const auto key = ju::KeyPress::deleteKey;
+        if (commandManager.getKeyMappings()->findCommandForKeyPress(ju::KeyPress(key)) != deleteItem
+            || !timeSelection)
+            return false;
+        selectTrack(0);
+        insertMidi();
+        const auto id = selectedItem;
+        const auto range = timeSelection;
+        if (!selectedClip() || !invokeShortcut(deleteItem, key, true, &tempo) || !selectedClip()
+            || !invokeShortcut(deleteItem, key) || te::findClipForID(*edit, id) || timeSelection != range)
+            return false;
+        if (!commandManager.invokeDirectly(undo, false) || !te::findClipForID(*edit, id)
+            || !invokeShortcut(deleteItem, key, false) || timeSelection != range)
+            return false;
+        if (!invokeShortcut(deleteItem, key) || timeSelection || !edit->getTransport().getLoopRange().isEmpty())
+            return false;
+        const auto clipCount = trackAt(0)->getClips().size();
+        invokeShortcut(deleteItem, key);
+        return trackAt(0)->getClips().size() == clipCount;
+    }
+
     static bool testInputRoutes(te::Engine& engine, const ju::File& directory)
     {
         auto& manager = engine.getDeviceManager();
@@ -505,7 +545,10 @@ private:
         for (int i = 0; i < manager.getNumWaveInDevices(); ++i)
             if (auto* wave = manager.getWaveInDevice(i))
                 wave->setEnabled(true);
-        auto routeEdit = te::createEmptyEdit(engine, directory.getChildFile("routes.tracktionedit"));
+        MainGui gui(engine, directory.getChildFile("routes.settings"));
+        const auto path = directory.getChildFile("routes.tracktionedit");
+        gui.setProject(te::createEmptyEdit(engine, path), path);
+        auto& routeEdit = gui.edit;
         routeEdit->ensureNumberOfAudioTracks(2);
         auto& transport = routeEdit->getTransport();
         transport.ensureContextAllocated();
@@ -517,6 +560,7 @@ private:
         auto& input = *inputs.getFirst();
         auto& first = *tracks[0];
         auto& second = *tracks[1];
+        input.getInputDevice().setMonitorMode(te::InputDevice::MonitorMode::automatic);
         if (toggleInput(input, first).failed() || toggleInput(input, second).failed()
             || !isArmed(input, first.itemID) || !isArmed(input, second.itemID))
             return false;
@@ -530,12 +574,40 @@ private:
             ju::MidiBuffer midi;
             while (!stop.stop_requested())
             {
-                buffer.clear();
+                for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+                    for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+                        buffer.setSample(channel, sample, sample % 32 < 16 ? 0.2f : -0.2f);
                 midi.clear();
                 host.processBlock(buffer, midi);
                 ju::Thread::sleep(4);
             }
         });
+        if (gui.commandManager.getKeyMappings()->findCommandForKeyPress(ju::KeyPress(ju::KeyPress::spaceKey)) != playStop
+            || !gui.invokeShortcut(playStop, ju::KeyPress::spaceKey) || !transport.isPlaying())
+            return false;
+        Meter firstMeter(*first.getLevelMeterPlugin());
+        Meter secondMeter(*second.getLevelMeterPlugin());
+        const auto waitForLevels = [&](bool firstAudible) {
+            for (int i = 0; i < 50; ++i)
+            {
+                ju::MessageManager::getInstance()->runDispatchLoopUntil(20);
+                const auto audible = [](Meter& meter) {
+                    return meter.client.getAndClearAudioLevel(0).dB > -55.0f;
+                };
+                const bool firstHasSignal = audible(firstMeter);
+                const bool secondHasSignal = audible(secondMeter);
+                if (firstHasSignal == firstAudible && secondHasSignal)
+                    return true;
+            }
+            return false;
+        };
+        if (!waitForLevels(true) || toggleInput(input, first).failed() || isArmed(input, first.itemID)
+            || !isArmed(input, second.itemID) || !waitForLevels(false) || !transport.isPlaying())
+            return false;
+        if (!gui.invokeShortcut(playStop, ju::KeyPress::spaceKey, false) || !transport.isPlaying()
+            || !gui.invokeShortcut(playStop, ju::KeyPress::spaceKey) || transport.isPlaying()
+            || toggleInput(input, first).failed())
+            return false;
         transport.record(false);
         bool bothRecording = false;
         for (auto* current : routeEdit->getAllInputDevices())
@@ -560,7 +632,6 @@ private:
         control.setColour(ju::TextButton::textColourOffId, ju::Colours::white);
         control.setColour(ju::TextButton::textColourOnId, ju::Colours::white);
         control.onClick = std::move(action);
-        control.setMouseClickGrabsKeyboardFocus(false);
         addAndMakeVisible(control);
         row.push_back(&control);
         return control;
@@ -572,7 +643,6 @@ private:
         control.setTitle(title);
         control.setTooltip(title);
         control.setColour(ju::TextButton::buttonColourId, ju::Colour(0xff292929));
-        control.setMouseClickGrabsKeyboardFocus(false);
         control.setRepeatSpeed(330, 110, 65);
         control.onClick = std::move(action);
         addAndMakeVisible(control);
@@ -682,21 +752,35 @@ private:
             case undo: info.setActive(stopped && edit->getUndoManager().canUndo()); break;
             case redo: info.setActive(stopped && edit->getUndoManager().canRedo()); break;
             case cut: case copy: case paste: case duplicate: info.setActive(false); break;
-            case deleteItem: info.setActive(stopped && selectedClip() != nullptr); break;
+            case deleteItem: info.setActive(stopped && (selectedClip() != nullptr || timeSelection.has_value())); break;
             case locateFile: info.setActive(stopped && missingWave(selectedClip()) != nullptr); break;
             case audioTrack: case midiTrack: info.setActive(stopped && trackCount() < maxTracks); break;
-            case midiItem: case audioFile: case importAudio: case armAudio: case armMidi: case synth: case reverb: case vst3:
+            case armAudio: info.setActive(edit && !edit->getTransport().isRecording() && hasTrack); break;
+            case midiItem: case audioFile: case importAudio: case armMidi: case synth: case reverb: case vst3:
                 info.setActive(stopped && hasTrack); break;
             case playStop: case startRecording: info.setActive(edit != nullptr); break;
             default: break;
         }
         if (id == saveProject) info.addDefaultKeypress('s', ju::ModifierKeys::ctrlModifier);
-        if (id == playStop) info.addDefaultKeypress(ju::KeyPress::spaceKey, {});
+        if (id == playStop || id == deleteItem)
+        {
+            info.flags |= ju::ApplicationCommandInfo::wantsKeyUpDownCallbacks;
+            info.addDefaultKeypress(id == playStop ? ju::KeyPress::spaceKey : ju::KeyPress::deleteKey, {});
+        }
         if (id == startRecording) info.addDefaultKeypress('r', {});
     }
 
     bool perform(const InvocationInfo& invocation) override
     {
+        if ((invocation.commandID == playStop || invocation.commandID == deleteItem)
+            && invocation.invocationMethod == InvocationInfo::fromKeyPress)
+        {
+            auto* focused = ju::Component::getCurrentlyFocusedComponent();
+            if (!invocation.isKeyDown
+                || dynamic_cast<ju::TextInputTarget*>(focused ? focused : invocation.originatingComponent))
+                return true;
+        }
+
         switch (invocation.commandID)
         {
             case newProject: chooseProject(true); break;
@@ -706,9 +790,9 @@ private:
             case audioFile: case importAudio: importWave(); break;
             case exportAudio: exportProject(); break;
             case exitApp: ju::JUCEApplication::getInstance()->systemRequestedQuit(); break;
-            case undo: if (ready()) edit->getUndoManager().undo(); break;
-            case redo: if (ready()) edit->getUndoManager().redo(); break;
-            case deleteItem: deleteSelectedItem(); break;
+            case undo: if (ready() && edit->getUndoManager().undo()) edit->restartPlayback(); break;
+            case redo: if (ready() && edit->getUndoManager().redo()) edit->restartPlayback(); break;
+            case deleteItem: deleteSelection(); break;
             case locateFile: locateSelectedFile(); break;
             case audioTrack: addTrack(false); break;
             case midiTrack: addTrack(true); break;
@@ -789,7 +873,7 @@ private:
             });
     }
 
-    void deleteSelectedItem()
+    void deleteSelection()
     {
         if (!ready())
             return;
@@ -802,6 +886,15 @@ private:
             edit->getUndoManager().beginNewTransaction("Delete item");
             clip->removeFromParent();
             selectedItem = {};
+        }
+        else if (timeSelection)
+        {
+            timeSelection.reset();
+            auto& transport = edit->getTransport();
+            transport.looping = false;
+            transport.setLoopRange({});
+            edit->markAsChanged();
+            report("Time selection cleared");
         }
     }
 
@@ -865,6 +958,8 @@ private:
         edit->resetChangedStatus();
         if (auto* window = findParentComponentOfClass<ju::DocumentWindow>())
             window->setName(ju::String(applicationTitle) + " - " + file.getFileName());
+        if (arrangement.isShowing())
+            arrangement.grabKeyboardFocus();
         updateControls();
     }
 
@@ -1127,14 +1222,26 @@ private:
         auto& undoManager = track.edit.getUndoManager();
         undoManager.beginNewTransaction(remove ? "Remove input assignment" : "Assign input");
         if (remove)
-            return input.removeTarget(id, &undoManager);
+        {
+            const auto result = input.removeTarget(id, &undoManager);
+            if (result.failed())
+                return result;
 
-        // A physical input can have several independent destinations.
-        const auto target = input.setTarget(id, false, &undoManager, 0);
-        if (!target)
-            return ju::Result::fail(target.error());
-        input.setRecordingEnabled(id, true);
-        track.edit.restartPlayback();
+            // Tracktion can skip rebuilding on removal when other destinations remain.
+            // Request the swap of the audio graph without stopping transport or changing other routes.
+            track.edit.restartPlayback();
+            track.edit.dispatchPendingUpdatesSynchronously();
+        }
+        else
+        {
+            // A physical input can have several independent destinations.
+            const auto target = input.setTarget(id, false, &undoManager, 0);
+            if (!target)
+                return ju::Result::fail(target.error());
+            input.setRecordingEnabled(id, true);
+            track.edit.restartPlayback();
+        }
+        track.edit.markAsChanged();
         return ju::Result::ok();
     }
 
@@ -1612,6 +1719,7 @@ private:
     ju::File projectFile;
     ju::PropertiesFile settings;
     PanelState panels;
+    ju::Component::SafePointer<ju::Component> shortcutHost;
     ju::ApplicationCommandManager commandManager;
     ju::MenuBarComponent menuBar { this };
     Arrangement arrangement { *this };
