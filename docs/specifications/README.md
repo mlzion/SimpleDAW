@@ -8,6 +8,10 @@ These PDFs are the shared reference set for specification reviews and phased dev
 | [Universal Actions Integration Specification](SimpleDAW_Universal_Actions_Integration_Spec.pdf) | Integration draft and decision register, 20 November 2026; separates accepted principles, pending details and recommendations. 3 pages. |
 | [Development Phase Plan — Draft 0.1](SimpleDAW_Development_Phase_Plan_Draft_0_1.pdf) | Preliminary phases 0–12, dependencies and acceptance criteria, 20 November 2026. Phase identifiers are not application versions. 3 pages. |
 
+## Subsequent acceptance and change handoffs
+
+- [v0.21 acceptance and v0.22 handoff](v0.21-acceptance-v0.22-handoff.md) — records accepted live testing, documented limitations and candidate v0.22 work. This supplement does not supersede the dated PDFs or approve pending designs.
+
 ## How to use this set
 
 Read the repository [instructions](../../AGENTS.md) and [project status](../../PROJECT_STATUS.md) before assigning work. Accepted design does not mean implemented, merged or tested. Pending and recommended items require decisions before implementation.
