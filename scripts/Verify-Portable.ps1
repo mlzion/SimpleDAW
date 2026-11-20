@@ -1,12 +1,32 @@
 param(
     [Parameter(Mandatory)]
-    [string] $Executable,
+    [string] $BuildDirectory,
+    [string] $Configuration = "Release",
     [ValidateSet("MT", "MD")]
     [string] $MsvcRuntime = "MT"
 )
 
 $ErrorActionPreference = 'Stop'
-$source = (Resolve-Path -LiteralPath $Executable).Path
+$metadata = Get-Content -LiteralPath (Join-Path $BuildDirectory "SimpleDAW-$Configuration.json") -Raw | ConvertFrom-Json
+$source = (Resolve-Path -LiteralPath $metadata.executable).Path
+$exeName = Split-Path -Leaf $source
+$expectedName = $metadata.artifactName -replace '-Windows-x64$', '.exe'
+if ($exeName -cne $expectedName) {
+    throw "Executable name is $exeName, expected $expectedName."
+}
+
+$versionInfo = (Get-Item -LiteralPath $source).VersionInfo
+if ($versionInfo.FileVersion -cne $metadata.version -or $versionInfo.ProductVersion -cne $metadata.version) {
+    throw "Expected FileVersion and ProductVersion $($metadata.version), found $($versionInfo.FileVersion) and $($versionInfo.ProductVersion)."
+}
+$expectedVersion = [version] $metadata.version
+$fixedVersion = [version]::new($versionInfo.FileMajorPart, $versionInfo.FileMinorPart, $versionInfo.FileBuildPart, $versionInfo.FilePrivatePart)
+$normalizedVersion = [version]::new($expectedVersion.Major, $expectedVersion.Minor, [Math]::Max(0, $expectedVersion.Build), [Math]::Max(0, $expectedVersion.Revision))
+if ($fixedVersion -ne $normalizedVersion) {
+    throw "Expected numeric file version $normalizedVersion, found $fixedVersion."
+}
+Write-Host "Verified $exeName file and product version $($metadata.version)."
+
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (!$vs) {
@@ -59,7 +79,7 @@ $originalAcl = $null
 $process = $null
 try {
     New-Item -ItemType Directory -Path $exeDirectory, $workingDirectory | Out-Null
-    $standalone = Join-Path $exeDirectory 'SimpleDAW.exe'
+    $standalone = Join-Path $exeDirectory $exeName
     Copy-Item -LiteralPath $source -Destination $standalone
     $originalAcl = Get-Acl -LiteralPath $exeDirectory
     $restrictedAcl = Get-Acl -LiteralPath $exeDirectory
@@ -92,13 +112,13 @@ try {
         if ($process.HasExited) {
             throw "Normal startup exited before creating a window (exit code $($process.ExitCode))."
         }
-        if ($process.MainWindowTitle -eq 'SimpleDAW v0.21') {
+        if ($process.MainWindowTitle -ceq $metadata.windowTitle) {
             break
         }
         Start-Sleep -Milliseconds 200
     } while ([DateTime]::UtcNow -lt $deadline)
-    if ($process.MainWindowTitle -ne 'SimpleDAW v0.21') {
-        throw 'The main SimpleDAW window did not appear.'
+    if ($process.MainWindowTitle -cne $metadata.windowTitle) {
+        throw "Expected window title $($metadata.windowTitle), found $($process.MainWindowTitle)."
     }
     if (!$process.CloseMainWindow() -or !$process.WaitForExit(10000) -or $process.ExitCode -ne 0) {
         throw 'The standalone window did not close cleanly.'

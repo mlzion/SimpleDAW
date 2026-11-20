@@ -6,9 +6,9 @@ SimpleDAW is free and open-source software. Its original code is released under 
 
 ## Download and run on Windows x64
 
-1. Open a successful feature-branch run of the Windows workflow. Under **Artifacts**, download `SimpleDAW-Windows-x64`. GitHub may ask you to sign in. [Windows workflow runs](https://github.com/mlzion/SimpleDAW/actions/workflows/windows.yml?query=branch%3Afeature%2Fv0.21-main-gui)
+1. Open a successful feature-branch run of the Windows workflow. Under **Artifacts**, download `SimpleDAW-v0.21-Windows-x64.zip`. GitHub may ask you to sign in. [Windows workflow runs](https://github.com/mlzion/SimpleDAW/actions/workflows/windows.yml?query=branch%3Afeature%2Fv0.21-main-gui)
 2. Install Microsoft's x64 Visual C++ v14 Redistributable if a compatible version is absent. [Official Microsoft x64 download](https://aka.ms/vc14/vc_redist.x64.exe)
-3. Extract `SimpleDAW.exe` to any folder you can read and execute from, then double-click it. SimpleDAW has no installer. Preferences live under your application-data folder. Projects and recorded media need a writable project location.
+3. Extract `SimpleDAW-v0.21.exe` to any folder you can read and execute from, then double-click it. SimpleDAW has no installer. Preferences live under your application-data folder. Projects and recorded media need a writable project location.
 
 The download also contains the exact corresponding source archive, build instructions, revision list and notices. Keep the source archive if you want to rebuild this exact version. The distributed build uses `/MD`, the system runtime, and Windows audio backends. It can host separately installed x64 VST3 plugins. [Licence and distribution details](docs/licensing.md)
 
@@ -20,7 +20,8 @@ Install Git, CMake 3.22 or newer, and Visual Studio 2022 or Build Tools with **D
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release --parallel 2
 ctest --test-dir build -C Release --output-on-failure
-.\build\SimpleDAW_artefacts\Release\SimpleDAW.exe
+$release = Get-Content build/SimpleDAW-Release.json -Raw | ConvertFrom-Json
+& $release.executable
 ```
 
 The default build uses JUCE's Windows audio backends, including WASAPI. For ASIO, obtain the [Steinberg ASIO SDK](https://www.steinberg.net/developers/) separately and install the manufacturer's x64 ASIO driver. Add `-DSIMPLEDAW_ASIO_SDK=C:/path/to/asiosdk/common` to the configure command, using the directory containing `iasiodrv.h`. Rebuild and choose ASIO in **Devices**.

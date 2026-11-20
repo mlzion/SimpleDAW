@@ -2,7 +2,7 @@
 
 The source archive contains three top-level source directories, `SimpleDAW`, `JUCE` and `Tracktion`, and a `SOURCE-REVISIONS.txt` file that records their exact Git commits. The SimpleDAW tree contains its licence, third-party notices, build scripts and tests. JUCE and Tracktion include the bundled dependency sources and notices. A copy of these instructions is included as `BUILD.md` at the archive root.
 
-The Windows workflow creates the archive from the exact three Git checkouts, extracts it into a fresh directory, and uses the extracted sources to build and run the Windows tests. Its run summary records the revisions and SHA-256 checksums for the source archive and executable. The feature-branch workflow publishes the tested `/MD` executable and matching source together in the `SimpleDAW-Windows-x64` artifact.
+The Windows workflow creates the archive from the exact three Git checkouts, extracts it into a fresh directory, and uses the extracted sources to build and run the Windows tests. Its run summary records the revisions and SHA-256 checksums for the source archive and executable. The Windows workflow publishes the tested `/MD` executable and matching source together in a versioned artifact, such as `SimpleDAW-v0.21-Windows-x64`. GitHub adds the ZIP extension to the download.
 
 ## Rebuild on Windows
 
@@ -15,7 +15,7 @@ cmake -S SimpleDAW -B build -G "Visual Studio 17 2022" -A x64 `
     "-DFETCHCONTENT_SOURCE_DIR_TRACKTION=$PWD/Tracktion"
 cmake --build build --config Release --parallel 2
 ctest --test-dir build -C Release --output-on-failure
-./SimpleDAW/scripts/Verify-Portable.ps1 -Executable build/SimpleDAW_artefacts/Release/SimpleDAW.exe -MsvcRuntime MD
+./SimpleDAW/scripts/Verify-Portable.ps1 -BuildDirectory build -MsvcRuntime MD
 ```
 
 The default uses `/MD` and requires a compatible x64 Microsoft Visual C++ Redistributable to run. For `/MT` development tests, use a fresh build directory, configure with `-DSIMPLEDAW_MSVC_DYNAMIC_RUNTIME=OFF` and run the verification script with `-MsvcRuntime MT`.

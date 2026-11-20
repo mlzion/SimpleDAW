@@ -716,7 +716,7 @@ private:
             case devices: configureDevices(); break;
             case monitoringReport: showMonitoringReport(); break;
             case about: ju::AlertWindow::showMessageBoxAsync(ju::MessageBoxIconType::InfoIcon,
-                "About SimpleDAW", "SimpleDAW v0.21\nJUCE and Tracktion Engine"); break;
+                "About SimpleDAW", ju::String(applicationTitle) + "\nJUCE and Tracktion Engine"); break;
             case armAudio: armInput(false); break;
             case armMidi: armInput(true); break;
             case synth:
@@ -864,7 +864,7 @@ private:
         edit->getUndoManager().clearUndoHistory();
         edit->resetChangedStatus();
         if (auto* window = findParentComponentOfClass<ju::DocumentWindow>())
-            window->setName("SimpleDAW v0.21 - " + file.getFileName());
+            window->setName(ju::String(applicationTitle) + " - " + file.getFileName());
         updateControls();
     }
 
@@ -887,7 +887,7 @@ private:
                 edit->editFileRetriever = [file] { return file; };
                 projectFile = file;
                 if (auto* window = findParentComponentOfClass<ju::DocumentWindow>())
-                    window->setName("SimpleDAW v0.21 - " + file.getFileName());
+                    window->setName(ju::String(applicationTitle) + " - " + file.getFileName());
                 report("Project saved");
             });
     }

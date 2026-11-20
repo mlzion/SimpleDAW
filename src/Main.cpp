@@ -12,6 +12,7 @@ namespace ju = juce;
 namespace
 {
 constexpr int maxTracks = 24;
+constexpr const char* applicationTitle = "SimpleDAW v" SIMPLEDAW_RELEASE_VERSION;
 
 class SimpleDawUIBehaviour final : public te::UIBehaviour
 {
@@ -507,7 +508,7 @@ class Application final : public ju::JUCEApplication
 {
 public:
     const ju::String getApplicationName() override { return "SimpleDAW"; }
-    const ju::String getApplicationVersion() override { return "0.21.0"; }
+    const ju::String getApplicationVersion() override { return ProjectInfo::versionString; }
 
     void initialise(const ju::String& command) override
     {
@@ -564,7 +565,7 @@ public:
 private:
     struct Window final : ju::DocumentWindow
     {
-        Window() : DocumentWindow("SimpleDAW v0.21", ju::Colours::black, allButtons) {}
+        Window() : DocumentWindow(applicationTitle, ju::Colours::black, allButtons) {}
         void closeButtonPressed() override { ju::JUCEApplication::getInstance()->systemRequestedQuit(); }
     };
 
