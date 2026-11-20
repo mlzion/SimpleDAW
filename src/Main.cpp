@@ -253,10 +253,10 @@ private:
         for (auto* instance : edit->getAllInputDevices())
         {
             auto& device = instance->getInputDevice();
-            if (device.getDeviceType() == type)
+            if (device.getDeviceType() == type && device.isEnabled())
             {
                 choices.add(instance);
-                menu.addItem(choices.size(), device.getName());
+                menu.addItem(choices.size(), device.getName(), true, isArmed(*instance, track->itemID));
             }
         }
 
@@ -267,21 +267,13 @@ private:
         if (choice == 0)
             return;
 
-        auto* instance = choices[choice - 1];
-        if (instance->isRecordingEnabled(track->itemID))
-        {
-            instance->setRecordingEnabled(track->itemID, false);
-            return report("Input disarmed");
-        }
+        auto& input = *choices[choice - 1];
+        const auto inputName = input.getInputDevice().getName();
+        if (const auto result = toggleInput(input, *track); result.failed())
+            return report(result.getErrorMessage());
 
-        const auto target = instance->setTarget(track->itemID, true, &edit->getUndoManager(), 0);
-        if (!target)
-            return report(target.error());
-
-        instance->setRecordingEnabled(track->itemID, true);
-        const auto inputName = instance->getInputDevice().getName();
-        edit->restartPlayback();
-        report(inputName + " armed on " + track->getName());
+        report(inputName + (isArmed(input, track->itemID) ? " armed on " : " removed from ") + track->getName());
+        updateControls();
     }
 
     void record()
@@ -300,7 +292,7 @@ private:
         edit->getTransport().ensureContextAllocated();
         for (auto* instance : edit->getAllInputDevices())
             for (auto* track : te::getAudioTracks(*edit))
-                if (instance->isRecordingEnabled(track->itemID))
+                if (isArmed(*instance, track->itemID))
                 {
                     edit->getTransport().record(false);
                     report(edit->getTransport().isRecording() ? "Recording" : "Could not start recording");

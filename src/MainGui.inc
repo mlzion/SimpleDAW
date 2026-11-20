@@ -90,6 +90,39 @@
         std::map<te::EditItemID, std::unique_ptr<Wave>> waves;
     };
 
+    enum class Arrow { screenLeft, screenRight, left, right, up, down };
+
+    struct ArrowButton final : ju::TextButton
+    {
+        explicit ArrowButton(Arrow direction) : arrow(direction) {}
+
+        void paintButton(ju::Graphics& g, bool hovered, bool pressed) override
+        {
+            ju::TextButton::paintButton(g, hovered, pressed);
+            const bool horizontal = arrow != Arrow::up && arrow != Arrow::down;
+            const bool reverse = arrow == Arrow::left || arrow == Arrow::screenLeft || arrow == Arrow::up;
+            const bool doubleArrow = arrow == Arrow::screenLeft || arrow == Arrow::screenRight;
+            const float sign = reverse ? -1.0f : 1.0f;
+            const auto centre = getLocalBounds().toFloat().getCentre();
+            g.setColour(ju::Colours::white);
+            const auto drawTriangle = [&](float offset) {
+                const auto x = centre.x + offset;
+                const auto y = centre.y;
+                ju::Path triangle;
+                if (horizontal)
+                    triangle.addTriangle(x - 5 * sign, y - 7, x - 5 * sign, y + 7, x + 6 * sign, y);
+                else
+                    triangle.addTriangle(x - 7, y - 5 * sign, x + 7, y - 5 * sign, x, y + 6 * sign);
+                g.fillPath(triangle);
+            };
+            drawTriangle(doubleArrow ? -6.0f : 0.0f);
+            if (doubleArrow)
+                drawTriangle(6.0f);
+        }
+
+        Arrow arrow;
+    };
+
     struct Splitter final : ju::Component
     {
         Splitter(MainGui& gui, bool vertical) : owner(gui), side(vertical)
@@ -211,14 +244,14 @@ public:
         button(toolbar, "INSPECTOR", [this] { panels.inspectorOpen = !panels.inspectorOpen; saveLayout(); });
         button(toolbar, "WORKSPACE", [this] { panels.workspaceOpen = !panels.workspaceOpen; saveLayout(); });
 
-        navigationButton("◀◀", "Scroll left one screen", [this] { scrollTime(-visibleSeconds()); });
-        navigationButton("▶▶", "Scroll right one screen", [this] { scrollTime(visibleSeconds()); });
-        navigationButton("◀", "Scroll left one bar", [this] { scrollBar(-1); });
-        navigationButton("▶", "Scroll right one bar", [this] { scrollBar(1); });
-        navigationButton("−", "Zoom out horizontally", [this] { zoom(0.8); });
-        navigationButton("+", "Zoom in horizontally", [this] { zoom(1.25); });
-        navigationButton("▲", "Scroll up", [this] { scrollRows(-1); });
-        navigationButton("▼", "Scroll down", [this] { scrollRows(1); });
+        navigationButton(Arrow::screenLeft, "Scroll left one screen", [this] { scrollTime(-visibleSeconds()); });
+        navigationButton(Arrow::screenRight, "Scroll right one screen", [this] { scrollTime(visibleSeconds()); });
+        navigationButton(Arrow::left, "Scroll left one bar", [this] { scrollBar(-1); });
+        navigationButton(Arrow::right, "Scroll right one bar", [this] { scrollBar(1); });
+        button(navigation, "-", [this] { zoom(0.8); });
+        button(navigation, "+", [this] { zoom(1.25); });
+        navigationButton(Arrow::up, "Scroll up", [this] { scrollRows(-1); });
+        navigationButton(Arrow::down, "Scroll down", [this] { scrollRows(1); });
         heightButton = &button(navigation, "MIN", [this] {
             panels.tallTracks = !panels.tallTracks;
             saveLayout();
@@ -343,12 +376,17 @@ private:
         return control;
     }
 
-    void navigationButton(const ju::String& label, const ju::String& tooltip, std::function<void()> action)
+    void navigationButton(Arrow arrow, const ju::String& title, std::function<void()> action)
     {
-        auto& control = button(navigation, label, std::move(action));
-        control.setTitle(tooltip);
-        control.setTooltip(tooltip);
+        auto& control = *buttons.add(new ArrowButton(arrow));
+        control.setTitle(title);
+        control.setTooltip(title);
+        control.setColour(ju::TextButton::buttonColourId, ju::Colour(0xff292929));
+        control.setMouseClickGrabsKeyboardFocus(false);
         control.setRepeatSpeed(330, 110, 65);
+        control.onClick = std::move(action);
+        addAndMakeVisible(control);
+        navigation.push_back(&control);
     }
 
     void combo(ju::ComboBox& control, std::vector<ju::Component*>& row,
@@ -528,7 +566,7 @@ private:
         viewStart = 0.0;
         edit->getUndoManager().clearUndoHistory();
         if (auto* window = findParentComponentOfClass<ju::DocumentWindow>())
-            window->setName("SimpleDAW v0.21 — " + file.getFileName());
+            window->setName("SimpleDAW v0.21 - " + file.getFileName());
         updateControls();
     }
 
@@ -551,7 +589,7 @@ private:
                 edit->editFileRetriever = [file] { return file; };
                 projectFile = file;
                 if (auto* window = findParentComponentOfClass<ju::DocumentWindow>())
-                    window->setName("SimpleDAW v0.21 — " + file.getFileName());
+                    window->setName("SimpleDAW v0.21 - " + file.getFileName());
                 report("Project saved");
             });
     }
@@ -777,12 +815,49 @@ private:
         return seconds < 0 ? "-" + text : text;
     }
 
-    bool armed(const te::AudioTrack& track) const
+    static bool isArmed(te::InputDeviceInstance& input, te::EditItemID track)
     {
+        return input.getInputDevice().isEnabled() && input.isRecordingEnabled(track);
+    }
+
+    static ju::Result toggleInput(te::InputDeviceInstance& input, te::AudioTrack& track)
+    {
+        const auto id = track.itemID;
+        const bool remove = isArmed(input, id);
+        auto& undoManager = track.edit.getUndoManager();
+        undoManager.beginNewTransaction(remove ? "Remove input assignment" : "Assign input");
+        if (remove)
+            return input.removeTarget(id, &undoManager);
+
+        // A physical input can have several independent destinations.
+        const auto target = input.setTarget(id, false, &undoManager, 0);
+        if (!target)
+            return ju::Result::fail(target.error());
+        input.setRecordingEnabled(id, true);
+        track.edit.restartPlayback();
+        return ju::Result::ok();
+    }
+
+    struct InputBadges
+    {
+        bool armed = false;
+        std::array<bool, 2> channels {};
+    };
+
+    InputBadges inputBadges(const te::AudioTrack& track) const
+    {
+        InputBadges badges;
         for (auto* input : edit->getAllInputDevices())
-            if (input->isRecordingEnabled(track.itemID))
-                return true;
-        return false;
+        {
+            if (!isArmed(*input, track.itemID))
+                continue;
+            badges.armed = true;
+            if (const auto* wave = dynamic_cast<te::WaveInputDevice*>(&input->getInputDevice()))
+                for (const auto& channel : wave->getChannels())
+                    if (channel.indexInDevice >= 0 && channel.indexInDevice < 2)
+                        badges.channels[static_cast<size_t>(channel.indexInDevice)] = true;
+        }
+        return badges;
     }
 
     void pollMeters()
@@ -814,7 +889,8 @@ private:
         }
         auto indicators = bounds.removeFromRight(24).reduced(3, 2);
         const auto indicatorHeight = indicators.getHeight() / 3;
-        const bool states[] = { track.isMuted(false), track.isSolo(false), armed(track) };
+        const auto inputs = inputBadges(track);
+        const bool states[] = { track.isMuted(false), track.isSolo(false), inputs.armed };
         const ju::Colour light[] = { ju::Colours::yellow, ju::Colours::limegreen, ju::Colours::red };
         const ju::String letters[] = { "M", "S", "R" };
         g.setFont(ju::FontOptions(10.0f, ju::Font::bold));
@@ -825,6 +901,16 @@ private:
             g.fillRect(led);
             g.setColour(states[i] && i != 2 ? ju::Colours::black : ju::Colours::white);
             g.drawText(letters[i], led, ju::Justification::centred);
+        }
+        auto inputArea = bounds.removeFromRight(46).withSizeKeepingCentre(46, 20);
+        g.setFont(ju::FontOptions(13.0f, ju::Font::bold));
+        for (size_t i = 0; i < inputs.channels.size(); ++i)
+        {
+            auto badge = inputArea.removeFromLeft(23).reduced(2, 0);
+            g.setColour(inputs.channels[i] ? ju::Colour(0xffab1f29) : ju::Colour(0xff484848));
+            g.fillRoundedRectangle(badge.toFloat(), 3.0f);
+            g.setColour(ju::Colours::white);
+            g.drawText(ju::String(static_cast<int>(i) + 1), badge, ju::Justification::centred);
         }
         auto body = bounds.reduced(5, 3);
         auto meter = body.removeFromBottom(8).reduced(1, 1);
@@ -906,7 +992,7 @@ private:
         g.drawText("TRACKS", 10, 0, headerWidth, rulerHeight, ju::Justification::centredLeft);
         if (!edit)
         {
-            g.drawText("Choose File → New or Open", area, ju::Justification::centred);
+            g.drawText("Choose File > New or Open", area, ju::Justification::centred);
             return;
         }
 
@@ -1070,7 +1156,7 @@ private:
         followButton->setToggleState(follow, ju::dontSendNotification);
         for (size_t i = 0; i < tabs.size(); ++i)
             static_cast<ju::TextButton*>(tabs[i])->setToggleState(i == activeTab, ju::dontSendNotification);
-        workspace.setText(static_cast<ju::TextButton*>(tabs[activeTab])->getButtonText() + " — coming in a later release",
+        workspace.setText(static_cast<ju::TextButton*>(tabs[activeTab])->getButtonText() + " - coming in a later release",
                           ju::dontSendNotification);
         inspector.setText(trackAt(selection) ? "INSPECTOR\n\n" + trackAt(selection)->getName()
             + "\n\nTrack and item controls\ncoming in v0.22" : "INSPECTOR\n\nSelect a track", ju::dontSendNotification);
