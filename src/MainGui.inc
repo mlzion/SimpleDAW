@@ -184,6 +184,7 @@ public:
             label->setColour(ju::Label::textColourId, ju::Colours::white);
             label->setFont(ju::FontOptions(16.0f, ju::Font::bold));
         }
+        position.setFont(ju::FontOptions(21.0f, ju::Font::bold));
         position.setJustificationType(ju::Justification::centred);
         position.setColour(ju::Label::backgroundColourId, ju::Colour(0xff122844));
         inspector.setColour(ju::Label::backgroundColourId, ju::Colour(0xff292929));
@@ -199,6 +200,7 @@ public:
         first.push_back(&position);
         addAndMakeVisible(tempo);
         tempo.setJustification(ju::Justification::centred);
+        tempo.setFont(ju::FontOptions(16.0f, ju::Font::bold));
         tempo.setTitle("Tempo");
         tempo.setTooltip("Tempo in BPM. Press Enter to apply.");
         tempo.onFocusLost = [this] { updateControls(); };
@@ -257,8 +259,12 @@ public:
         navigationButton(Arrow::screenRight, "Scroll right one screen", [this] { scrollTime(visibleSeconds()); });
         navigationButton(Arrow::left, "Scroll left one bar", [this] { scrollBar(-1); });
         navigationButton(Arrow::right, "Scroll right one bar", [this] { scrollBar(1); });
-        button(navigation, "-", [this] { zoom(0.8); });
-        button(navigation, "+", [this] { zoom(1.25); });
+        auto& zoomOut = button(navigation, "-", [this] { zoom(0.8); }, 0xff193c57);
+        zoomOut.setTooltip("Zoom out horizontally");
+        zoomOut.setRepeatSpeed(330, 110, 65);
+        auto& zoomIn = button(navigation, "+", [this] { zoom(1.25); }, 0xff193c57);
+        zoomIn.setTooltip("Zoom in horizontally");
+        zoomIn.setRepeatSpeed(330, 110, 65);
         navigationButton(Arrow::up, "Scroll up", [this] { scrollRows(-1); });
         navigationButton(Arrow::down, "Scroll down", [this] { scrollRows(1); });
         heightButton = &button(navigation, "MIN", [this] {
@@ -300,11 +306,12 @@ public:
     {
         auto area = getLocalBounds().reduced(5);
         menuBar.setBounds(area.removeFromTop(28));
-        layoutRow(first, area.removeFromTop(44), { 11, 9, 10, 10, 9, 26, 12, 12 });
-        layoutRow(second, area.removeFromTop(39), { 9, 10, 10, 9, 24, 13, 11, 12 });
-        layoutRow(toolbar, area.removeFromTop(37));
+        layoutRow(first, area.removeFromTop(42), { 10, 10, 10, 10, 10, 25, 12, 13 }, { 5, 6 });
+        layoutRow(second, area.removeFromTop(42), { 10, 10, 10, 10, 24, 13, 11, 12 }, { 4, 5 });
+        area.removeFromTop(4);
+        layoutRow(toolbar, area.removeFromTop(38), {}, { 7 });
         status.setBounds(area.removeFromBottom(26));
-        layoutRow(navigation, area.removeFromBottom(38), { 8, 8, 8, 8, 8, 8, 8, 8, 13, 13 });
+        layoutRow(navigation, area.removeFromBottom(40), { 8, 8, 8, 8, 8, 8, 8, 8, 13, 13 }, { 4, 6, 8 });
 
         inspector.setVisible(panels.inspectorOpen);
         inspectorDivider.setVisible(panels.inspectorOpen);
@@ -419,19 +426,28 @@ private:
     }
 
     static void layoutRow(const std::vector<ju::Component*>& row, ju::Rectangle<int> bounds,
-                          std::initializer_list<int> weights = {})
+                          std::initializer_list<int> weights = {},
+                          std::initializer_list<size_t> breaks = {})
     {
-        const auto width = bounds.getWidth();
+        constexpr int groupGap = 8;
+        const auto width = bounds.getWidth() - static_cast<int>(breaks.size()) * groupGap;
         const auto total = weights.size() == 0 ? static_cast<int>(row.size())
                                               : std::accumulate(weights.begin(), weights.end(), 0);
         int accumulated = 0;
         auto weight = weights.begin();
-        for (auto* control : row)
+        auto groupBreak = breaks.begin();
+        int offset = bounds.getX();
+        for (size_t i = 0; i < row.size(); ++i)
         {
+            if (groupBreak != breaks.end() && *groupBreak == i)
+            {
+                offset += groupGap;
+                ++groupBreak;
+            }
             const auto left = accumulated * width / total;
             accumulated += weights.size() == 0 ? 1 : *weight++;
             const auto right = accumulated * width / total;
-            control->setBounds(ju::Rectangle<int>(bounds.getX() + left, bounds.getY(),
+            row[i]->setBounds(ju::Rectangle<int>(offset + left, bounds.getY(),
                                                    right - left, bounds.getHeight()).reduced(2));
         }
     }
