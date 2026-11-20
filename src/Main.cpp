@@ -266,15 +266,16 @@ private:
 
         edit->getTransport().ensureContextAllocated();
         ju::PopupMenu menu;
-        ju::Array<te::InputDeviceInstance*> choices;
+        ju::StringArray choices;
+        const auto trackID = track->itemID;
         const auto type = midi ? te::InputDevice::physicalMidiDevice : te::InputDevice::waveDevice;
         for (auto* instance : edit->getAllInputDevices())
         {
             auto& device = instance->getInputDevice();
             if (device.getDeviceType() == type && device.isEnabled())
             {
-                choices.add(instance);
-                menu.addItem(choices.size(), device.getName(), true, isArmed(*instance, track->itemID));
+                choices.add(device.getDeviceID());
+                menu.addItem(choices.size(), device.getName(), true, isArmed(*instance, trackID));
             }
         }
 
@@ -285,13 +286,82 @@ private:
         if (choice == 0)
             return;
 
-        auto& input = *choices[choice - 1];
-        const auto inputName = input.getInputDevice().getName();
-        if (const auto result = toggleInput(input, *track); result.failed())
-            return report(result.getErrorMessage());
+        if (!ready())
+            return;
+        track = te::findAudioTrackForID(*edit, trackID);
+        if (!track)
+            return;
 
-        report(inputName + (isArmed(input, track->itemID) ? " armed on " : " removed from ") + track->getName());
-        updateControls();
+        for (auto* input : edit->getAllInputDevices())
+            if (input->getInputDevice().getDeviceType() == type
+                && input->getInputDevice().getDeviceID() == choices[choice - 1])
+            {
+                const auto inputName = input->getInputDevice().getName();
+                if (const auto result = toggleInput(*input, *track); result.failed())
+                    return report(result.getErrorMessage());
+                report(inputName + (isArmed(*input, trackID) ? " armed on " : " removed from ") + track->getName());
+                updateControls();
+                return;
+            }
+        report("The selected input is no longer available");
+    }
+
+    void showMonitoringReport()
+    {
+        auto& manager = engine.getDeviceManager().deviceManager;
+        auto* device = manager.getCurrentAudioDevice();
+        if (!device)
+            return report("Open Audio and MIDI Devices to select an interface first");
+
+        const auto rate = device->getCurrentSampleRate();
+        if (rate <= 0.0)
+            return report("The selected audio device is inactive");
+        const auto samples = [rate](int n) {
+            return ju::String(n) + " samples (" + ju::String(n * 1000.0 / rate, 2) + " ms)";
+        };
+        const auto setup = manager.getAudioDeviceSetup();
+        auto detail = manager.getCurrentAudioDeviceType()
+            + "\nInput: " + setup.inputDeviceName + " / " + ju::String(device->getActiveInputChannels().countNumberOfSetBits()) + " ch"
+            + "\nOutput: " + setup.outputDeviceName + " / " + ju::String(device->getActiveOutputChannels().countNumberOfSetBits()) + " ch"
+            + "\nSample rate: " + ju::String(rate, 0) + " Hz"
+            + "\nProcessing buffer: " + samples(device->getCurrentBufferSizeSamples())
+            + "\nDriver input delay: " + samples(device->getInputLatencyInSamples())
+            + "\nDriver output delay: " + samples(device->getOutputLatencyInSamples());
+
+        if (edit)
+        {
+            if (auto* context = edit->getTransport().getCurrentPlaybackContext())
+                detail += "\nTracktion graph latency: " + samples(context->getLatencySamples());
+            if (auto* track = trackAt(selection))
+            {
+                detail += "\n\nSelected track: " + track->getName();
+                bool routed = false;
+                for (auto* input : edit->getAllInputDevices())
+                    if (input->getInputDevice().getDeviceType() == te::InputDevice::waveDevice
+                        && input->getTargets().contains(track->itemID))
+                    {
+                        routed = true;
+                        const auto& source = input->getInputDevice();
+                        using Mode = te::InputDevice::MonitorMode;
+                        const auto mode = source.getMonitorMode();
+                        const auto* label = mode == Mode::automatic ? "Auto" : mode == Mode::on ? "On" : "Off";
+                        detail += "\n" + source.getName() + " - " + (isArmed(*input, track->itemID) ? "armed" : "disarmed")
+                            + ", monitor " + label + (input->isLivePlayEnabled(*track) ? " (audible)" : " (inactive)");
+                    }
+                if (!routed)
+                    detail += "\nNo physical audio input routed to this track.";
+            }
+
+            for (auto* plugin : te::getAllPlugins(*edit, true))
+                if (plugin->isEnabled() && plugin->getLatencySeconds() > 0.0)
+                {
+                    auto* owner = plugin->getOwnerTrack();
+                    detail += "\n" + (owner ? owner->getName() : ju::String("Master")) + " / " + plugin->getName()
+                        + ": " + ju::String(plugin->getLatencySeconds() * 1000.0, 2) + " ms";
+                }
+        }
+        detail += "\n\nReported delays are component values. Measuring guitar-to-speaker delay requires the interface.";
+        ju::AlertWindow::showMessageBoxAsync(ju::MessageBoxIconType::InfoIcon, "Audio Monitoring Report", detail);
     }
 
     void record()

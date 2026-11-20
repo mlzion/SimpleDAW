@@ -6,7 +6,7 @@
         newProject = 100, openProject, saveProject, saveProjectAs, importAudio, exportAudio, exitApp,
         undo, redo, cut, copy, paste, duplicate, deleteItem,
         audioTrack, midiTrack, midiItem, devices, about, armAudio, armMidi, synth, reverb, vst3,
-        audioFile, locateFile, playStop, startRecording
+        audioFile, locateFile, monitoringReport, playStop, startRecording
     };
 
     struct PanelState
@@ -459,7 +459,7 @@ private:
             case 0: add({ newProject, openProject, saveProject, saveProjectAs, importAudio, exportAudio, exitApp }); break;
             case 1: add({ undo, redo, cut, copy, paste, duplicate, deleteItem, locateFile }); break;
             case 2: add({ audioTrack, midiTrack, midiItem, audioFile, synth, reverb, vst3 }); break;
-            case 3: add({ devices, armAudio, armMidi }); break;
+            case 3: add({ devices, armAudio, armMidi, monitoringReport }); break;
             case 4: add({ about }); break;
             default: break;
         }
@@ -482,7 +482,7 @@ private:
             "Undo", "Redo", "Cut", "Copy", "Paste", "Duplicate", "Delete",
             "Audio Track", "MIDI Track", "MIDI Item", "Audio and MIDI Devices", "About SimpleDAW",
             "Arm Audio Input", "Arm MIDI Input", "Add MIDI Synth", "Add Reverb", "Load VST3",
-            "Audio File", "Locate File", "Play / Stop", "Record"
+            "Audio File", "Locate File", "Audio Monitoring Report", "Play / Stop", "Record"
         };
         if (id < newProject || id > startRecording)
         {
@@ -531,6 +531,7 @@ private:
             case midiTrack: addTrack(true); break;
             case midiItem: insertMidi(); break;
             case devices: configureDevices(); break;
+            case monitoringReport: showMonitoringReport(); break;
             case about: ju::AlertWindow::showMessageBoxAsync(ju::MessageBoxIconType::InfoIcon,
                 "About SimpleDAW", "SimpleDAW v0.21\nJUCE and Tracktion Engine"); break;
             case armAudio: armInput(false); break;
@@ -619,6 +620,44 @@ private:
             clip->removeFromParent();
             selectedItem = {};
         }
+    }
+
+    static ju::StringArray unavailablePlugins(te::Edit& target)
+    {
+        ju::StringArray result;
+        for (auto* plugin : te::getAllPlugins(target, true))
+            if (auto* external = dynamic_cast<te::ExternalPlugin*>(plugin); external && external->isMissing())
+            {
+                const auto* track = external->getOwnerTrack();
+                result.add((track ? track->getName() : ju::String("Master")) + " / " + external->getName());
+            }
+        return result;
+    }
+
+    void warnUnavailablePlugins()
+    {
+        const auto missing = unavailablePlugins(*edit);
+        if (missing.isEmpty())
+            return;
+        report(ju::String(missing.size()) + " unavailable plugin(s). Project references retained.");
+        ju::AlertWindow::showMessageBoxAsync(ju::MessageBoxIconType::WarningIcon, "Unavailable plugins",
+            "These plugins could not be loaded. Their saved references and settings remain in the project.\n\n"
+                + missing.joinIntoString("\n"));
+    }
+
+    ju::String selectedEffects() const
+    {
+        const auto* track = trackAt(selection);
+        if (!track)
+            return "EFFECTS - Select a track";
+        ju::StringArray names;
+        for (auto* plugin : track->pluginList.getPlugins())
+        {
+            if (dynamic_cast<te::VolumeAndPanPlugin*>(plugin) || dynamic_cast<te::LevelMeterPlugin*>(plugin))
+                continue;
+            names.add(plugin->getName() + (plugin->isMissing() ? " (unavailable)" : ""));
+        }
+        return track->getName() + "\n" + (names.isEmpty() ? "No effects or instruments" : names.joinIntoString("\n"));
     }
 
     void setProject(std::unique_ptr<te::Edit> next, const ju::File& file)
@@ -1327,8 +1366,9 @@ private:
         followButton->setToggleState(follow, ju::dontSendNotification);
         for (size_t i = 0; i < tabs.size(); ++i)
             static_cast<ju::TextButton*>(tabs[i])->setToggleState(i == activeTab, ju::dontSendNotification);
-        workspace.setText(static_cast<ju::TextButton*>(tabs[activeTab])->getButtonText() + " - coming in a later release",
-                          ju::dontSendNotification);
+        workspace.setText(activeTab == 1 ? selectedEffects()
+            : static_cast<ju::TextButton*>(tabs[activeTab])->getButtonText() + " - coming in a later release",
+            ju::dontSendNotification);
         inspector.setText(trackAt(selection) ? "INSPECTOR\n\n" + trackAt(selection)->getName()
             + "\n\nTrack and item controls\ncoming in v0.22" : "INSPECTOR\n\nSelect a track", ju::dontSendNotification);
         for (size_t i = 0; i < editButtons.size(); ++i)
