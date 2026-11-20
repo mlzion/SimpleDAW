@@ -6,7 +6,7 @@
         newProject = 100, openProject, saveProject, saveProjectAs, importAudio, exportAudio, exitApp,
         undo, redo, cut, copy, paste, duplicate, deleteItem,
         audioTrack, midiTrack, midiItem, devices, about, armAudio, armMidi, synth, reverb, vst3,
-        playStop, startRecording
+        audioFile, playStop, startRecording
     };
 
     struct PanelState
@@ -54,19 +54,22 @@
         struct Wave
         {
             Wave(Arrangement& arrangement, const ju::File& source)
-                : file(source), thumbnail(512, arrangement.formats, arrangement.cache)
+                : file(source), modified(file.getLastModificationTime()), size(file.getSize()), thumbnail(512, arrangement.formats, arrangement.cache)
             {
                 thumbnail.addChangeListener(&arrangement);
-                thumbnail.setSource(new ju::FileInputSource(file));
+                thumbnail.setSource(new ju::FileInputSource(file, true));
             }
 
             ju::File file;
+            ju::Time modified;
+            ju::int64 size;
             ju::AudioThumbnail thumbnail;
         };
 
         void paint(ju::Graphics& g) override { owner.paintArrangement(g); }
         void changeListenerCallback(ju::ChangeBroadcaster*) override { repaint(); }
         void mouseDown(const ju::MouseEvent& event) override { owner.arrangementDown(event); }
+        void mouseDrag(const ju::MouseEvent& event) override { owner.arrangementDrag(event); }
         void mouseUp(const ju::MouseEvent& event) override { owner.arrangementUp(event); }
         void mouseWheelMove(const ju::MouseEvent&, const ju::MouseWheelDetails& wheel) override
         {
@@ -79,7 +82,8 @@
         ju::AudioThumbnail& waveform(te::EditItemID id, const ju::File& file)
         {
             auto& wave = waves[id];
-            if (!wave || wave->file != file)
+            if (!wave || wave->file != file || wave->size != file.getSize()
+                || wave->modified != file.getLastModificationTime())
                 wave = std::make_unique<Wave>(*this, file);
             return wave->thumbnail;
         }
@@ -442,7 +446,7 @@ private:
         {
             case 0: add({ newProject, openProject, saveProject, saveProjectAs, importAudio, exportAudio, exitApp }); break;
             case 1: add({ undo, redo, cut, copy, paste, duplicate, deleteItem }); break;
-            case 2: add({ audioTrack, midiTrack, midiItem, synth, reverb, vst3 }); break;
+            case 2: add({ audioTrack, midiTrack, midiItem, audioFile, synth, reverb, vst3 }); break;
             case 3: add({ devices, armAudio, armMidi }); break;
             case 4: add({ about }); break;
             default: break;
@@ -466,7 +470,7 @@ private:
             "Undo", "Redo", "Cut", "Copy", "Paste", "Duplicate", "Delete",
             "Audio Track", "MIDI Track", "MIDI Item", "Audio and MIDI Devices", "About SimpleDAW",
             "Arm Audio Input", "Arm MIDI Input", "Add MIDI Synth", "Add Reverb", "Load VST3",
-            "Play / Stop", "Record"
+            "Audio File", "Play / Stop", "Record"
         };
         if (id < newProject || id > startRecording)
         {
@@ -485,7 +489,7 @@ private:
             case cut: case copy: case paste: case duplicate: info.setActive(false); break;
             case deleteItem: info.setActive(stopped && selectedClip() != nullptr); break;
             case audioTrack: case midiTrack: info.setActive(stopped && trackCount() < maxTracks); break;
-            case midiItem: case importAudio: case armAudio: case armMidi: case synth: case reverb: case vst3:
+            case midiItem: case audioFile: case importAudio: case armAudio: case armMidi: case synth: case reverb: case vst3:
                 info.setActive(stopped && hasTrack); break;
             case playStop: case startRecording: info.setActive(edit != nullptr); break;
             default: break;
@@ -503,7 +507,7 @@ private:
             case openProject: chooseProject(false); break;
             case saveProject: save(); break;
             case saveProjectAs: saveAs(); break;
-            case importAudio: importWave(); break;
+            case audioFile: case importAudio: importWave(); break;
             case exportAudio: exportProject(); break;
             case exitApp: ju::JUCEApplication::getInstance()->systemRequestedQuit(); break;
             case undo: if (ready()) edit->getUndoManager().undo(); break;
@@ -931,7 +935,9 @@ private:
 
     void paintClip(ju::Graphics& g, te::Clip& clip, int y, ju::Colour colour, int width)
     {
-        const auto positionInEdit = clip.getPosition();
+        auto positionInEdit = clip.getPosition();
+        if (dragItem == clip.itemID && dragPreview)
+            positionInEdit.time = positionInEdit.time + (*dragPreview - positionInEdit.getStart());
         const auto left = timeX(positionInEdit.getStart());
         const auto right = timeX(positionInEdit.getEnd());
         const auto bounds = ju::Rectangle<int>(left, y + 3, ju::jmax(2, right - left), rowHeight() - 6)
@@ -952,7 +958,9 @@ private:
             g.setColour(colour);
             if (auto* audio = dynamic_cast<te::AudioClipBase*>(&clip))
             {
-                const auto file = audio->getPlaybackFile().getFile();
+                auto file = audio->getPlaybackFile().getFile();
+                if (!file.existsAsFile())
+                    file = audio->getOriginalFile();
                 if (file.existsAsFile())
                 {
                     auto& thumb = arrangement.waveform(clip.itemID, file);
@@ -980,6 +988,33 @@ private:
         g.drawFittedText(clip.getName(), title.reduced(4, 0), ju::Justification::centredLeft, 1);
     }
 
+    void paintRecording(ju::Graphics& g, te::AudioTrack& track, int y, ju::Colour colour)
+    {
+        const ju::Graphics::ScopedSaveState state(g);
+        g.reduceClipRegion(arrangement.getLocalBounds().withTrimmedLeft(headerWidth));
+        for (auto* input : edit->getAllInputDevices())
+        {
+            const auto file = input->getRecordingFile(track.itemID);
+            if (file == ju::File{})
+                continue;
+            auto live = engine.getRecordingThumbnailManager().getThumbnailFor(file);
+            const auto duration = live->thumb->getTotalLength();
+            if (duration <= 0.0)
+                continue;
+            const auto start = timeX(live->punchInTime);
+            const auto end = timeX(live->punchInTime + te::TimeDuration::fromSeconds(duration));
+            const auto bounds = ju::Rectangle<int>(start, y + 4, ju::jmax(1, end - start), rowHeight() - 8)
+                .getIntersection(arrangement.getLocalBounds().withTrimmedLeft(headerWidth));
+            if (bounds.isEmpty())
+                continue;
+            const auto visibleStart = timeAt(bounds.getX()) - live->punchInTime.inSeconds();
+            g.setColour(colour.darker(0.8f));
+            g.fillRect(bounds);
+            g.setColour(ju::Colours::salmon);
+            live->thumb->drawChannels(g, bounds, visibleStart, visibleStart + bounds.getWidth() / pixelsPerSecond, 1.0f);
+        }
+    }
+
     void paintArrangement(ju::Graphics& g)
     {
         const auto area = arrangement.getLocalBounds();
@@ -1003,13 +1038,6 @@ private:
         {
             const ju::Graphics::ScopedSaveState state(g);
             g.reduceClipRegion(area.withTrimmedLeft(headerWidth));
-            if (timeSelection)
-            {
-                g.setColour(ju::Colour(0x504273aa));
-                const auto left = timeX(timeSelection->getStart());
-                const auto right = timeX(timeSelection->getEnd());
-                g.fillRect(left, 0, right - left, area.getHeight());
-            }
             g.setFont(ju::FontOptions(13.0f));
             for (int bar = firstBar; bar <= lastBar; ++bar)
             {
@@ -1049,11 +1077,23 @@ private:
             paintTrack(g, track, row, y, colour);
             for (auto* clip : track.getClips())
                 paintClip(g, *clip, y, colour, width);
+            if (edit->getTransport().isRecording())
+                paintRecording(g, track, y, colour);
             g.setColour(ju::Colour(0xff353535));
             g.drawHorizontalLine(y + rowHeight() - 1, 0, static_cast<float>(width));
         }
         const ju::Graphics::ScopedSaveState state(g);
         g.reduceClipRegion(area.withTrimmedLeft(headerWidth));
+        if (const auto& range = rangePreview ? rangePreview : timeSelection)
+        {
+            const auto left = timeX(range->getStart());
+            const auto right = timeX(range->getEnd());
+            g.setColour(ju::Colour(0x504273aa));
+            g.fillRect(left, 0, right - left, area.getHeight());
+            g.setColour(ju::Colour(0xff6b9ce0));
+            g.drawVerticalLine(left, 0, static_cast<float>(area.getHeight()));
+            g.drawVerticalLine(right, 0, static_cast<float>(area.getHeight()));
+        }
         g.setColour(ju::Colours::white);
         const auto cursorX = timeX(editCursor);
         g.drawVerticalLine(cursorX, 0, static_cast<float>(area.getHeight()));
@@ -1076,6 +1116,8 @@ private:
             return;
         arrangement.grabKeyboardFocus();
         draggingRange = false;
+        rangePreview.reset();
+        dragPreview.reset();
         dragItem = {};
         const auto row = firstRow + ju::jmax(0, event.y - rulerHeight) / rowHeight();
         if (event.x < headerWidth)
@@ -1087,8 +1129,9 @@ private:
 
         if (event.y < rulerHeight || event.mods.isShiftDown())
         {
-            draggingRange = !edit->getTransport().isRecording();
-            seek(timeAt(event.x));
+            draggingRange = !edit->getTransport().isPlaying();
+            dragAnchor = timeAt(event.x);
+            seek(dragAnchor);
             return;
         }
         if (auto* track = trackAt(row))
@@ -1101,7 +1144,12 @@ private:
                 const auto range = clip->getPosition().time;
                 if (event.x >= timeX(range.getStart()) && event.x < timeX(range.getEnd()))
                 {
-                    selectedItem = dragItem = clip->itemID;
+                    selectedItem = clip->itemID;
+                    if (dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip))
+                    {
+                        dragItem = clip->itemID;
+                        dragAnchor = timeAt(event.x);
+                    }
                     updateControls();
                     return;
                 }
@@ -1110,38 +1158,56 @@ private:
         seek(timeAt(event.x));
     }
 
-    void arrangementUp(const ju::MouseEvent& event)
+    void updateDragPreview(double pointerTime)
+    {
+        if (draggingRange)
+        {
+            const auto a = te::TimePosition::fromSeconds(snapSeconds(dragAnchor));
+            const auto b = te::TimePosition::fromSeconds(snapSeconds(pointerTime));
+            rangePreview = te::TimeRange(std::min(a, b), std::max(a, b));
+        }
+        else if (auto* clip = selectedClip(); clip && clip->itemID == dragItem)
+        {
+            const auto destination = clip->getPosition().getStart().inSeconds() + pointerTime - dragAnchor;
+            dragPreview = te::TimePosition::fromSeconds(snapSeconds(destination));
+        }
+    }
+
+    void arrangementDrag(const ju::MouseEvent& event)
     {
         if (!edit || edit->getTransport().isPlaying() || std::abs(event.getDistanceFromDragStartX()) < 5)
             return;
-        if (draggingRange)
+        updateDragPreview(timeAt(event.x));
+        arrangement.repaint();
+    }
+
+    void finishDrag()
+    {
+        if (rangePreview && !rangePreview->isEmpty())
         {
-            const auto a = snapSeconds(timeAt(event.getMouseDownX()));
-            const auto b = snapSeconds(timeAt(event.x));
-            if (a != b)
-            {
-                timeSelection = te::TimeRange(te::TimePosition::fromSeconds(ju::jmin(a, b)),
-                                              te::TimePosition::fromSeconds(ju::jmax(a, b)));
-                edit->getTransport().setLoopRange(*timeSelection);
-                report("Time selection set");
-            }
+            timeSelection = rangePreview;
+            edit->getTransport().setLoopRange(*timeSelection);
+            report("Time selection set");
         }
-        else if (dragItem.isValid())
+        else if (auto* clip = selectedClip(); clip && clip->itemID == dragItem && dragPreview
+                 && clip->getPosition().getStart() != *dragPreview)
         {
-            auto* clip = selectedClip();
-            if (clip && clip->itemID == dragItem
-                && (dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip)))
-            {
-                const auto previous = clip->getPosition();
-                const auto target = snapSeconds(previous.getStart().inSeconds()
-                    + event.getDistanceFromDragStartX() / pixelsPerSecond);
-                if (std::abs(target - previous.getStart().inSeconds()) > 0.0001)
-                {
-                    edit->getUndoManager().beginNewTransaction("Move item");
-                    clip->setStart(te::TimePosition::fromSeconds(target), false, true);
-                }
-            }
+            edit->getUndoManager().beginNewTransaction("Move item");
+            clip->setStart(*dragPreview, false, true);
         }
+    }
+
+    void arrangementUp(const ju::MouseEvent& event)
+    {
+        if (edit && !edit->getTransport().isPlaying() && std::abs(event.getDistanceFromDragStartX()) >= 5)
+        {
+            updateDragPreview(timeAt(event.x));
+            finishDrag();
+        }
+        dragItem = {};
+        draggingRange = false;
+        dragPreview.reset();
+        rangePreview.reset();
         updateControls();
     }
 
@@ -1232,7 +1298,9 @@ private:
     std::map<te::EditItemID, std::unique_ptr<Meter>> meters;
     te::EditItemID selectedItem, dragItem;
     te::TimePosition editCursor;
-    std::optional<te::TimeRange> timeSelection;
+    std::optional<te::TimeRange> timeSelection, rangePreview;
+    std::optional<te::TimePosition> dragPreview;
+    double dragAnchor = 0.0;
     int selection = -1, firstRow = 0;
     size_t activeTab = 0;
     double viewStart = 0.0, pixelsPerSecond = 100.0;

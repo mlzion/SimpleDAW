@@ -28,14 +28,14 @@ public:
     bool autoInitialiseDeviceManager() override { return false; }
 };
 
-bool insertAudio(te::AudioTrack& track, const ju::File& file)
+bool insertAudio(te::AudioTrack& track, const ju::File& file, te::TimePosition start = {})
 {
     te::AudioFile audio(track.edit.engine, file);
     if (!audio.isValid() || audio.getLength() <= 0.0)
         return false;
 
     return track.insertWaveClip(file.getFileNameWithoutExtension(), file,
-        {{ {}, te::TimeDuration::fromSeconds(audio.getLength()) }, {}}, false) != nullptr;
+        {{ start, start + te::TimeDuration::fromSeconds(audio.getLength()) }, {}}, false) != nullptr;
 }
 
 template<typename PluginType>
@@ -330,11 +330,17 @@ private:
         if (!selectedTrack())
             return;
 
-        chooseFile("Import WAV at start of selected track", "*.wav",
+        const auto trackID = trackAt(selection)->itemID;
+        const auto start = te::TimePosition::fromSeconds(snapSeconds(editCursor.inSeconds()));
+        chooseFile("Import WAV at the edit cursor", "*.wav",
             ju::FileBrowserComponent::openMode | ju::FileBrowserComponent::canSelectFiles,
-            [this](const ju::File& file) {
-                if (auto* track = selectedTrack())
-                    report(insertAudio(*track, file) ? "WAV imported" : "Could not import WAV");
+            [this, trackID, start](const ju::File& file) {
+                if (ready())
+                    if (auto* track = te::findAudioTrackForID(*edit, trackID))
+                    {
+                        edit->getUndoManager().beginNewTransaction("Import audio");
+                        report(insertAudio(*track, file, start) ? "WAV imported" : "Could not import WAV");
+                    }
             });
     }
 
