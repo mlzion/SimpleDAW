@@ -2303,7 +2303,8 @@ private:
     ju::MenuBarComponent menuBar { this };
     Arrangement arrangement { *this };
     Splitter inspectorDivider { *this, true }, workspaceDivider { *this, false };
-    ju::Label position, status, inspector, workspace;
+    ju::Label position, status;
+    AreaLabel inspector, workspace;
     ju::TooltipWindow tooltips { this };
     ju::TextEditor tempo;
     ju::ComboBox signature, recordMode, snap;
