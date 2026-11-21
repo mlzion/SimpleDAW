@@ -509,6 +509,10 @@ public:
             return passed;
         };
         MainGui gui(engine, dir.getChildFile("gui.settings"));
+        if (!check(gui.actionButtons.size() == 16 && std::none_of(gui.actionButtons.begin(), gui.actionButtons.end(),
+                [](const auto& slot) { return slot.button->isEnabled(); }), "four fixed groups and inert initial state"))
+            return false;
+
         gui.setProject(te::createEmptyEdit(engine, project), project);
         gui.edit->ensureNumberOfAudioTracks(2);
         gui.snap.setSelectedId(1, ju::dontSendNotification);
@@ -524,9 +528,6 @@ public:
         midi = nullptr; // The test replaces the Edit, so keep only the fixture's ID.
         const auto audioID = second->getClips().getFirst()->itemID;
         gui.updateControls();
-        if (!check(gui.actionButtons.size() == 16 && std::none_of(gui.actionButtons.begin(), gui.actionButtons.end(),
-                [](const auto& slot) { return slot.button->isEnabled(); }), "four fixed groups and inert initial state"))
-            return false;
 
         const auto mouse = [&](ju::Component& component, ju::Point<int> where, int modifiers,
                                ju::Point<int> down, bool dragged = false) {
