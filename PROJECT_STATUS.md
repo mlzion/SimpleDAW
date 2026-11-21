@@ -8,9 +8,9 @@ User-reported Windows live acceptance is complete with 45 PASS, 0 PARTIAL, 0 FAI
 
 ## v0.22.2 — implementation in review
 
-The implementation branch adds multi-clip Cut, Copy, Paste, Delete, Move and Size, confirmed track Delete and block reorder, and global Undo/Redo. Track clipboard semantics, track SIZE mapping and the Snap Off increment for horizontal MOVE and SIZE are pending decisions. MODIFY, recording changes and creation + buttons remain deferred. [Task sheet](docs/tasks/v0.22.2-first-task-sheet.md) · [Architecture](docs/architecture.md#universal-actions-toolbar)
+The implementation branch adds multi-clip Cut, Copy, Paste, Delete, Move and Size, confirmed track Delete and block reorder, and global Undo/Redo. Horizontal clip MOVE and SIZE use 10 ms per press with Snap Off. Track Settings COPY/PASTE is approved in principle. Source-to-destination pairing, routing and automation compatibility, and Track SIZE mapping await clarification. MODIFY, recording changes and creation + buttons remain deferred. [Task sheet](docs/tasks/v0.22.2-first-task-sheet.md) · [Architecture](docs/architecture.md#universal-actions-toolbar)
 
-Windows x64 CI passed all four CTests on both /MD and /MT at `d0aa5d1`. Both builds passed version 0.22.2, runtime import inspection and isolated startup. The /MD build produced the executable and matching source ZIP. Windows live acceptance remains pending. [Windows CI](https://github.com/mlzion/SimpleDAW/actions/runs/44870812968) · [Windows x64 download](https://github.com/mlzion/SimpleDAW/actions/runs/44870812968/artifacts/14694276548) · [Editable checklist](docs/testing/v0.22.2-live-test.md)
+Before the Snap Off update, Windows x64 CI passed all four CTests on both /MD and /MT at `d0aa5d1`. Both builds passed version 0.22.2, runtime import inspection and isolated startup. The /MD build produced the executable and matching source ZIP. The Snap Off update passed a local C++ syntax check. Windows CI for the update requires explicit approval. Windows live acceptance remains pending. [Windows CI](https://github.com/mlzion/SimpleDAW/actions/runs/44870812968) · [Windows x64 download](https://github.com/mlzion/SimpleDAW/actions/runs/44870812968/artifacts/14694276548) · [Editable checklist](docs/testing/v0.22.2-live-test.md)
 
 ## Current development
 

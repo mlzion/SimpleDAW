@@ -683,8 +683,8 @@ public:
             return false;
 
         gui.snap.setSelectedId(1, ju::dontSendNotification);
-        if (!check(!gui.canDispatch(Action::left) && !gui.canDispatch(Action::endMinus)
-                && gui.canDispatch(Action::up), "Snap Off leaves vertical movement available"))
+        if (!check(gui.canDispatch(Action::left) && gui.canDispatch(Action::endMinus)
+                && gui.canDispatch(Action::up), "Snap Off supports timed and vertical actions"))
             return false;
         gui.snap.setSelectedId(4, ju::dontSendNotification);
         if (!check(!gui.canDispatch(Action::endPlus), "source limit rejects SIZE for the entire group"))
@@ -734,6 +734,44 @@ public:
         if (!check(gui.trackAt(1)->itemID == secondTrackID && gui.trackAt(3)->itemID == fourthTrackID,
                    "one global undo restores track order"))
             return false;
+        gui.actionSelection.requestedArea = EditingArea::timeline;
+        const auto pastedMidiID = gui.trackAt(2)->getClips().getFirst()->itemID;
+        gui.actionSelection.clips = { pastedMidiID };
+        const auto near = [](double actual, double expected) { return std::abs(actual - expected) < 1.0e-9; };
+        for (const auto& [bpm, grid] : { std::pair{ 80.0, 2 }, std::pair{ 150.0, 4 } })
+        {
+            gui.edit->tempoSequence.getTempoAt(te::TimePosition{}).setBpm(bpm);
+            const auto clipPosition = [&] { return te::findClipForID(*gui.edit, pastedMidiID)->getPosition(); };
+            gui.snap.setSelectedId(grid, ju::dontSendNotification);
+            const auto gridStart = clipPosition().getStart();
+            gui.dispatchAction(Action::right);
+            if (!check(near((clipPosition().getStart() - gridStart).inSeconds(),
+                            60.0 / bpm / (1 << (grid - 2))), "Snap On uses the selected grid division"))
+                return false;
+            gui.useHistory(false);
+            gui.snap.setSelectedId(1, ju::dontSendNotification);
+            for (const auto action : { Action::right, Action::left, Action::startPlus, Action::startMinus,
+                                       Action::endMinus, Action::endPlus })
+            {
+                const auto before = clipPosition();
+                gui.dispatchAction(action);
+                const auto after = clipPosition();
+                const bool earlier = action == Action::left || action == Action::startMinus || action == Action::endMinus;
+                const bool changesStart = action != Action::endMinus && action != Action::endPlus;
+                const bool changesEnd = action != Action::startMinus && action != Action::startPlus;
+                const double delta = earlier ? -0.010 : 0.010;
+                if (!check(near((after.getStart() - before.getStart()).inSeconds(), changesStart ? delta : 0.0)
+                        && near((after.getEnd() - before.getEnd()).inSeconds(), changesEnd ? delta : 0.0),
+                           "Snap Off moves each affected boundary by exactly 10 ms"))
+                    return false;
+                gui.useHistory(false);
+                if (!check(clipPosition() == before, "one undo restores the Snap Off edit"))
+                    return false;
+                gui.useHistory(true);
+                if (!check(clipPosition() == after, "one redo restores the Snap Off edit"))
+                    return false;
+            }
+        }
         gui.setProject(te::createEmptyEdit(engine, project), project);
         return check(!gui.clipClipboard && gui.actionSelection.clips.empty(), "opening a project clears clipboard and selection");
     }
@@ -1489,12 +1527,10 @@ private:
         const bool move = action == Action::left || action == Action::right;
         const bool start = action == Action::startMinus || action == Action::startPlus;
         const bool earlier = action == Action::left || action == Action::startMinus || action == Action::endMinus;
-        te::TimeDuration delta;
-        if (!vertical)
+        const auto grid = snap.getSelectedId();
+        auto delta = te::TimeDuration::fromSeconds(earlier ? -0.010 : 0.010);
+        if (!vertical && grid > 1)
         {
-            const auto grid = snap.getSelectedId();
-            if (grid <= 1)
-                return {};
             auto anchor = te::Edit::getMaximumEditEnd();
             for (auto* clip : clips)
                 anchor = std::min(anchor, (move || start) ? clip->getPosition().getStart() : clip->getPosition().getEnd());
