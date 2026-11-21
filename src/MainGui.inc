@@ -781,9 +781,12 @@ private:
             return false;
         selectTrack(0);
         insertMidi();
-        const auto id = selectedClip()->itemID;
+        auto* clip = selectedClip();
+        if (!clip)
+            return false;
+        const auto id = clip->itemID;
         const auto range = timeSelection;
-        if (!selectedClip() || !invokeShortcut(deleteItem, key, true, &tempo) || !selectedClip()
+        if (!invokeShortcut(deleteItem, key, true, &tempo) || !selectedClip()
             || !invokeShortcut(deleteItem, key) || te::findClipForID(*edit, id) || timeSelection != range)
             return false;
         if (!commandManager.invokeDirectly(undo, false) || !te::findClipForID(*edit, id)
@@ -1786,20 +1789,18 @@ private:
     void paintClip(ju::Graphics& g, te::Clip& clip, int y, ju::Colour colour)
     {
         auto positionInEdit = clip.getPosition();
-        if (dragItem == clip.itemID && dragPreview)
-            positionInEdit.time = positionInEdit.time + (*dragPreview - positionInEdit.getStart());
+        positionInEdit.time = displayedClipRange(clip);
         const auto left = timeX(positionInEdit.getStart());
         const auto bounds = clipBounds(positionInEdit.time, y);
         if (bounds.isEmpty())
             return;
         const auto selected = actionSelection.clips.contains(clip.itemID);
-        const auto active = selected && activeEditingArea() == EditingArea::timeline;
         const auto* missing = missingWave(&clip);
         if (missing)
             colour = ju::Colours::grey;
         g.setColour(colour.withMultipliedBrightness(selected ? 0.56f : 0.27f));
         g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
-        g.setColour(active ? ju::Colours::white : colour);
+        g.setColour(colour);
         g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 4.0f, selected ? 2.0f : 1.0f);
 
         if (missing)
@@ -1993,6 +1994,12 @@ private:
         return { 2, y + 2, headerWidth - 5, rowHeight() - 4 };
     }
 
+    te::TimeRange displayedClipRange(const te::Clip& clip) const
+    {
+        const auto range = clip.getPosition().time;
+        return dragItem == clip.itemID && dragPreview ? range + (*dragPreview - range.getStart()) : range;
+    }
+
     ju::Rectangle<int> clipBounds(te::TimeRange range, int y) const
     {
         const auto left = timeX(range.getStart());
@@ -2021,11 +2028,21 @@ private:
             g.drawRect(selectionBox);
         }
         const auto active = activeEditingArea();
-        if (active == EditingArea::timeline || active == EditingArea::tracks)
-        {
-            g.setColour(ju::Colours::white);
-            g.drawRect(arrangementAreaBounds(active), 2);
-        }
+        if (active != EditingArea::timeline && active != EditingArea::tracks)
+            return;
+        g.setColour(ju::Colours::white);
+        const auto area = arrangementAreaBounds(active);
+        g.drawRect(area, 2);
+        if (active != EditingArea::timeline || actionSelection.clips.empty())
+            return;
+
+        // Keep selection outlines visible above the ruler range and overlapping clips.
+        const auto tracks = te::getAudioTracks(*edit);
+        for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < area.getBottom(); ++row, y += rowHeight())
+            for (auto* clip : tracks[row]->getClips())
+                if (actionSelection.clips.contains(clip->itemID))
+                    if (const auto bounds = clipBounds(displayedClipRange(*clip), y); !bounds.isEmpty())
+                        g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 4.0f, 2.0f);
     }
 
     void arrangementDown(const ju::MouseEvent& event)
