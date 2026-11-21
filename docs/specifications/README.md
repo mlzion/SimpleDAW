@@ -15,7 +15,7 @@ These PDFs are the shared reference set for specification reviews and phased dev
 
 - [v0.22.2 toolbar and creation-controls handoff](v0.22-design-decisions-reviews-01-82.md#v0222-toolbar-and-creation-controls-handoff--accepted-2026-11-20) — approved CUT replacement for CREATE, permanent global Undo/Redo, minimum-window sizing, deferred circular + creation controls, and Inspector-specific Duplicate/Clone/Loop.
 
-## How to use this set
+- [v0.22.2 expanded implementation task sheet](../tasks/v0.22.2-first-task-sheet.md) — approved combined EDIT/MOVE/SIZE + Undo/Redo scope; not yet implemented or tested.\n\n## How to use this set
 
 Read the repository [instructions](../../AGENTS.md) and [project status](../../PROJECT_STATUS.md) before assigning work. Accepted design does not mean implemented, merged or tested. Pending and recommended items require decisions before implementation.
 
