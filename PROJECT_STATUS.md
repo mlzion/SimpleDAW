@@ -18,6 +18,10 @@ The JUCE window adds a two-row transport, a shared track-list and arrangement vi
 
 Both Audio Track and MIDI Track commands create Tracktion audio tracks, which support both kinds of clips. The MIDI label is a workflow distinction. Input arming and plugin setup remain accessible from Options and Insert. Project format and the source-paired Windows /MD distribution are carried forward. [Phase 1 architecture](docs/architecture.md) · [Windows distribution](docs/windows-download.md)
 
+## Additional approved future design — 2026-11-21
+
+Clip GLUE, GROUP/UNGROUP, one-level Parent/Child Track hierarchy with audio parent buses and Track List drag/drop, and clip MIX/REPLACE overlap precedence/visual indicators are accepted **design only**, not implemented or tested. See [decision supplement](docs/specifications/clip-glue-group-parent-overlap-2026-11-21.md). This does not change open v0.22.2 implementation scope. No Windows CI or application testing was requested or run for this documentation update.
+
 ## Specifications and planning
 
 PR #4 merged the [specification and phase-plan index](docs/specifications/README.md) and three original PDFs. The import verified SHA-256 hashes and visually inspected all 14 pages. The phase plan is Draft 0.1. Its phase identifiers differ from the earlier audio-engine Phase 1. Pending design decisions remain listed in the index. [Planning PR #4](https://github.com/mlzion/SimpleDAW/pull/4) · [Historical project status](https://github.com/mlzion/SimpleDAW/blob/2987bf4/PROJECT_STATUS.md)
