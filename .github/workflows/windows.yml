@@ -10,21 +10,13 @@ permissions:
 
 jobs:
   build-and-test:
-    name: Windows x64 (${{ matrix.runtime }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runtime: MD
-            dynamic: 'ON'
-          - runtime: MT
-            dynamic: 'OFF'
+    name: Windows x64 (/MD)
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Fetch pinned source dependencies
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DSIMPLEDAW_ASIO_SDK:PATH= -DSIMPLEDAW_MSVC_DYNAMIC_RUNTIME=${{ matrix.dynamic }}
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DSIMPLEDAW_ASIO_SDK:PATH= -DSIMPLEDAW_MSVC_DYNAMIC_RUNTIME=ON
       - name: Create matching source archive
         run: |
           ./scripts/New-WindowsSourceArchive.ps1 -BinaryBuildDirectory build -OutputDirectory source-package |
@@ -37,7 +29,7 @@ jobs:
       - name: Configure from extracted source without dependency downloads
         run: >
           cmake -S archive-source/SimpleDAW -B archive-build -G "Visual Studio 17 2022" -A x64
-          -DSIMPLEDAW_ASIO_SDK:PATH= -DSIMPLEDAW_MSVC_DYNAMIC_RUNTIME=${{ matrix.dynamic }} -DFETCHCONTENT_FULLY_DISCONNECTED=ON
+          -DSIMPLEDAW_ASIO_SDK:PATH= -DSIMPLEDAW_MSVC_DYNAMIC_RUNTIME=ON -DFETCHCONTENT_FULLY_DISCONNECTED=ON
           "-DFETCHCONTENT_SOURCE_DIR_JUCE=${{ github.workspace }}/archive-source/JUCE"
           "-DFETCHCONTENT_SOURCE_DIR_TRACKTION=${{ github.workspace }}/archive-source/Tracktion"
       - name: Build
@@ -47,14 +39,14 @@ jobs:
       - name: Verify version, runtime imports and isolated startup
         id: release
         run: |
-          ./scripts/Verify-Portable.ps1 -BuildDirectory archive-build -MsvcRuntime ${{ matrix.runtime }}
+          ./scripts/Verify-Portable.ps1 -BuildDirectory archive-build -MsvcRuntime MD
           $metadata = Get-Content -LiteralPath archive-build/SimpleDAW-Release.json -Raw | ConvertFrom-Json
           "artifact=$($metadata.artifactName)" >> $env:GITHUB_OUTPUT
           $exeName = Split-Path -Leaf $metadata.executable
           $hash = (Get-FileHash -LiteralPath $metadata.executable).Hash
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "$exeName (${{ matrix.runtime }}) SHA256 $hash"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "$exeName (/MD) SHA256 $hash"
       - name: Stage executable, corresponding source and notices
-        if: matrix.runtime == 'MD' && github.repository == 'mlzion/SimpleDAW' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: github.repository == 'mlzion/SimpleDAW'
         run: |
           New-Item -Path windows-download -ItemType Directory | Out-Null
           $metadata = Get-Content -LiteralPath archive-build/SimpleDAW-Release.json -Raw | ConvertFrom-Json
@@ -72,7 +64,7 @@ jobs:
             Copy-Item -LiteralPath $file -Destination windows-download -ErrorAction Stop
           }
       - name: Upload Windows x64 download
-        if: matrix.runtime == 'MD' && github.repository == 'mlzion/SimpleDAW' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: github.repository == 'mlzion/SimpleDAW'
         id: download
         uses: actions/upload-artifact@v4
         with:

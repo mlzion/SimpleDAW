@@ -2,8 +2,8 @@ param(
     [Parameter(Mandatory)]
     [string] $BuildDirectory,
     [string] $Configuration = "Release",
-    [ValidateSet("MT", "MD")]
-    [string] $MsvcRuntime = "MT"
+    [ValidateSet("MD", "MT")]
+    [string] $MsvcRuntime = "MD"
 )
 
 $ErrorActionPreference = 'Stop'

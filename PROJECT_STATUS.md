@@ -1,5 +1,9 @@
 # SimpleDAW project status
 
+## Windows build policy
+
+Windows x64 development, acceptance and distribution use `/MD`. The acceptance workflow contains one `/MD` job and runs only by explicit, authorized manual dispatch. `/MT` remains available for requested local diagnostics. The source package, notices and separately installed Microsoft runtime requirements continue to apply. The policy branch passed all five CTests on local Linux, including Effects Foundation E0, and static checks of workflow triggers and package contents. Windows CI was not run for this update. [Build policy](docs/build/windows-build-policy.md) · [Diagnostic commands](docs/msvc-dynamic-runtime.md#requested-mt-diagnostics)
+
 ## v0.22.1 Universal Actions Toolbar
 
 v0.22.1 replaces the Edit toolbar with the permanent EDIT, MOVE, SIZE and MODIFY groups. Timeline and Tracks have independent mouse selections and visible focus. Inspector and read-only Effects can take focus. Single-clip Copy, Paste and Delete use Tracktion clipboard and undo operations. Windows x64 CI for `ccc2153` passed all four CTests on /MD and /MT, including the new `universal_actions` suite and the three v0.21 regression suites. Both builds passed version, runtime-import and isolated startup checks. The /MD artifact includes the executable and corresponding source. [Windows CI](https://github.com/mlzion/SimpleDAW/actions/runs/44856382800) · [Windows x64 artifact](https://github.com/mlzion/SimpleDAW/actions/runs/44856382800/artifacts/14688326869)

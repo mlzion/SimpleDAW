@@ -25,6 +25,6 @@ The pinned SoundTouch files grant LGPL 2.1 or later. The intended distribution p
 - SimpleDAW's original code is [AGPLv3-only](../LICENSE). The [third-party notices](../THIRD_PARTY_NOTICES.md) describe the standard Windows configuration and preserve the licences and attributions reviewed for that build. The dependency source trees retain their file-level notices.
 - The feature-branch CI publishes the tested `/MD` EXE, exact corresponding source archive, build instructions and notices in one no-charge GitHub Actions download. Keep the source and notices alongside the executable wherever it is republished. [Corresponding source instructions](corresponding-source.md) · [AGPLv3 §6](https://www.gnu.org/licenses/agpl-3.0.en.html#section6)
 - CI excludes ASIO. Review the exact SDK and notices separately before publishing a build with ASIO.
-- Users install the compatible Microsoft Visual C++ v14 x64 Redistributable separately if needed. The download contains no Microsoft runtime DLLs or installer. `/MT` remains a development test configuration. [Dynamic MSVC runtime review](msvc-dynamic-runtime.md)
+- Users install the compatible Microsoft Visual C++ v14 x64 Redistributable separately if needed. The download contains no Microsoft runtime DLLs or installer. `/MT` remains available for explicitly requested local diagnostics. [Dynamic MSVC runtime review](msvc-dynamic-runtime.md)
 
 The [LLVM/MinGW qualification](llvm-mingw.md) documents an alternative runtime and the pinned JUCE compatibility blocker. That toolchain is outside the Windows release configuration.
