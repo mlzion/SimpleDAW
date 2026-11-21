@@ -14,7 +14,9 @@ The revised source passed local C++ syntax and whitespace checks. Runtime tests 
 
 ### Targeted UAT rework
 
-R1 shares the 24-track limit between Insert and Paste and scrolls pasted tracks into view. R3 derives active track highlights from Timeline clip membership or the stored Track List selection, and the Inspector follows that editing context. R2 awaits clarification of the minimum at meter changes and handling of already-short clips. R4 awaits the migration policy for legacy tracks and confirmation of Insert compatibility. All four CTests passed in a local Linux build with the pinned JUCE and Tracktion sources, including Paste from 20 through 24, rejection at the limit, Undo/Redo, reopen and focus-driven highlights. All Windows rework retests are pending. [Rework task sheet](docs/tasks/v0.22.2-uat-rework-task-sheet.md)
+R1 shares the 24-track limit between Insert and Paste and reveals newly pasted rows. R3 keeps independent selections and derives highlights and Inspector context from focus. R2 enforces a 1/16-bar minimum for SIZE shrink in musical beats, with the original start meter and extension allowed for existing short clips. R4 persists fixed Audio/MIDI track types and rejects incompatible placement atomically. Untyped homogeneous tracks are inferred, and mixed legacy tracks are reported with their clips preserved.
+
+All four CTests passed in a local Linux build with pinned JUCE and Tracktion. The cases cover track 24 and its persistence, focus and selection, size boundaries across tempo changes, compatible and incompatible Paste/Move/drag, Undo/Redo, and legacy track typing. Targeted Windows testing awaits explicit build authorization. [Rework task sheet](docs/tasks/v0.22.2-uat-rework-task-sheet.md) · [Acceptance checklist](docs/testing/v0.22.2-live-test.md)
 
 ## Current development
 

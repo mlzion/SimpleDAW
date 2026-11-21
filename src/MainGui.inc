@@ -533,6 +533,8 @@ public:
         auto* first = gui.trackAt(0);
         auto* second = gui.trackAt(1);
         const auto seconds = te::TimePosition::fromSeconds<double>;
+        first->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        second->state.setProperty(trackTypeProperty, "Audio", nullptr);
         auto midi = te::insertMIDIClip(*first, "Test MIDI", { seconds(1), seconds(2) });
         if (!check(midi && writeTestWave(audio) && insertAudio(*second, audio, seconds(3)), "create MIDI and WAV"))
             return false;
@@ -635,7 +637,7 @@ public:
         if (!check(gui.activeEditingArea() == EditingArea::timeline, "showing Effects preserves current focus"))
             return false;
 
-        click({ gui.timeX(seconds(4.13)), rowY(1) });
+        click({ gui.timeX(seconds(4.13)), rowY(0) });
         if (!check(gui.actionSelection.clips.empty() && gui.canDispatch(Action::paste)
                 && !gui.trackIsHighlighted(*first) && !gui.trackIsHighlighted(*second),
                    "empty Timeline selection sets paste destination without a stale track highlight"))
@@ -644,15 +646,15 @@ public:
         gui.dispatchAction(Action::paste);
         auto* pasted = gui.selectedClip();
         if (!check(dynamic_cast<te::MidiClip*>(pasted) && pasted->itemID != midiID
-                && second->getClips().size() == 2 && std::abs((pasted->getPosition().getStart() - destination).inSeconds()) < 0.000001,
+                && first->getClips().size() == 2 && std::abs((pasted->getPosition().getStart() - destination).inSeconds()) < 0.000001,
                    "MIDI Paste creates and selects an independent clip at the unsnapped cursor"))
             return false;
         const auto pasteID = pasted->itemID;
         gui.commandManager.invokeDirectly(undo, false);
-        if (!check(second->getClips().size() == 1 && gui.actionSelection.clips.empty(), "one undo removes paste"))
+        if (!check(first->getClips().size() == 1 && gui.actionSelection.clips.empty(), "one undo removes paste"))
             return false;
         gui.commandManager.invokeDirectly(redo, false);
-        if (!check(te::findClipForID(*gui.edit, pasteID) && second->getClips().size() == 2, "redo restores paste"))
+        if (!check(te::findClipForID(*gui.edit, pasteID) && first->getClips().size() == 2, "redo restores paste"))
             return false;
 
         click(audioPoint);
@@ -662,17 +664,17 @@ public:
                 && te::findClipForID(*gui.edit, pasteID)->getPosition().getStart() == destination, "Delete leaves the gap"))
             return false;
         gui.commandManager.invokeDirectly(undo, false);
-        if (!check(te::findClipForID(*gui.edit, audioID) && second->getClips().size() == 2, "undo restores audio clip"))
+        if (!check(te::findClipForID(*gui.edit, audioID) && second->getClips().size() == 1, "undo restores audio clip"))
             return false;
 
         gui.snap.setSelectedId(4, ju::dontSendNotification);
-        click({ gui.timeX(seconds(2.71)), rowY(0) });
+        click({ gui.timeX(seconds(2.71)), rowY(1) });
         gui.seek(2.71, false);
         const auto snapped = gui.pasteStart();
         gui.dispatchAction(Action::paste);
         auto* pastedWave = dynamic_cast<te::WaveAudioClip*>(gui.selectedClip());
         if (!check(pastedWave && pastedWave->itemID != audioID && pastedWave->getOriginalFile() == audio
-                && pastedWave->getPosition().getStart() == snapped && first->getClips().size() == 2,
+                && pastedWave->getPosition().getStart() == snapped && second->getClips().size() == 2,
                    "WAV Paste preserves media and snaps on the destination lane"))
             return false;
 
@@ -687,6 +689,8 @@ public:
         if (!check(first->getClips().size() == clipCount, "disabled actions leave clips alone"))
             return false;
         gui.edit->ensureNumberOfAudioTracks(4);
+        gui.trackAt(2)->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        gui.trackAt(3)->state.setProperty(trackTypeProperty, "Audio", nullptr);
         gui.actionSelection.clips = { midiID, audioID };
         gui.selection = 3;
         gui.dispatchAction(Action::copy);
@@ -706,6 +710,13 @@ public:
                    "one global undo restores both cut clips"))
             return false;
         gui.selection = 2;
+        gui.trackAt(3)->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        gui.dispatchAction(Action::paste);
+        if (!check(gui.trackAt(2)->getClips().isEmpty() && gui.trackAt(3)->getClips().isEmpty()
+                && gui.incompatiblePlacement(Action::paste).contains("Cannot place Audio clips"),
+                   "one incompatible group paste destination leaves both lanes empty"))
+            return false;
+        gui.trackAt(3)->state.setProperty(trackTypeProperty, "Audio", nullptr);
         gui.seek(5.15, false);
         const auto groupAnchor = gui.pasteStart();
         gui.dispatchAction(Action::paste);
@@ -718,7 +729,8 @@ public:
 
         gui.snap.setSelectedId(1, ju::dontSendNotification);
         if (!check(gui.canDispatch(Action::left) && !gui.canDispatch(Action::endMinus)
-                && gui.canDispatch(Action::up), "Snap Off retains group MOVE and disables group SIZE"))
+                && !gui.canDispatch(Action::up) && gui.incompatiblePlacement(Action::up).isNotEmpty(),
+                   "Snap Off retains horizontal MOVE and blocks an incompatible vertical group move"))
             return false;
         gui.snap.setSelectedId(4, ju::dontSendNotification);
         for (const auto action : { Action::startMinus, Action::startPlus, Action::endMinus, Action::endPlus,
@@ -731,11 +743,28 @@ public:
         if (!check(movedStart < groupAnchor, "horizontal MOVE steps left"))
             return false;
         gui.dispatchAction(Action::up);
-        const auto clipsOnSecond = gui.trackAt(1)->getClips();
+        if (!check(gui.trackAt(2)->getClips().size() == 1 && gui.trackAt(3)->getClips().size() == 1,
+                   "incompatible vertical MOVE leaves both selected clips in place"))
+            return false;
+
+        auto* movingMidi = gui.trackAt(2)->getClips().getFirst();
+        gui.dragItem = movingMidi->itemID;
+        gui.dragAnchor = movedStart.inSeconds();
+        gui.updateDragPreview(gui.dragAnchor, 1);
+        gui.finishDrag();
+        if (!check(!gui.dragPreview && gui.dragError.isNotEmpty()
+                && gui.trackAt(2)->getClips().size() == 1 && gui.trackAt(3)->getClips().size() == 1,
+                   "incompatible group drop keeps both clips at their original positions"))
+            return false;
+        gui.updateDragPreview(gui.dragAnchor, 0);
+        gui.finishDrag();
+        gui.dragItem = {};
+        gui.dragPreview.reset();
+        const auto firstClips = gui.trackAt(0)->getClips();
         if (!check(gui.trackAt(3)->getClips().isEmpty()
-                && std::any_of(clipsOnSecond.begin(), clipsOnSecond.end(),
+                && std::any_of(firstClips.begin(), firstClips.end(),
                                [movedStart](auto* clip) { return clip->getPosition().getStart() == movedStart; }),
-                   "vertical MOVE preserves time and changes rows"))
+                   "compatible group drag preserves timing and row offsets"))
             return false;
         gui.useHistory(false);
         if (!check(gui.trackAt(3)->getClips().size() == 1, "one undo restores both rows"))
@@ -918,7 +947,136 @@ public:
             return false;
         reopened.reset();
         gui.setProject(te::createEmptyEdit(engine, project), project);
-        return check(!gui.clipClipboard && !gui.trackClipboard && !gui.inspectorClipboard && gui.actionSelection.clips.empty(), "opening a project clears clipboard and selection");
+        return check(!gui.clipClipboard && !gui.trackClipboard && !gui.inspectorClipboard && gui.actionSelection.clips.empty(),
+                     "opening a project clears clipboard and selection")
+            && testClipPlacementAndMinimum(gui, engine, project, audio, check);
+    }
+
+    static bool testClipPlacementAndMinimum(MainGui& gui, te::Engine& engine, const ju::File& project,
+                                            const ju::File& audio, bool (*check)(bool, const char*))
+    {
+        using Action = UniversalAction;
+        const auto seconds = te::TimePosition::fromSeconds<double>;
+        gui.edit->ensureNumberOfAudioTracks(3);
+        auto* first = gui.trackAt(0);
+        auto* second = gui.trackAt(1);
+        auto* third = gui.trackAt(2);
+        first->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        second->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        third->state.setProperty(trackTypeProperty, "Audio", nullptr);
+        if (!check(insertAudio(*third, audio, seconds(3)), "create short WAV fixture"))
+            return false;
+
+        gui.selectTrack(2);
+        gui.insertMidi();
+        if (!check(third->getClips().size() == 1 && gui.status.getText().contains("Cannot place MIDI clips"),
+                   "MIDI Item refuses an Audio track"))
+            return false;
+        gui.selectTrack(0);
+        gui.importWave();
+        if (!check(first->getClips().isEmpty() && gui.status.getText().contains("Cannot place Audio clips"),
+                   "Audio File refuses a MIDI track before choosing a file"))
+            return false;
+
+        auto midi = te::insertMIDIClip(*first, "Threshold", { seconds(1), seconds(1.135) });
+        if (!check(midi != nullptr, "create MIDI clip near the size threshold"))
+            return false;
+        const auto id = midi->itemID;
+        midi = nullptr;
+        const auto find = [&] { return te::findClipForID(*gui.edit, id); };
+        gui.actionSelection.requestedArea = EditingArea::timeline;
+        gui.actionSelection.clips = { id };
+        gui.snap.setSelectedId(1, ju::dontSendNotification);
+        const auto original = find()->getPosition();
+        gui.dispatchAction(Action::endMinus);
+        const auto atMinimum = find()->getPosition();
+        if (!check(std::abs(atMinimum.getLength().inSeconds() - 0.125) < 1.0e-9
+                && !gui.canDispatch(Action::endMinus) && !gui.canDispatch(Action::startPlus),
+                   "Snap Off reaches the exact 4/4 threshold and blocks both further shrink actions"))
+            return false;
+        gui.useHistory(false);
+        if (!check(find()->getPosition() == original, "Undo restores pre-trim duration"))
+            return false;
+        gui.useHistory(true);
+        if (!check(find()->getPosition() == atMinimum, "Redo restores exact threshold"))
+            return false;
+        gui.snap.setSelectedId(4, ju::dontSendNotification);
+        if (!check(!gui.canDispatch(Action::endMinus) && !gui.canDispatch(Action::startPlus),
+                   "Snap On does not override the minimum"))
+            return false;
+
+        gui.snap.setSelectedId(1, ju::dontSendNotification);
+        find()->setPosition({ { seconds(1), seconds(1.04) }, {} });
+        if (!check(!gui.canDispatch(Action::startPlus) && !gui.canDispatch(Action::endMinus)
+                && !gui.canDispatch(Action::startMinus) && gui.canDispatch(Action::endPlus),
+                   "legacy short clip can grow without revealing media before its source"))
+            return false;
+        gui.dispatchAction(Action::endPlus);
+        if (!check(std::abs(find()->getPosition().getLength().inSeconds() - 0.05) < 1.0e-9
+                && !gui.canDispatch(Action::endMinus), "a short clip grows by one full Snap Off step"))
+            return false;
+
+        if (!check(gui.canDispatch(Action::down), "compatible single vertical move is available"))
+            return false;
+        gui.dispatchAction(Action::down);
+        if (!check(find()->getTrack() == second && gui.incompatiblePlacement(Action::down).isNotEmpty(),
+                   "single vertical move rejects the next incompatible lane"))
+            return false;
+        gui.dispatchAction(Action::down);
+        if (!check(find()->getTrack() == second && third->getClips().size() == 1, "rejected move starts no transaction"))
+            return false;
+        gui.useHistory(false);
+        if (!check(find()->getTrack() == first, "Undo returns the compatible move to its source"))
+            return false;
+        gui.useHistory(true);
+        if (!check(find()->getTrack() == second, "Redo restores the compatible move"))
+            return false;
+
+        auto& sequence = gui.edit->tempoSequence;
+        sequence.getTimeSigAt(seconds(0)).setStringTimeSig("7/8");
+        sequence.insertTempo(te::BeatPosition::fromBeats(1.0), 70.0, 1.0f);
+        te::tempo::Sequence::Position position(sequence.getInternalSequence());
+        const auto ppq = [&position](double beats) {
+            position.setPPQTime(beats);
+            return position.getTime();
+        };
+        const te::TimeRange acrossTempo { ppq(0.4), ppq(0.8) };
+        if (!check(gui.meetsMinimumDuration(acrossTempo, { ppq(0.4), ppq(0.61875) })
+                && !gui.meetsMinimumDuration(acrossTempo, { ppq(0.4), ppq(0.61) }),
+                   "7/8 minimum uses the start meter and musical duration across a tempo change"))
+            return false;
+
+        gui.selectTrack(0);
+        gui.dispatchAction(Action::copy);
+        gui.selectTrack(2);
+        gui.dispatchAction(Action::paste);
+        if (!check(trackType(*gui.trackAt(3)) == TrackType::midi && gui.trackAt(3)->getClips().isEmpty(),
+                   "duplicate preserves the type of an empty MIDI track"))
+            return false;
+
+        third->state.removeProperty(trackTypeProperty, nullptr);
+        second->state.removeProperty(trackTypeProperty, nullptr);
+        if (!check(gui.save(), "save typed and untyped track fixtures"))
+            return false;
+        gui.setProject(te::loadEditFromFile(engine, project), project);
+        if (!check(gui.trackAt(3)->state[trackTypeProperty].toString() == "MIDI"
+                && gui.trackAt(1)->state[trackTypeProperty].toString() == "MIDI"
+                && gui.trackAt(2)->state[trackTypeProperty].toString() == "Audio",
+                   "reopen preserves explicit typing and infers homogeneous legacy track types"))
+            return false;
+
+        auto* mixed = gui.trackAt(2);
+        if (!check(te::insertMIDIClip(*mixed, "Legacy MIDI", { seconds(1), seconds(2) }) != nullptr,
+                   "create unexpected mixed legacy fixture"))
+            return false;
+        mixed->state.removeProperty(trackTypeProperty, nullptr);
+        if (!check(gui.save(), "save mixed legacy fixture"))
+            return false;
+        gui.setProject(te::loadEditFromFile(engine, project), project);
+        return check(gui.trackAt(2)->getClips().size() == 2 && trackType(*gui.trackAt(2)) == TrackType::mixed
+                && gui.status.getText().contains("Mixed legacy tracks")
+                && placementError(TrackType::audio, *gui.trackAt(2)).isNotEmpty(),
+                     "unexpected mixed legacy track is reported and its clips remain intact");
     }
 
     static bool testCorrections(te::Engine& engine)
@@ -1058,7 +1216,8 @@ private:
         if (commandManager.getKeyMappings()->findCommandForKeyPress(ju::KeyPress(key)) != deleteItem
             || !timeSelection)
             return false;
-        selectTrack(0);
+        addTrack(true);
+        const auto midiRow = selection;
         insertMidi();
         auto* clip = selectedClip();
         if (!clip)
@@ -1073,9 +1232,9 @@ private:
             return false;
         if (!invokeShortcut(deleteItem, key) || timeSelection || !edit->getTransport().getLoopRange().isEmpty())
             return false;
-        const auto clipCount = trackAt(0)->getClips().size();
+        const auto clipCount = trackAt(midiRow)->getClips().size();
         invokeShortcut(deleteItem, key);
-        return trackAt(0)->getClips().size() == clipCount;
+        return trackAt(midiRow)->getClips().size() == clipCount;
     }
 
     static bool testInputRoutes(te::Engine& engine, const ju::File& directory)
@@ -1392,7 +1551,8 @@ private:
             case cut: info.setActive(canDispatch(UniversalAction::cut)); break;
             case duplicate: info.setActive(false); break;
             case copy: info.setActive(canDispatch(UniversalAction::copy)); break;
-            case paste: info.setActive(canDispatch(UniversalAction::paste)); break;
+            case paste: info.setActive(canDispatch(UniversalAction::paste)
+                || incompatiblePlacement(UniversalAction::paste).isNotEmpty()); break;
             case deleteItem: info.setActive(canDispatch(UniversalAction::remove) || canClearTimeSelection()); break;
             case locateFile:
                 info.setActive(stopped && activeEditingArea() == EditingArea::timeline && missingWave(selectedClip()));
@@ -1579,6 +1739,79 @@ private:
             && (dynamic_cast<te::WaveAudioClip*>(&clip) || dynamic_cast<te::MidiClip*>(&clip));
     }
 
+    enum class TrackType { audio, midi, mixed };
+    static inline const ju::Identifier trackTypeProperty { "simpleDawTrackType" };
+
+    static ju::String trackTypeName(TrackType type)
+    {
+        switch (type)
+        {
+            case TrackType::audio: return "Audio";
+            case TrackType::midi: return "MIDI";
+            case TrackType::mixed: return "Mixed legacy";
+        }
+        return {};
+    }
+
+    static TrackType clipType(const te::Clip& clip)
+    {
+        return dynamic_cast<const te::MidiClip*>(&clip) ? TrackType::midi : TrackType::audio;
+    }
+
+    static TrackType trackType(const te::AudioTrack& track)
+    {
+        const auto saved = track.state[trackTypeProperty].toString();
+        if (saved == "Audio") return TrackType::audio;
+        if (saved == "MIDI") return TrackType::midi;
+        if (saved == "Mixed legacy") return TrackType::mixed;
+
+        bool audio = false, midi = false;
+        for (auto* clip : track.getClips())
+        {
+            audio |= clipType(*clip) == TrackType::audio;
+            midi |= clipType(*clip) == TrackType::midi;
+        }
+        if (audio && midi) return TrackType::mixed;
+        if (midi || (!audio && track.getName().startsWithIgnoreCase("MIDI "))) return TrackType::midi;
+        return TrackType::audio;
+    }
+
+    static ju::String placementError(TrackType type, const te::AudioTrack& destination)
+    {
+        const auto targetType = trackType(destination);
+        if (targetType == type)
+            return {};
+        if (targetType == TrackType::mixed)
+            return "Cannot place clips on a mixed legacy track. Its existing clips are unchanged.";
+        return "Cannot place " + trackTypeName(type) + " clips on "
+            + (targetType == TrackType::audio ? "an Audio" : "a MIDI") + " track.";
+    }
+
+    void warnPlacement(const ju::String& message)
+    {
+        report(message);
+        if (isShowing())
+            ju::AlertWindow::showMessageBoxAsync(ju::MessageBoxIconType::WarningIcon, "Incompatible track", message, "OK");
+    }
+
+    bool meetsMinimumDuration(te::TimeRange before, te::TimeRange after) const
+    {
+        const auto& sequence = edit->tempoSequence;
+        const auto& meter = sequence.getTimeSigAt(before.getStart());
+        const double minimum = meter.numerator.get() * 4.0 / (16.0 * meter.denominator.get());
+        te::tempo::Sequence::Position position(sequence.getInternalSequence());
+        const auto duration = [&position](te::TimeRange range) {
+            position.set(range.getStart());
+            const auto start = position.getPPQTime();
+            position.set(range.getEnd());
+            return position.getPPQTime() - start;
+        };
+        const auto previous = duration(before);
+        const auto next = duration(after);
+        constexpr auto tolerance = 1.0e-9;
+        return next >= previous - tolerance || next >= minimum - tolerance;
+    }
+
     bool destinationAvailable(te::AudioTrack* track, int added) const
     {
         return track && !track->isFrozen(te::Track::anyFreeze)
@@ -1591,7 +1824,7 @@ private:
         te::ClipPosition position;
     };
 
-    std::vector<Placement> pastePlan() const
+    std::vector<Placement> pastePlan(ju::String* reason = nullptr) const
     {
         if (!clipClipboard || !trackAt(selection))
             return {};
@@ -1612,6 +1845,13 @@ private:
             if (!destinationAvailable(track, ++added[track]) || start < te::TimePosition{}
                 || end <= start || end > te::Edit::getMaximumEditEnd())
                 return {};
+            const auto type = item.state.hasType(te::IDs::MIDICLIP) ? TrackType::midi : TrackType::audio;
+            const auto error = placementError(type, *track);
+            if (error.isNotEmpty())
+            {
+                if (reason) *reason = error;
+                return {};
+            }
             plan.push_back({ track, { { start, end }, offset } });
         }
         return plan;
@@ -1689,20 +1929,86 @@ private:
         te::ClipPosition position;
     };
 
-    std::vector<ClipChange> clipChanges(UniversalAction action, const std::vector<te::Clip*>& clips) const
+    std::vector<ClipChange> movePlan(const std::vector<te::Clip*>& clips, int rowDelta,
+                                     te::TimeDuration delta, ju::String* reason = nullptr) const
     {
-        using Action = UniversalAction;
         const auto tracks = te::getAudioTracks(*edit);
         std::vector<ClipChange> changes;
+        std::map<te::AudioTrack*, int> outgoing, incoming;
+        if (rowDelta != 0)
+            for (auto* clip : clips)
+                ++outgoing[dynamic_cast<te::AudioTrack*>(clip->getTrack())];
+
+        for (auto* clip : clips)
+        {
+            auto* source = dynamic_cast<te::AudioTrack*>(clip->getTrack());
+            if (!ordinaryClip(*clip) || !source || source->isFrozen(te::Track::anyFreeze))
+                return {};
+            auto position = clip->getPosition();
+            position.time = position.time + delta;
+            if (position.getStart() < te::TimePosition{} || position.getEnd() > te::Edit::getMaximumEditEnd())
+                return {};
+
+            te::AudioTrack* destination = nullptr;
+            if (rowDelta != 0)
+            {
+                destination = tracks[tracks.indexOf(source) + rowDelta];
+                if (!destinationAvailable(destination, ++incoming[destination] - outgoing[destination])
+                    || !clip->canBeAddedTo(*destination))
+                    return {};
+                const auto error = placementError(clipType(*clip), *destination);
+                if (error.isNotEmpty())
+                {
+                    if (reason) *reason = error;
+                    return {};
+                }
+            }
+            changes.push_back({ clip, destination, position });
+        }
+
+        // Move outer rows first, so outgoing clips vacate a lane before incoming clips arrive.
+        if (rowDelta != 0)
+            std::stable_sort(changes.begin(), changes.end(), [&](const auto& a, const auto& b) {
+                return rowDelta < 0 ? tracks.indexOf(a.destination) < tracks.indexOf(b.destination)
+                                    : tracks.indexOf(a.destination) > tracks.indexOf(b.destination);
+            });
+        return changes;
+    }
+
+    bool applyClipChanges(const std::vector<ClipChange>& changes, const ju::String& transaction)
+    {
+        if (changes.empty())
+            return false;
+        auto& history = edit->getUndoManager();
+        history.beginNewTransaction(transaction);
+        for (const auto& change : changes)
+        {
+            if (change.destination && (!change.clip->moveTo(*change.destination) || change.clip->getTrack() != change.destination))
+            {
+                history.undoCurrentTransactionOnly();
+                report("Could not move clips");
+                return false;
+            }
+            if (change.clip->getPosition() != change.position)
+                change.clip->setPosition(change.position);
+        }
+        return true;
+    }
+
+    std::vector<ClipChange> clipChanges(UniversalAction action, const std::vector<te::Clip*>& clips,
+                                        ju::String* reason = nullptr) const
+    {
+        using Action = UniversalAction;
         if (clips.empty())
-            return changes;
-        const bool vertical = action == Action::up || action == Action::down;
+            return {};
+        if (action == Action::up || action == Action::down)
+            return movePlan(clips, action == Action::up ? -1 : 1, {}, reason);
         const bool move = action == Action::left || action == Action::right;
         const bool start = action == Action::startMinus || action == Action::startPlus;
         const bool earlier = action == Action::left || action == Action::startMinus || action == Action::endMinus;
         const auto grid = snap.getSelectedId();
         auto delta = te::TimeDuration::fromSeconds(earlier ? -0.010 : 0.010);
-        if (!vertical && grid > 1)
+        if (grid > 1)
         {
             auto anchor = te::Edit::getMaximumEditEnd();
             for (auto* clip : clips)
@@ -1715,65 +2021,44 @@ private:
             delta = sequence.toTime(targetBeat) - anchor;
         }
 
-        std::map<te::AudioTrack*, int> outgoing, incoming;
-        if (vertical)
-            for (auto* clip : clips)
-                ++outgoing[dynamic_cast<te::AudioTrack*>(clip->getTrack())];
-        for (auto* clip : clips)
-        {
-            if (!ordinaryClip(*clip))
-                return {};
-            auto position = clip->getPosition();
-            auto* source = dynamic_cast<te::AudioTrack*>(clip->getTrack());
-            te::AudioTrack* destination = nullptr;
-            if (!source || source->isFrozen(te::Track::anyFreeze))
-                return {};
-            if (vertical)
-            {
-                destination = tracks[tracks.indexOf(source) + (action == Action::up ? -1 : 1)];
-                if (!destinationAvailable(destination, ++incoming[destination] - outgoing[destination]) || !clip->canBeAddedTo(*destination))
-                    return {};
-            }
-            else if (move)
-            {
-                position.time = position.time + delta;
-            }
-            else
-            {
-                if (clip->isLooping() || clip->getNumTakes(true) > 1)
-                    return {};
-                if ((start && position.getStart() + delta >= position.getEnd())
-                    || (!start && position.getEnd() + delta <= position.getStart()))
-                    return {};
-                if (start)
-                {
-                    position.time = position.time.withStart(position.getStart() + delta);
-                    position.offset = position.offset + delta;
-                }
-                else
-                    position.time = position.time.withEnd(position.getEnd() + delta);
+        if (move)
+            return movePlan(clips, 0, delta);
 
-                if (auto* wave = dynamic_cast<te::WaveAudioClip*>(clip))
-                {
-                    const te::AudioFile sourceFile(engine, wave->getOriginalFile());
-                    if (!sourceFile.isValid() || wave->getWarpTime() || wave->getAutoTempo()
-                        || (position.offset + position.time.getLength()).inSeconds() * wave->getSpeedRatio()
-                            > sourceFile.getLength() + 1.0e-9)
-                        return {};
-                }
-            }
-            if (position.getStart() < te::TimePosition{} || position.time.isEmpty()
-                || position.getEnd() > te::Edit::getMaximumEditEnd() || position.offset < te::TimeDuration{})
+        auto* clip = clips.front();
+        auto* source = dynamic_cast<te::AudioTrack*>(clip->getTrack());
+        if (clips.size() != 1 || !ordinaryClip(*clip) || !source || source->isFrozen(te::Track::anyFreeze)
+            || clip->isLooping() || clip->getNumTakes(true) > 1)
+            return {};
+
+        auto position = clip->getPosition();
+        const auto original = position.time;
+        if (start)
+        {
+            const auto next = position.getStart() + delta;
+            if (next < te::TimePosition{} || next >= position.getEnd())
                 return {};
-            changes.push_back({ clip, destination, position });
+            position.time = position.time.withStart(next);
+            position.offset = position.offset + delta;
         }
-        // Move outer rows first, so outgoing clips vacate a lane before incoming clips arrive.
-        if (vertical)
-            std::stable_sort(changes.begin(), changes.end(), [&](const auto& a, const auto& b) {
-                return action == Action::up ? tracks.indexOf(a.destination) < tracks.indexOf(b.destination)
-                                            : tracks.indexOf(a.destination) > tracks.indexOf(b.destination);
-            });
-        return changes;
+        else
+        {
+            const auto next = position.getEnd() + delta;
+            if (next <= position.getStart() || next > te::Edit::getMaximumEditEnd())
+                return {};
+            position.time = position.time.withEnd(next);
+        }
+
+        if (position.offset < te::TimeDuration{} || !meetsMinimumDuration(original, position.time))
+            return {};
+        if (auto* wave = dynamic_cast<te::WaveAudioClip*>(clip))
+        {
+            const te::AudioFile sourceFile(engine, wave->getOriginalFile());
+            if (!sourceFile.isValid() || wave->getWarpTime() || wave->getAutoTempo()
+                || (position.offset + position.time.getLength()).inSeconds() * wave->getSpeedRatio()
+                    > sourceFile.getLength() + 1.0e-9)
+                return {};
+        }
+        return { { clip, nullptr, position } };
     }
 
     te::AudioTrack* actionTrack() const { return trackForID(actionSelection.track); }
@@ -1843,6 +2128,7 @@ private:
     {
         track.flushStateToValueTree();
         TrackSnapshot snapshot { track.state.createCopy(), trackOutput(track), {} };
+        snapshot.state.setProperty(trackTypeProperty, trackTypeName(trackType(track)), nullptr);
         for (auto device : edit->state.getChildWithName(te::IDs::INPUTDEVICES))
             for (auto assignment : device)
                 if (assignment.hasType(te::IDs::INPUTDEVICEDESTINATION)
@@ -1863,7 +2149,8 @@ private:
 
     bool canPasteTrack() const
     {
-        return actionTrack() && trackClipboard && canAddTrack() && outputAvailable(trackClipboard->output);
+        return actionTrack() && trackClipboard && canAddTrack() && outputAvailable(trackClipboard->output)
+            && trackClipboard->state[trackTypeProperty].toString() != "Mixed legacy";
     }
 
     void pasteTrack(te::AudioTrack& anchor)
@@ -2199,11 +2486,29 @@ private:
         edit->restartPlayback();
     }
 
+    ju::String incompatiblePlacement(UniversalAction action) const
+    {
+        using Action = UniversalAction;
+        ju::String reason;
+        if (canEditTimeline())
+        {
+            if (action == Action::paste)
+                pastePlan(&reason);
+            if (action == Action::up || action == Action::down)
+                clipChanges(action, selectedClips(), &reason);
+        }
+        return reason;
+    }
+
     void dispatchAction(UniversalAction action)
     {
         using Action = UniversalAction;
         if (!canDispatch(action))
+        {
+            if (auto reason = incompatiblePlacement(action); reason.isNotEmpty())
+                warnPlacement(reason);
             return;
+        }
         const bool tracks = activeEditingArea() == EditingArea::tracks;
         auto& history = edit->getUndoManager();
         if (action == Action::remove || action == Action::cut)
@@ -2235,18 +2540,7 @@ private:
         {
             const auto changes = clipChanges(action, selectedClips());
             const bool moving = action == Action::up || action == Action::down || action == Action::left || action == Action::right;
-            history.beginNewTransaction(moving ? "Move clips" : "Resize clips");
-            for (const auto& change : changes)
-            {
-                if (!change.destination)
-                    change.clip->setPosition(change.position);
-                else if (!change.clip->moveTo(*change.destination) || change.clip->getTrack() != change.destination)
-                {
-                    history.undoCurrentTransactionOnly();
-                    report("Could not move clips");
-                    break;
-                }
-            }
+            applyClipChanges(changes, moving ? "Move clips" : "Resize clips");
         }
         updateControls();
     }
@@ -2310,6 +2604,14 @@ private:
         arrangement.waves.clear();
         edit = std::move(next);
         edit->playInStopEnabled = true;
+        ju::StringArray mixedTracks;
+        for (auto* track : te::getAudioTracks(*edit))
+        {
+            const auto type = trackType(*track);
+            track->state.setProperty(trackTypeProperty, trackTypeName(type), nullptr);
+            if (type == TrackType::mixed)
+                mixedTracks.add(track->getName());
+        }
         projectFile = file;
         selection = trackCount() == 0 ? -1 : 0;
         actionSelection = {};
@@ -2322,6 +2624,8 @@ private:
         selectionBox = {};
         dragItem = {};
         dragPreview.reset();
+        dragError.clear();
+        dragRowDelta = 0;
         rangePreview.reset();
         draggingRange = false;
         editCursor = edit->getTransport().getPosition();
@@ -2337,6 +2641,9 @@ private:
         if (arrangement.isShowing())
             arrangement.grabKeyboardFocus();
         updateControls();
+        if (!mixedTracks.isEmpty())
+            warnPlacement("Mixed legacy tracks contain both Audio and MIDI clips. Existing clips are unchanged. "
+                          "New placement is disabled on: " + mixedTracks.joinIntoString(", "));
     }
 
     void saveAs()
@@ -2381,6 +2688,8 @@ private:
         edit->ensureNumberOfAudioTracks(count + 1);
         if (auto* track = trackAt(count))
         {
+            track->state.setProperty(trackTypeProperty, trackTypeName(midi ? TrackType::midi : TrackType::audio),
+                                     &edit->getUndoManager());
             track->setName(ju::String(midi ? "MIDI " : "Audio ") + ju::String(count + 1));
             track->setColour(palette(count));
             edit->markAsChanged();
@@ -2407,6 +2716,8 @@ private:
     {
         if (auto* track = selectedTrack())
         {
+            if (const auto error = placementError(TrackType::midi, *track); error.isNotEmpty())
+                return warnPlacement(error);
             const auto nextBar = barTime(edit->tempoSequence.toBarsAndBeats(editCursor).bars + 1);
             edit->getUndoManager().beginNewTransaction("Insert MIDI item");
             if (auto clip = te::insertMIDIClip(*track, "MIDI item", { editCursor, nextBar }))
@@ -2731,7 +3042,8 @@ private:
         g.fillRect(body.removeFromLeft(7));
         g.setColour(ju::Colours::white);
         g.setFont(ju::FontOptions(17.0f, ju::Font::bold));
-        g.drawFittedText(ju::String(row + 1) + "   " + track.getName(), body.reduced(5, 0),
+        g.drawFittedText(ju::String(row + 1) + "  [" + trackTypeName(trackType(track)) + "] " + track.getName(),
+                         body.reduced(5, 0),
                          ju::Justification::centredLeft, 1);
     }
 
@@ -2893,7 +3205,8 @@ private:
             const auto colour = track.getColour().isTransparent() ? palette(row) : track.getColour();
             paintTrack(g, track, row, y, colour);
             for (auto* clip : track.getClips())
-                paintClip(g, *clip, y, colour);
+                paintClip(g, *clip, y + (dragPreview && actionSelection.clips.contains(clip->itemID)
+                    ? dragRowDelta * rowHeight() : 0), colour);
             if (edit->getTransport().isRecording())
                 paintRecording(g, track, y, colour);
             g.setColour(ju::Colour(0xff353535));
@@ -2946,7 +3259,10 @@ private:
     te::TimeRange displayedClipRange(const te::Clip& clip) const
     {
         const auto range = clip.getPosition().time;
-        return dragItem == clip.itemID && dragPreview ? range + (*dragPreview - range.getStart()) : range;
+        if (dragPreview && actionSelection.clips.contains(clip.itemID))
+            if (auto* anchor = te::findClipForID(*edit, dragItem))
+                return range + (*dragPreview - anchor->getPosition().getStart());
+        return range;
     }
 
     ju::Rectangle<int> clipBounds(te::TimeRange range, int y) const
@@ -3006,6 +3322,8 @@ private:
         draggingRange = false;
         rangePreview.reset();
         dragPreview.reset();
+        dragError.clear();
+        dragRowDelta = 0;
         dragItem = {};
         boxAnchor.reset();
         selectionBox = {};
@@ -3046,8 +3364,11 @@ private:
                     if (!clipBounds(clip->getPosition().time, y).contains(event.getPosition()))
                         continue;
                     selection = row;
-                    ActionSelection::click(actionSelection.clips, clip->itemID, toggle);
-                    if (!toggle && (dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip)))
+                    // Keep an existing group until a click resolves or a drag starts.
+                    const bool draggable = dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip);
+                    if (toggle || !draggable || !actionSelection.clips.contains(clip->itemID))
+                        ActionSelection::click(actionSelection.clips, clip->itemID, toggle);
+                    if (!toggle && draggable)
                     {
                         dragItem = clip->itemID;
                         dragAnchor = timeAt(event.x);
@@ -3080,7 +3401,7 @@ private:
                     items.insert(clip->itemID);
     }
 
-    void updateDragPreview(double pointerTime)
+    void updateDragPreview(double pointerTime, std::optional<int> pointerRow = std::nullopt)
     {
         if (draggingRange)
         {
@@ -3088,11 +3409,30 @@ private:
             const auto b = te::TimePosition::fromSeconds(snapSeconds(pointerTime));
             rangePreview = te::TimeRange(std::min(a, b), std::max(a, b));
         }
-        else if (auto* clip = selectedClip(); clip && clip->itemID == dragItem)
+        else if (dragItem.isValid())
         {
-            const auto destination = clip->getPosition().getStart().inSeconds() + pointerTime - dragAnchor;
-            dragPreview = te::TimePosition::fromSeconds(snapSeconds(destination));
+            dragPreview.reset();
+            dragError.clear();
+            const auto tracks = te::getAudioTracks(*edit);
+            auto* anchor = te::findClipForID(*edit, dragItem);
+            if (!anchor || (pointerRow && !tracks[*pointerRow]))
+                return;
+            auto* source = dynamic_cast<te::AudioTrack*>(anchor->getTrack());
+            if (!source)
+                return;
+            dragRowDelta = pointerRow ? *pointerRow - tracks.indexOf(source) : 0;
+            const auto start = anchor->getPosition().getStart();
+            const auto target = te::TimePosition::fromSeconds(snapSeconds(start.inSeconds() + pointerTime - dragAnchor));
+            if (!movePlan(selectedClips(), dragRowDelta, target - start, &dragError).empty())
+                dragPreview = target;
         }
+    }
+
+    int dragTargetRow(const ju::MouseEvent& event) const
+    {
+        if (event.x < headerWidth || event.y < rulerHeight || !arrangement.getLocalBounds().contains(event.getPosition()))
+            return -1;
+        return firstRow + (event.y - rulerHeight) / rowHeight();
     }
 
     void arrangementDrag(const ju::MouseEvent& event)
@@ -3104,9 +3444,10 @@ private:
             updateSelectionBox(event.getPosition());
             updateControls();
         }
-        else if (!edit->getTransport().isPlaying() && std::abs(event.getDistanceFromDragStartX()) >= 5)
+        else if (editingStopped() && (dragItem.isValid() ? event.getDistanceFromDragStart() >= 5
+                                                       : std::abs(event.getDistanceFromDragStartX()) >= 5))
         {
-            updateDragPreview(timeAt(event.x));
+            updateDragPreview(timeAt(event.x), dragItem.isValid() ? std::optional{ dragTargetRow(event) } : std::nullopt);
             arrangement.repaint();
         }
     }
@@ -3120,11 +3461,16 @@ private:
             edit->markAsChanged();
             report("Time selection set");
         }
-        else if (auto* clip = selectedClip(); clip && clip->itemID == dragItem && dragPreview
-                 && clip->getPosition().getStart() != *dragPreview)
+        else if (dragError.isNotEmpty())
+            warnPlacement(dragError);
+        else if (dragItem.isValid() && dragPreview)
         {
-            edit->getUndoManager().beginNewTransaction("Move item");
-            clip->setStart(*dragPreview, false, true);
+            if (auto* anchor = te::findClipForID(*edit, dragItem))
+            {
+                const auto delta = *dragPreview - anchor->getPosition().getStart();
+                if (dragRowDelta != 0 || delta != te::TimeDuration{})
+                    applyClipChanges(movePlan(selectedClips(), dragRowDelta, delta), "Move clips");
+            }
         }
     }
 
@@ -3137,11 +3483,14 @@ private:
             else if (*actionSelection.requestedArea == EditingArea::timeline)
                 seek(timeAt(event.x));
         }
-        else if (edit && !edit->getTransport().isPlaying() && std::abs(event.getDistanceFromDragStartX()) >= 5)
+        else if (editingStopped() && (dragItem.isValid() ? event.getDistanceFromDragStart() >= 5
+                                                        : std::abs(event.getDistanceFromDragStartX()) >= 5))
         {
-            updateDragPreview(timeAt(event.x));
+            updateDragPreview(timeAt(event.x), dragItem.isValid() ? std::optional{ dragTargetRow(event) } : std::nullopt);
             finishDrag();
         }
+        else if (dragItem.isValid() && event.getDistanceFromDragStart() < 5)
+            actionSelection.clips = { dragItem };
         boxAnchor.reset();
         selectionBox = {};
         dragItem = {};
@@ -3195,7 +3544,7 @@ private:
         workspace.setActive(edit && active == EditingArea::window);
         for (const auto& slot : actionButtons)
         {
-            const bool enabled = canDispatch(slot.action);
+            const bool enabled = canDispatch(slot.action) || incompatiblePlacement(slot.action).isNotEmpty();
             slot.button->setColour(ju::TextButton::buttonColourId, enabled ? slot.colour : ju::Colour(0xff444444));
             slot.button->setEnabled(enabled);
         }
@@ -3283,6 +3632,8 @@ private:
     std::optional<te::TimeRange> timeSelection, rangePreview;
     std::optional<te::TimePosition> dragPreview;
     double dragAnchor = 0.0;
+    int dragRowDelta = 0;
+    ju::String dragError;
     int selection = -1, firstRow = 0;
     size_t activeTab = 0;
     double viewStart = 0.0, pixelsPerSecond = 100.0;

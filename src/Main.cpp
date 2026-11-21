@@ -269,6 +269,9 @@ private:
         if (!track)
             return;
 
+        if (const auto error = placementError(midi ? TrackType::midi : TrackType::audio, *track); error.isNotEmpty())
+            return warnPlacement(error);
+
         auto& devices = engine.getDeviceManager();
         if (midi)
         {
@@ -400,14 +403,24 @@ private:
 
         // Reopening an edit can restore arming before the first playback context exists.
         edit->getTransport().ensureContextAllocated();
+        bool armed = false;
         for (auto* instance : edit->getAllInputDevices())
             for (auto* track : te::getAudioTracks(*edit))
                 if (isArmed(*instance, track->itemID))
                 {
-                    edit->getTransport().record(false);
-                    report(edit->getTransport().isRecording() ? "Recording" : "Could not start recording");
-                    return;
+                    const auto deviceType = instance->getInputDevice().getDeviceType();
+                    const auto type = deviceType == te::InputDevice::waveDevice || deviceType == te::InputDevice::trackWaveDevice
+                        ? TrackType::audio : TrackType::midi;
+                    if (const auto error = placementError(type, *track); error.isNotEmpty())
+                        return warnPlacement(error);
+                    armed = true;
                 }
+        if (armed)
+        {
+            edit->getTransport().record(false);
+            report(edit->getTransport().isRecording() ? "Recording" : "Could not start recording");
+            return;
+        }
 
         report("Arm an audio or MIDI input first");
     }
@@ -440,17 +453,23 @@ private:
 
     void importWave()
     {
-        if (!selectedTrack())
+        auto* destination = selectedTrack();
+        if (!destination)
             return;
+        if (const auto error = placementError(TrackType::audio, *destination); error.isNotEmpty())
+            return warnPlacement(error);
 
-        const auto trackID = trackAt(selection)->itemID;
+        const auto trackID = destination->itemID;
+        auto* project = edit.get();
         const auto start = te::TimePosition::fromSeconds(snapSeconds(editCursor.inSeconds()));
         chooseFile("Import WAV at the edit cursor", "*.wav",
             ju::FileBrowserComponent::openMode | ju::FileBrowserComponent::canSelectFiles,
-            [this, trackID, start](const ju::File& file) {
-                if (ready())
+            [this, project, trackID, start](const ju::File& file) {
+                if (edit.get() == project && ready())
                     if (auto* track = te::findAudioTrackForID(*edit, trackID))
                     {
+                        if (const auto error = placementError(TrackType::audio, *track); error.isNotEmpty())
+                            return warnPlacement(error);
                         edit->getUndoManager().beginNewTransaction("Import audio");
                         report(insertAudio(*track, file, start) ? "WAV imported" : "Could not import WAV");
                     }
