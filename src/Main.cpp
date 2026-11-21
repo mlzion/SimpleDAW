@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include <JuceHeader.h>
+#include <array>
 #include <cstdio>
 #include <numeric>
+#include <set>
 #include <thread>
 
 namespace te = tracktion;
@@ -523,7 +525,8 @@ public:
         if (te::PluginManager::startChildProcessPluginScan(command))
             return;
 
-        const bool testing = command == "--smoke-test" || command == "--gui-test" || command == "--correction-test";
+        const bool testing = command == "--smoke-test" || command == "--gui-test"
+            || command == "--correction-test" || command == "--uat-test";
         std::unique_ptr<te::EngineBehaviour> engineBehaviour;
         if (testing)
             engineBehaviour = std::make_unique<SmokeTestEngineBehaviour>();
@@ -536,6 +539,8 @@ public:
                 passed = MainGui::test(*engine);
             else if (command == "--correction-test")
                 passed = MainGui::testCorrections(*engine);
+            else if (command == "--uat-test")
+                passed = MainGui::testUniversalActions(*engine);
             else
                 passed = smokeTest(*engine);
             setApplicationReturnValue(passed ? 0 : 1);

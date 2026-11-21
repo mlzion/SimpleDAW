@@ -9,6 +9,74 @@
         audioFile, locateFile, monitoringReport, playStop, startRecording
     };
 
+    enum class EditingArea { window, inspector, timeline, tracks };
+    enum class UniversalAction
+    {
+        create, remove, copy, paste, up, down, left, right,
+        startMinus, startPlus, endMinus, endPlus, split, trim, reserved
+    };
+
+    using ItemSelection = std::set<te::EditItemID>;
+
+    struct ActionSelection
+    {
+        std::optional<EditingArea> requestedArea;
+        ItemSelection clips, tracks;
+
+        EditingArea activeArea(bool hasWindow, bool hasInspector) const
+        {
+            if (requestedArea && (*requestedArea != EditingArea::window || hasWindow)
+                && (*requestedArea != EditingArea::inspector || hasInspector))
+                return *requestedArea;
+            // Only existing selections can supply a fallback. Both panels currently have none.
+            return clips.empty() && !tracks.empty() ? EditingArea::tracks : EditingArea::timeline;
+        }
+
+        static void click(ItemSelection& items, te::EditItemID id, bool toggle)
+        {
+            if (!toggle)
+                items.clear();
+            if (id.isValid() && (!toggle || items.erase(id) == 0))
+                items.insert(id);
+        }
+    };
+
+    struct ActionButton
+    {
+        ju::TextButton* button;
+        UniversalAction action;
+        ju::Colour colour;
+    };
+
+    struct ActionGroup
+    {
+        ju::GroupComponent frame;
+        std::vector<ju::Component*> buttons;
+    };
+
+    struct AreaLabel final : ju::Label
+    {
+        void paintOverChildren(ju::Graphics& g) override
+        {
+            if (active)
+            {
+                g.setColour(ju::Colours::white);
+                g.drawRect(getLocalBounds(), 2);
+            }
+        }
+
+        void setActive(bool next)
+        {
+            if (active != next)
+            {
+                active = next;
+                repaint();
+            }
+        }
+
+        bool active = false;
+    };
+
     struct PanelState
     {
         explicit PanelState(ju::PropertiesFile& settings)
@@ -67,6 +135,7 @@
         };
 
         void paint(ju::Graphics& g) override { owner.paintArrangement(g); }
+        void paintOverChildren(ju::Graphics& g) override { owner.paintArrangementSelection(g); }
         void changeListenerCallback(ju::ChangeBroadcaster*) override { repaint(); }
         void mouseDown(const ju::MouseEvent& event) override { owner.arrangementDown(event); }
         void mouseDrag(const ju::MouseEvent& event) override { owner.arrangementDrag(event); }
@@ -177,7 +246,7 @@ public:
         addAndMakeVisible(workspace);
         addAndMakeVisible(inspectorDivider);
         addAndMakeVisible(workspaceDivider);
-        for (auto* label : { &position, &status, &inspector, &workspace })
+        for (ju::Label* label : std::array<ju::Label*, 4> { &position, &status, &inspector, &workspace })
         {
             addAndMakeVisible(*label);
             label->setColour(ju::Label::textColourId, ju::Colours::white);
@@ -190,6 +259,12 @@ public:
         inspector.setJustificationType(ju::Justification::centredTop);
         workspace.setColour(ju::Label::backgroundColourId, ju::Colour(0xff252525));
         workspace.setJustificationType(ju::Justification::centred);
+
+        for (auto* panel : { &inspector, &workspace })
+        {
+            panel->setInterceptsMouseClicks(true, false);
+            panel->addMouseListener(this, false);
+        }
 
         button(first, "RECORD", [this] { record(); }, 0xffa60000);
         button(first, "STOP", [this] { stop(); });
@@ -243,16 +318,17 @@ public:
         combo(snap, second, { "SNAP OFF", "SNAP 1/4", "SNAP 1/8", "SNAP 1/16" }, "Timeline snap");
         snap.setSelectedId(4, ju::dontSendNotification);
 
-        for (auto id : { undo, redo, cut, copy, paste, duplicate, deleteItem })
-        {
-            ju::ApplicationCommandInfo info(id);
-            getCommandInfo(id, info);
-            editButtons.push_back(&button(toolbar, info.shortName.toUpperCase(), [this, id] {
-                commandManager.invokeDirectly(id, true);
-            }));
-        }
-        button(toolbar, "INSPECTOR", [this] { panels.inspectorOpen = !panels.inspectorOpen; saveLayout(); });
-        button(toolbar, "WORKSPACE", [this] { panels.workspaceOpen = !panels.workspaceOpen; saveLayout(); });
+        using Action = UniversalAction;
+        addActionGroup(0, "EDIT", 0xff263e53, { { "CREATE", Action::create }, { "DELETE", Action::remove },
+                                                { "COPY", Action::copy }, { "PASTE", Action::paste } });
+        addActionGroup(1, "MOVE", 0xff2b4257, { { "↑  UP", Action::up }, { "↓  DOWN", Action::down },
+                                                { "←  LEFT", Action::left }, { "→  RIGHT", Action::right } });
+        addActionGroup(2, "SIZE", 0xff30465a, { { "START −", Action::startMinus }, { "START +", Action::startPlus },
+                                                { "END −", Action::endMinus }, { "END +", Action::endPlus } });
+        addActionGroup(3, "MODIFY", 0xff354a5e, { { "SPLIT", Action::split }, { "", Action::reserved },
+                                                  { "TRIM", Action::trim }, { "", Action::reserved } });
+        button(panelButtons, "INSPECTOR", [this] { panels.inspectorOpen = !panels.inspectorOpen; saveLayout(); });
+        button(panelButtons, "WORKSPACE", [this] { panels.workspaceOpen = !panels.workspaceOpen; saveLayout(); });
 
         navigationButton(Arrow::screenLeft, "Scroll left one screen", [this] { scrollTime(-visibleSeconds()); });
         navigationButton(Arrow::screenRight, "Scroll right one screen", [this] { scrollTime(visibleSeconds()); });
@@ -315,7 +391,24 @@ public:
         layoutRow(first, area.removeFromTop(42), { 10, 10, 10, 10, 10, 25, 12, 13 }, { 5, 6 });
         layoutRow(second, area.removeFromTop(42), { 10, 10, 10, 10, 24, 13, 11, 12 }, { 4, 5 });
         area.removeFromTop(4);
-        layoutRow(toolbar, area.removeFromTop(38), {}, { 7 });
+        auto toolbar = area.removeFromTop(112);
+        auto panelControls = toolbar.removeFromRight(122).withTrimmedLeft(10).withTrimmedTop(18);
+        for (auto* control : panelButtons)
+        {
+            control->setBounds(panelControls.removeFromTop(42));
+            panelControls.removeFromTop(4);
+        }
+        for (size_t i = 0; i < actionGroups.size(); ++i)
+        {
+            auto& group = actionGroups[i];
+            auto bounds = toolbar.removeFromLeft(toolbar.getWidth() / static_cast<int>(actionGroups.size() - i));
+            group.frame.setBounds(bounds.withTrimmedRight(5));
+            bounds = bounds.withTrimmedTop(17).withTrimmedBottom(6).reduced(9, 0);
+            layoutRow({ group.buttons[0], group.buttons[1] }, bounds.removeFromTop(42));
+            bounds.removeFromTop(4);
+            layoutRow({ group.buttons[2], group.buttons[3] }, bounds.removeFromTop(42));
+        }
+        area.removeFromTop(4);
         status.setBounds(area.removeFromBottom(26));
         layoutRow(navigation, area.removeFromBottom(40), { 8, 8, 8, 8, 8, 8, 8, 8, 13, 13 }, { 4, 6, 8 });
 
@@ -389,6 +482,167 @@ public:
             && tracks.size() >= 2 && tracks.getLast()->getClips().size() == 1;
     }
 
+    static bool testUniversalActions(te::Engine& engine)
+    {
+        using Action = UniversalAction;
+        auto dir = ju::File::getSpecialLocation(ju::File::tempDirectory)
+            .getNonexistentChildFile("SimpleDAW-universal-actions", {});
+        if (dir.createDirectory().failed())
+            return false;
+        const ju::ScopeGuard cleanup { [&] { dir.deleteRecursively(); } };
+        const auto project = dir.getChildFile("test.tracktionedit");
+        const auto audio = dir.getChildFile("test.wav");
+        const auto check = [](bool passed, const char* step) {
+            if (!passed)
+                std::fprintf(stderr, "Universal Actions: %s\n", step);
+            return passed;
+        };
+        MainGui gui(engine, dir.getChildFile("gui.settings"));
+        gui.setProject(te::createEmptyEdit(engine, project), project);
+        gui.edit->ensureNumberOfAudioTracks(2);
+        gui.snap.setSelectedId(1, ju::dontSendNotification);
+        gui.panels.inspectorOpen = gui.panels.workspaceOpen = true;
+        gui.resized();
+        auto* first = gui.trackAt(0);
+        auto* second = gui.trackAt(1);
+        const auto seconds = te::TimePosition::fromSeconds<double>;
+        auto midi = te::insertMIDIClip(*first, "Test MIDI", { seconds(1), seconds(2) });
+        if (!check(midi && writeTestWave(audio) && insertAudio(*second, audio, seconds(3)), "create MIDI and WAV"))
+            return false;
+        const auto midiID = midi->itemID;
+        midi = nullptr; // The test replaces the Edit, so keep only the fixture's ID.
+        const auto audioID = second->getClips().getFirst()->itemID;
+        gui.updateControls();
+        if (!check(gui.actionButtons.size() == 16 && std::none_of(gui.actionButtons.begin(), gui.actionButtons.end(),
+                [](const auto& slot) { return slot.button->isEnabled(); }), "four fixed groups and inert initial state"))
+            return false;
+
+        const auto mouse = [&](ju::Component& component, ju::Point<int> where, int modifiers,
+                               ju::Point<int> down, bool dragged = false) {
+            const auto now = ju::Time::getCurrentTime();
+            return ju::MouseEvent(ju::Desktop::getInstance().getMainMouseSource(), where.toFloat(),
+                ju::ModifierKeys(modifiers), 0, 0, 0, 0, 0, &component, &component, now, down.toFloat(), now, 1, dragged);
+        };
+        const auto click = [&](ju::Point<int> at, bool right = false) {
+            gui.arrangement.mouseDown(mouse(gui.arrangement, at, right ? ju::ModifierKeys::rightButtonModifier
+                                                                       : ju::ModifierKeys::leftButtonModifier, at));
+            gui.arrangement.mouseUp(mouse(gui.arrangement, at, 0, at));
+        };
+        const auto rowY = [&](int row) { return rulerHeight + row * gui.rowHeight() + gui.rowHeight() / 2; };
+        const auto midiPoint = ju::Point<int>(gui.timeX(seconds(1.1)), rowY(0));
+        const auto audioPoint = ju::Point<int>(gui.timeX(seconds(3.05)), rowY(1));
+        click(midiPoint);
+        if (!check(gui.activeEditingArea() == EditingArea::timeline && gui.canDispatch(Action::copy)
+                && gui.canDispatch(Action::remove) && !gui.canDispatch(Action::paste), "single clip enables clipboard and Delete"))
+            return false;
+        click(audioPoint, true);
+        if (!check(gui.actionSelection.clips == ItemSelection { midiID, audioID }
+                && !gui.canDispatch(Action::copy) && !gui.canDispatch(Action::remove), "right-click adds a second clip"))
+            return false;
+        click(audioPoint, true);
+        if (!check(gui.actionSelection.clips == ItemSelection { midiID }, "second right-click toggles the clip off"))
+            return false;
+
+        const auto from = ju::Point<int>(gui.timeX(seconds(0.5)), rowY(0));
+        const auto to = ju::Point<int>(gui.timeX(seconds(3.15)), rowY(1));
+        gui.arrangement.mouseDown(mouse(gui.arrangement, from, ju::ModifierKeys::leftButtonModifier, from));
+        gui.arrangement.mouseDrag(mouse(gui.arrangement, to, ju::ModifierKeys::leftButtonModifier, from, true));
+        if (!check(!gui.selectionBox.isEmpty() && gui.actionSelection.clips == ItemSelection { midiID, audioID },
+                   "empty-space drag previews intersecting clips"))
+            return false;
+        gui.arrangement.mouseUp(mouse(gui.arrangement, to, 0, from, true));
+        if (!check(gui.selectionBox.isEmpty() && gui.actionSelection.clips.size() == 2, "release retains box selection"))
+            return false;
+
+        click({ 30, rowY(0) });
+        click({ 30, rowY(1) }, true);
+        if (!check(gui.activeEditingArea() == EditingArea::tracks && gui.actionSelection.tracks.size() == 2
+                && gui.actionSelection.clips.size() == 2 && !gui.canDispatch(Action::remove), "separate track focus and selection"))
+            return false;
+        const auto trackFrom = ju::Point<int>(20, rulerHeight + 1);
+        const auto trackTo = ju::Point<int>(70, rowY(1));
+        gui.arrangement.mouseDown(mouse(gui.arrangement, trackFrom, ju::ModifierKeys::leftButtonModifier, trackFrom));
+        gui.arrangement.mouseUp(mouse(gui.arrangement, trackTo, 0, trackFrom, true));
+        if (!check(gui.actionSelection.tracks.size() == 2, "track box selects both headers"))
+            return false;
+
+        click(midiPoint);
+        gui.dispatchAction(Action::copy);
+        if (!check(gui.actionSelection.clips == ItemSelection { midiID } && gui.canDispatch(Action::paste), "copy retains selection"))
+            return false;
+        gui.mouseDown(mouse(gui.inspector, { 10, 10 }, ju::ModifierKeys::leftButtonModifier, { 10, 10 }));
+        if (!check(gui.activeEditingArea() == EditingArea::inspector && !gui.canDispatch(Action::paste),
+                   "Inspector focus blocks timeline editing"))
+            return false;
+        gui.activeTab = 1;
+        gui.mouseDown(mouse(gui.workspace, { 10, 10 }, ju::ModifierKeys::leftButtonModifier, { 10, 10 }));
+        if (!check(gui.activeEditingArea() == EditingArea::window && !gui.canDispatch(Action::copy),
+                   "Effects can take focus without exposing selectable items"))
+            return false;
+        gui.panels.workspaceOpen = false;
+        gui.saveLayout();
+        if (!check(gui.activeEditingArea() == EditingArea::timeline && gui.actionSelection.clips == ItemSelection { midiID },
+                   "hiding Effects falls back to Timeline before Tracks"))
+            return false;
+        gui.panels.workspaceOpen = true;
+        gui.saveLayout();
+        if (!check(gui.activeEditingArea() == EditingArea::timeline, "showing Effects preserves current focus"))
+            return false;
+
+        click({ gui.timeX(seconds(4.13)), rowY(1) });
+        if (!check(gui.actionSelection.clips.empty() && gui.canDispatch(Action::paste),
+                   "empty lane click clears clips and sets paste destination"))
+            return false;
+        const auto destination = gui.editCursor;
+        gui.dispatchAction(Action::paste);
+        auto* pasted = gui.selectedClip();
+        if (!check(dynamic_cast<te::MidiClip*>(pasted) && pasted->itemID != midiID
+                && second->getClips().size() == 2 && std::abs((pasted->getPosition().getStart() - destination).inSeconds()) < 0.000001,
+                   "MIDI Paste creates and selects an independent clip at the unsnapped cursor"))
+            return false;
+        const auto pasteID = pasted->itemID;
+        gui.commandManager.invokeDirectly(undo, false);
+        if (!check(second->getClips().size() == 1 && gui.actionSelection.clips.empty(), "one undo removes paste"))
+            return false;
+        gui.commandManager.invokeDirectly(redo, false);
+        if (!check(te::findClipForID(*gui.edit, pasteID) && second->getClips().size() == 2, "redo restores paste"))
+            return false;
+
+        click(audioPoint);
+        gui.dispatchAction(Action::copy);
+        gui.dispatchAction(Action::remove);
+        if (!check(!te::findClipForID(*gui.edit, audioID) && gui.actionSelection.clips.empty()
+                && te::findClipForID(*gui.edit, pasteID)->getPosition().getStart() == destination, "Delete leaves the gap"))
+            return false;
+        gui.commandManager.invokeDirectly(undo, false);
+        if (!check(te::findClipForID(*gui.edit, audioID) && second->getClips().size() == 2, "undo restores audio clip"))
+            return false;
+
+        gui.snap.setSelectedId(4, ju::dontSendNotification);
+        click({ gui.timeX(seconds(2.71)), rowY(0) });
+        gui.seek(2.71, false);
+        const auto snapped = gui.pasteStart();
+        gui.dispatchAction(Action::paste);
+        auto* pastedWave = dynamic_cast<te::WaveAudioClip*>(gui.selectedClip());
+        if (!check(pastedWave && pastedWave->itemID != audioID && pastedWave->getOriginalFile() == audio
+                && pastedWave->getPosition().getStart() == snapped && first->getClips().size() == 2,
+                   "WAV Paste preserves media and snaps on the destination lane"))
+            return false;
+
+        const auto clipCount = first->getClips().size();
+        for (const auto& slot : gui.actionButtons)
+            if (slot.action != Action::copy && slot.action != Action::paste && slot.action != Action::remove)
+            {
+                if (!check(!slot.button->isEnabled() && !gui.canDispatch(slot.action), "deferred actions stay disabled"))
+                    return false;
+                gui.dispatchAction(slot.action);
+            }
+        if (!check(first->getClips().size() == clipCount, "disabled actions leave clips alone"))
+            return false;
+        gui.setProject(te::createEmptyEdit(engine, project), project);
+        return check(!gui.clipClipboard && gui.actionSelection.clips.empty(), "opening a project clears clipboard and selection");
+    }
+
     static bool testCorrections(te::Engine& engine)
     {
         auto dir = ju::File::getSpecialLocation(ju::File::tempDirectory).getNonexistentChildFile("SimpleDAW-corrections", {});
@@ -430,7 +684,8 @@ public:
         if (!check(wave && wave->getPosition().getStart() == from, "import at snapped edit cursor"))
             return false;
         const auto id = wave->itemID;
-        gui.selectedItem = gui.dragItem = id;
+        gui.actionSelection.clips = { id };
+        gui.dragItem = id;
         gui.dragAnchor = 0.0;
         gui.updateDragPreview(0.27);
         const auto moved = te::TimePosition::fromSeconds(gui.snapSeconds(from.inSeconds() + 0.27));
@@ -527,9 +782,12 @@ private:
             return false;
         selectTrack(0);
         insertMidi();
-        const auto id = selectedItem;
+        auto* clip = selectedClip();
+        if (!clip)
+            return false;
+        const auto id = clip->itemID;
         const auto range = timeSelection;
-        if (!selectedClip() || !invokeShortcut(deleteItem, key, true, &tempo) || !selectedClip()
+        if (!invokeShortcut(deleteItem, key, true, &tempo) || !selectedClip()
             || !invokeShortcut(deleteItem, key) || te::findClipForID(*edit, id) || timeSelection != range)
             return false;
         if (!commandManager.invokeDirectly(undo, false) || !te::findClipForID(*edit, id)
@@ -690,6 +948,27 @@ private:
         return control;
     }
 
+    void addActionGroup(size_t index, const ju::String& title, uint32_t colour,
+                        std::initializer_list<std::pair<const char*, UniversalAction>> actions)
+    {
+        auto& group = actionGroups[index];
+        group.frame.setText(title);
+        group.frame.setColour(ju::GroupComponent::outlineColourId, ju::Colour(0xff56616a));
+        group.frame.setColour(ju::GroupComponent::textColourId, ju::Colours::white);
+        group.frame.setInterceptsMouseClicks(false, false);
+        addAndMakeVisible(group.frame);
+        for (const auto& [label, action] : actions)
+        {
+            auto& control = button(group.buttons, ju::String::fromUTF8(label), {}, colour);
+            control.setWantsKeyboardFocus(false);
+            if (action == UniversalAction::reserved)
+                control.setTitle("Reserved");
+            else
+                control.onClick = [this, action] { dispatchAction(action); };
+            actionButtons.push_back({ &control, action, ju::Colour(colour) });
+        }
+    }
+
     void navigationButton(Arrow arrow, const ju::String& title, std::function<void()> action)
     {
         auto& control = *buttons.add(new ArrowButton(arrow));
@@ -804,9 +1083,13 @@ private:
             case saveProject: case saveProjectAs: case exportAudio: info.setActive(stopped); break;
             case undo: info.setActive(stopped && edit->getUndoManager().canUndo()); break;
             case redo: info.setActive(stopped && edit->getUndoManager().canRedo()); break;
-            case cut: case copy: case paste: case duplicate: info.setActive(false); break;
-            case deleteItem: info.setActive(stopped && (selectedClip() != nullptr || timeSelection.has_value())); break;
-            case locateFile: info.setActive(stopped && missingWave(selectedClip()) != nullptr); break;
+            case cut: case duplicate: info.setActive(false); break;
+            case copy: info.setActive(canDispatch(UniversalAction::copy)); break;
+            case paste: info.setActive(canDispatch(UniversalAction::paste)); break;
+            case deleteItem: info.setActive(canDispatch(UniversalAction::remove) || canClearTimeSelection()); break;
+            case locateFile:
+                info.setActive(stopped && activeEditingArea() == EditingArea::timeline && missingWave(selectedClip()));
+                break;
             case audioTrack: case midiTrack: info.setActive(stopped && trackCount() < maxTracks); break;
             case armAudio: info.setActive(edit && !edit->getTransport().isRecording() && hasTrack); break;
             case midiItem: case audioFile: case importAudio: case armMidi: case synth: case reverb: case vst3:
@@ -845,7 +1128,14 @@ private:
             case exitApp: ju::JUCEApplication::getInstance()->systemRequestedQuit(); break;
             case undo: if (ready() && edit->getUndoManager().undo()) edit->restartPlayback(); break;
             case redo: if (ready() && edit->getUndoManager().redo()) edit->restartPlayback(); break;
-            case deleteItem: deleteSelection(); break;
+            case copy: dispatchAction(UniversalAction::copy); break;
+            case paste: dispatchAction(UniversalAction::paste); break;
+            case deleteItem:
+                if (canClearTimeSelection())
+                    clearTimeSelection();
+                else
+                    dispatchAction(UniversalAction::remove);
+                break;
             case locateFile: locateSelectedFile(); break;
             case audioTrack: addTrack(false); break;
             case midiTrack: addTrack(true); break;
@@ -877,7 +1167,9 @@ private:
     te::AudioTrack* trackAt(int index) const { return edit ? te::getAudioTracks(*edit)[index] : nullptr; }
     te::Clip* selectedClip() const
     {
-        return edit && selectedItem.isValid() ? te::findClipForID(*edit, selectedItem) : nullptr;
+        if (edit && actionSelection.clips.size() == 1)
+            return te::findClipForID(*edit, *actionSelection.clips.begin());
+        return nullptr;
     }
 
     static te::WaveAudioClip* missingWave(te::Clip* clip)
@@ -926,29 +1218,124 @@ private:
             });
     }
 
-    void deleteSelection()
+    EditingArea activeEditingArea() const
     {
-        if (!ready())
+        // Effects exposes the existing chain read-only. The other workspace tabs are placeholders.
+        return actionSelection.activeArea(panels.workspaceOpen && activeTab == 1, panels.inspectorOpen);
+    }
+
+    bool canEditTimeline() const
+    {
+        return edit && !edit->getTransport().isPlaying() && !edit->getTransport().isRecording()
+            && activeEditingArea() == EditingArea::timeline;
+    }
+
+    te::TimePosition pasteStart() const
+    {
+        return te::TimePosition::fromSeconds(snapSeconds(editCursor.inSeconds()));
+    }
+
+    bool canDispatch(UniversalAction action) const
+    {
+        if (!canEditTimeline())
+            return false;
+
+        switch (action)
+        {
+            case UniversalAction::copy:
+                if (auto* clip = selectedClip(); clip && !clip->isGrouped() && !clip->isLinked())
+                    return (dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip))
+                        && !clip->getPosition().time.isEmpty();
+                return false;
+            case UniversalAction::remove:
+                return selectedClip() != nullptr;
+            case UniversalAction::paste:
+                if (clipClipboard && actionSelection.clips.size() <= 1)
+                {
+                    auto* destination = trackAt(selection);
+                    if (!destination || destination->getClips().size() >= engine.getEngineBehaviour().getEditLimits().maxClipsInTrack)
+                        return false;
+                    const auto& clip = clipClipboard->clips.front();
+                    const auto end = clip.hasBeatTimes
+                        ? edit->tempoSequence.toTime(edit->tempoSequence.toBeats(pasteStart()) + clip.lengthBeats)
+                        : pasteStart() + te::TimeDuration::fromSeconds(double(clip.state[te::IDs::length]));
+                    return end <= te::Edit::getMaximumEditEnd();
+                }
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    void dispatchAction(UniversalAction action)
+    {
+        if (!canDispatch(action))
             return;
-        if (auto* clip = selectedClip())
+
+        switch (action)
         {
-            if (missingWave(clip) && !ju::AlertWindow::showOkCancelBox(ju::MessageBoxIconType::WarningIcon,
-                    "Delete missing audio item?", "Remove " + clip->getName() + " from the project?",
-                    "Delete Item", "Cancel", this))
-                return;
-            edit->getUndoManager().beginNewTransaction("Delete item");
-            clip->removeFromParent();
-            selectedItem = {};
+            case UniversalAction::copy:
+            {
+                auto snapshot = std::make_unique<te::Clipboard::Clips>();
+                te::SelectableList items;
+                items.add(selectedClip());
+                snapshot->addSelectedClips(items, {}, te::Clipboard::Clips::AutomationLocked::no);
+                if (!snapshot->clips.empty())
+                    clipClipboard = std::move(snapshot);
+                break;
+            }
+            case UniversalAction::paste:
+            {
+                te::EditInsertPoint insertPoint(*edit);
+                te::SelectionManager pasted(engine);
+                te::Clipboard::ContentType::EditPastingOptions options(*edit, insertPoint, &pasted);
+                options.startTrack = trackAt(selection);
+                options.startTime = pasteStart();
+
+                edit->getUndoManager().beginNewTransaction("Paste item");
+                if (clipClipboard->pasteIntoEdit(options))
+                    if (auto* clip = dynamic_cast<te::Clip*>(pasted.getSelectedObject(0)))
+                        actionSelection.clips = { clip->itemID };
+                break;
+            }
+            case UniversalAction::remove:
+                deleteSelectedClip();
+                break;
+            default:
+                break;
         }
-        else if (timeSelection)
-        {
-            timeSelection.reset();
-            auto& transport = edit->getTransport();
-            transport.looping = false;
-            transport.setLoopRange({});
-            edit->markAsChanged();
-            report("Time selection cleared");
-        }
+        updateControls();
+    }
+
+    void deleteSelectedClip()
+    {
+        auto* clip = selectedClip();
+        const auto id = clip->itemID;
+        auto* project = edit.get();
+        if (missingWave(clip) && !ju::AlertWindow::showOkCancelBox(ju::MessageBoxIconType::WarningIcon,
+                "Delete missing audio item?", "Remove " + clip->getName() + " from the project?",
+                "Delete Item", "Cancel", this))
+            return;
+        if (edit.get() != project || !canDispatch(UniversalAction::remove) || selectedClip()->itemID != id)
+            return;
+        edit->getUndoManager().beginNewTransaction("Delete item");
+        selectedClip()->removeFromParent();
+        actionSelection.clips.clear();
+    }
+
+    bool canClearTimeSelection() const
+    {
+        return canEditTimeline() && actionSelection.clips.empty() && timeSelection.has_value();
+    }
+
+    void clearTimeSelection()
+    {
+        timeSelection.reset();
+        auto& transport = edit->getTransport();
+        transport.looping = false;
+        transport.setLoopRange({});
+        edit->markAsChanged();
+        report("Time selection cleared");
     }
 
     static ju::StringArray unavailablePlugins(te::Edit& target)
@@ -997,7 +1384,13 @@ private:
         edit->playInStopEnabled = true;
         projectFile = file;
         selection = trackCount() == 0 ? -1 : 0;
-        selectedItem = dragItem = {};
+        actionSelection = {};
+        if (auto* track = trackAt(selection))
+            actionSelection.tracks.insert(track->itemID);
+        clipClipboard.reset();
+        boxAnchor.reset();
+        selectionBox = {};
+        dragItem = {};
         dragPreview.reset();
         rangePreview.reset();
         draggingRange = false;
@@ -1070,7 +1463,9 @@ private:
     void selectTrack(int index)
     {
         selection = index;
-        selectedItem = {};
+        auto* track = trackAt(index);
+        ActionSelection::click(actionSelection.tracks, track ? track->itemID : te::EditItemID{}, false);
+        actionSelection.requestedArea = EditingArea::tracks;
         updateControls();
     }
 
@@ -1086,7 +1481,10 @@ private:
             const auto nextBar = barTime(edit->tempoSequence.toBarsAndBeats(editCursor).bars + 1);
             edit->getUndoManager().beginNewTransaction("Insert MIDI item");
             if (auto clip = te::insertMIDIClip(*track, "MIDI item", { editCursor, nextBar }))
-                selectedItem = clip->itemID;
+            {
+                actionSelection.clips = { clip->itemID };
+                actionSelection.requestedArea = EditingArea::timeline;
+            }
         }
     }
 
@@ -1337,13 +1735,14 @@ private:
 
     void paintTrack(ju::Graphics& g, te::AudioTrack& track, int row, int y, ju::Colour colour)
     {
-        const auto selected = selection == row;
-        auto bounds = ju::Rectangle<int>(2, y + 2, headerWidth - 5, rowHeight() - 4);
-        g.setColour(ju::Colour(0xff242424).interpolatedWith(colour, selected ? 0.25f : 0.12f));
+        const auto selected = actionSelection.tracks.contains(track.itemID);
+        const auto primaryTrack = selection == row;
+        auto bounds = trackBounds(y);
+        g.setColour(ju::Colour(0xff242424).interpolatedWith(colour, (selected || primaryTrack) ? 0.25f : 0.12f));
         g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
-        if (selected)
+        if (selected || primaryTrack)
         {
-            g.setColour(colour);
+            g.setColour(selected && activeEditingArea() == EditingArea::tracks ? ju::Colours::white : colour);
             g.drawRoundedRectangle(bounds.toFloat(), 4.0f, 2.0f);
         }
         auto indicators = bounds.removeFromRight(24).reduced(3, 2);
@@ -1388,24 +1787,21 @@ private:
                          ju::Justification::centredLeft, 1);
     }
 
-    void paintClip(ju::Graphics& g, te::Clip& clip, int y, ju::Colour colour, int width)
+    void paintClip(ju::Graphics& g, te::Clip& clip, int y, ju::Colour colour)
     {
         auto positionInEdit = clip.getPosition();
-        if (dragItem == clip.itemID && dragPreview)
-            positionInEdit.time = positionInEdit.time + (*dragPreview - positionInEdit.getStart());
+        positionInEdit.time = displayedClipRange(clip);
         const auto left = timeX(positionInEdit.getStart());
-        const auto right = timeX(positionInEdit.getEnd());
-        const auto bounds = ju::Rectangle<int>(left, y + 3, ju::jmax(2, right - left), rowHeight() - 6)
-            .getIntersection({ headerWidth, y + 3, width - headerWidth, rowHeight() - 6 });
+        const auto bounds = clipBounds(positionInEdit.time, y);
         if (bounds.isEmpty())
             return;
-        const auto selected = clip.itemID == selectedItem;
+        const auto selected = actionSelection.clips.contains(clip.itemID);
         const auto* missing = missingWave(&clip);
         if (missing)
             colour = ju::Colours::grey;
         g.setColour(colour.withMultipliedBrightness(selected ? 0.56f : 0.27f));
         g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
-        g.setColour(selected ? ju::Colours::white : colour);
+        g.setColour(colour);
         g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 4.0f, selected ? 2.0f : 1.0f);
 
         if (missing)
@@ -1549,7 +1945,7 @@ private:
             const auto colour = track.getColour().isTransparent() ? palette(row) : track.getColour();
             paintTrack(g, track, row, y, colour);
             for (auto* clip : track.getClips())
-                paintClip(g, *clip, y, colour, width);
+                paintClip(g, *clip, y, colour);
             if (edit->getTransport().isRecording())
                 paintRecording(g, track, y, colour);
             g.setColour(ju::Colour(0xff353535));
@@ -1583,65 +1979,187 @@ private:
         }
     }
 
+    void mouseDown(const ju::MouseEvent& event) override
+    {
+        if (!edit || (!event.mods.isLeftButtonDown() && !event.mods.isRightButtonDown()))
+            return;
+        if (event.eventComponent == &inspector)
+            actionSelection.requestedArea = EditingArea::inspector;
+        else if (event.eventComponent == &workspace && activeTab == 1)
+            actionSelection.requestedArea = EditingArea::window;
+        updateControls();
+    }
+
+    ju::Rectangle<int> trackBounds(int y) const
+    {
+        return { 2, y + 2, headerWidth - 5, rowHeight() - 4 };
+    }
+
+    te::TimeRange displayedClipRange(const te::Clip& clip) const
+    {
+        const auto range = clip.getPosition().time;
+        return dragItem == clip.itemID && dragPreview ? range + (*dragPreview - range.getStart()) : range;
+    }
+
+    ju::Rectangle<int> clipBounds(te::TimeRange range, int y) const
+    {
+        const auto left = timeX(range.getStart());
+        const auto right = timeX(range.getEnd());
+        return ju::Rectangle<int>(left, y + 3, ju::jmax(2, right - left), rowHeight() - 6)
+            .getIntersection({ headerWidth, y + 3, arrangement.getWidth() - headerWidth, rowHeight() - 6 });
+    }
+
+    ju::Rectangle<int> arrangementAreaBounds(EditingArea area) const
+    {
+        auto bounds = arrangement.getLocalBounds();
+        if (area == EditingArea::tracks)
+            return bounds.removeFromLeft(headerWidth);
+        return bounds.withTrimmedLeft(headerWidth);
+    }
+
+    void paintArrangementSelection(ju::Graphics& g) const
+    {
+        if (!edit)
+            return;
+        if (!selectionBox.isEmpty())
+        {
+            g.setColour(ju::Colours::white.withAlpha(0.13f));
+            g.fillRect(selectionBox);
+            g.setColour(ju::Colours::white);
+            g.drawRect(selectionBox);
+        }
+        const auto active = activeEditingArea();
+        if (active != EditingArea::timeline && active != EditingArea::tracks)
+            return;
+        g.setColour(ju::Colours::white);
+        const auto area = arrangementAreaBounds(active);
+        g.drawRect(area, 2);
+        if (active != EditingArea::timeline || actionSelection.clips.empty())
+            return;
+
+        // Keep selection outlines visible above the ruler range and overlapping clips.
+        const auto tracks = te::getAudioTracks(*edit);
+        for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < area.getBottom(); ++row, y += rowHeight())
+            for (auto* clip : tracks[row]->getClips())
+                if (actionSelection.clips.contains(clip->itemID))
+                    if (const auto bounds = clipBounds(displayedClipRange(*clip), y); !bounds.isEmpty())
+                        g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 4.0f, 2.0f);
+    }
+
     void arrangementDown(const ju::MouseEvent& event)
     {
-        if (!edit || (!event.mods.isLeftButtonDown() && !event.mods.isPopupMenu()))
+        if (!edit || (!event.mods.isLeftButtonDown() && !event.mods.isRightButtonDown()))
             return;
-        const bool context = event.mods.isPopupMenu();
-        arrangement.grabKeyboardFocus();
+        if (arrangement.isShowing())
+            arrangement.grabKeyboardFocus();
+        const bool toggle = event.mods.isRightButtonDown();
+        const auto area = event.x < headerWidth ? EditingArea::tracks : EditingArea::timeline;
+        actionSelection.requestedArea = area;
         draggingRange = false;
         rangePreview.reset();
         dragPreview.reset();
         dragItem = {};
+        boxAnchor.reset();
+        selectionBox = {};
         const auto row = firstRow + ju::jmax(0, event.y - rulerHeight) / rowHeight();
-        if (event.x < headerWidth)
-        {
-            if (event.y >= rulerHeight && trackAt(row))
-                selectTrack(row);
-            return;
-        }
+        const auto y = rulerHeight + (row - firstRow) * rowHeight();
+        auto* track = event.y >= rulerHeight ? trackAt(row) : nullptr;
 
-        if (event.y < rulerHeight || event.mods.isShiftDown())
+        if (area == EditingArea::tracks)
         {
-            if (context)
-                return;
-            draggingRange = !edit->getTransport().isPlaying();
-            dragAnchor = timeAt(event.x);
-            seek(dragAnchor);
-            return;
-        }
-        if (auto* track = trackAt(row))
-        {
-            selectTrack(row);
-            const auto clips = track->getClips();
-            for (int index = clips.size(); --index >= 0;)
+            if (track && trackBounds(y).contains(event.getPosition()))
             {
-                auto* clip = clips[index];
-                const auto range = clip->getPosition().time;
-                if (event.x >= timeX(range.getStart()) && event.x < timeX(range.getEnd()))
+                ActionSelection::click(actionSelection.tracks, track->itemID, toggle);
+                if (actionSelection.tracks.contains(track->itemID))
+                    selection = row;
+                else if (selection == row)
+                    selectFirstSelectedTrack();
+            }
+            else if (!toggle)
+            {
+                actionSelection.tracks.clear();
+                selection = -1;
+                if (event.y >= rulerHeight)
+                    boxAnchor = event.getPosition();
+            }
+        }
+        else if (event.y < rulerHeight || event.mods.isShiftDown())
+        {
+            if (!toggle)
+            {
+                draggingRange = !edit->getTransport().isPlaying();
+                dragAnchor = timeAt(event.x);
+                seek(dragAnchor);
+            }
+        }
+        else
+        {
+            if (track)
+            {
+                const auto clips = track->getClips();
+                for (int index = clips.size(); --index >= 0;)
                 {
-                    selectedItem = clip->itemID;
-                    if (!context && (dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip)))
+                    auto* clip = clips[index];
+                    if (!clipBounds(clip->getPosition().time, y).contains(event.getPosition()))
+                        continue;
+                    selection = row;
+                    ActionSelection::click(actionSelection.clips, clip->itemID, toggle);
+                    if (!toggle && (dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip)))
                     {
                         dragItem = clip->itemID;
                         dragAnchor = timeAt(event.x);
                     }
                     updateControls();
-                    if (context)
-                    {
-                        ju::PopupMenu menu;
-                        if (missingWave(clip))
-                            menu.addCommandItem(&commandManager, locateFile);
-                        menu.addCommandItem(&commandManager, deleteItem);
-                        menu.showMenuAsync(ju::PopupMenu::Options().withTargetScreenArea(
-                            ju::Rectangle<int>(event.getScreenX(), event.getScreenY(), 1, 1)));
-                    }
                     return;
                 }
             }
+            if (!toggle)
+            {
+                selection = track ? row : -1;
+                actionSelection.clips.clear();
+                boxAnchor = event.getPosition();
+            }
         }
-        if (!context)
-            seek(timeAt(event.x));
+        updateControls();
+    }
+
+    void selectFirstSelectedTrack()
+    {
+        selection = -1;
+        const auto tracks = te::getAudioTracks(*edit);
+        for (int row = 0; row < tracks.size(); ++row)
+            if (actionSelection.tracks.contains(tracks[row]->itemID))
+            {
+                selection = row;
+                break;
+            }
+    }
+
+    void updateSelectionBox(ju::Point<int> position)
+    {
+        const auto area = *actionSelection.requestedArea;
+        const auto bounds = arrangementAreaBounds(area).withTrimmedTop(rulerHeight);
+        selectionBox = ju::Rectangle<int>(std::min(boxAnchor->x, position.x), std::min(boxAnchor->y, position.y),
+            std::abs(boxAnchor->x - position.x) + 1, std::abs(boxAnchor->y - position.y) + 1).getIntersection(bounds);
+        auto& items = area == EditingArea::timeline ? actionSelection.clips : actionSelection.tracks;
+        items.clear();
+        const auto tracks = te::getAudioTracks(*edit);
+        for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < bounds.getBottom(); ++row, y += rowHeight())
+        {
+            if (area == EditingArea::tracks)
+            {
+                if (trackBounds(y).intersects(selectionBox))
+                    items.insert(tracks[row]->itemID);
+            }
+            else
+            {
+                for (auto* clip : tracks[row]->getClips())
+                    if (clipBounds(clip->getPosition().time, y).intersects(selectionBox))
+                        items.insert(clip->itemID);
+            }
+        }
+        if (area == EditingArea::tracks)
+            selectFirstSelectedTrack();
     }
 
     void updateDragPreview(double pointerTime)
@@ -1661,10 +2179,18 @@ private:
 
     void arrangementDrag(const ju::MouseEvent& event)
     {
-        if (!edit || edit->getTransport().isPlaying() || std::abs(event.getDistanceFromDragStartX()) < 5)
+        if (!edit)
             return;
-        updateDragPreview(timeAt(event.x));
-        arrangement.repaint();
+        if (boxAnchor && event.getDistanceFromDragStart() >= 5)
+        {
+            updateSelectionBox(event.getPosition());
+            updateControls();
+        }
+        else if (!edit->getTransport().isPlaying() && std::abs(event.getDistanceFromDragStartX()) >= 5)
+        {
+            updateDragPreview(timeAt(event.x));
+            arrangement.repaint();
+        }
     }
 
     void finishDrag()
@@ -1686,11 +2212,20 @@ private:
 
     void arrangementUp(const ju::MouseEvent& event)
     {
-        if (edit && !edit->getTransport().isPlaying() && std::abs(event.getDistanceFromDragStartX()) >= 5)
+        if (edit && boxAnchor)
+        {
+            if (event.getDistanceFromDragStart() >= 5 || !selectionBox.isEmpty())
+                updateSelectionBox(event.getPosition());
+            else if (*actionSelection.requestedArea == EditingArea::timeline)
+                seek(timeAt(event.x));
+        }
+        else if (edit && !edit->getTransport().isPlaying() && std::abs(event.getDistanceFromDragStartX()) >= 5)
         {
             updateDragPreview(timeAt(event.x));
             finishDrag();
         }
+        boxAnchor.reset();
+        selectionBox = {};
         dragItem = {};
         draggingRange = false;
         dragPreview.reset();
@@ -1714,11 +2249,21 @@ private:
             ju::dontSendNotification);
         inspector.setText(trackAt(selection) ? "INSPECTOR\n\n" + trackAt(selection)->getName()
             + "\n\nTrack and item controls\ncoming in v0.22" : "INSPECTOR\n\nSelect a track", ju::dontSendNotification);
-        for (size_t i = 0; i < editButtons.size(); ++i)
+        if (edit)
         {
-            ju::ApplicationCommandInfo info(undo + static_cast<int>(i));
-            getCommandInfo(info.commandID, info);
-            editButtons[i]->setEnabled((info.flags & ju::ApplicationCommandInfo::isDisabled) == 0);
+            std::erase_if(actionSelection.clips, [this](auto id) { return !te::findClipForID(*edit, id); });
+            std::erase_if(actionSelection.tracks, [this](auto id) { return !te::findTrackForID(*edit, id); });
+        }
+        const auto active = activeEditingArea();
+        if (actionSelection.requestedArea && actionSelection.requestedArea != active)
+            actionSelection.requestedArea = active;
+        inspector.setActive(edit && active == EditingArea::inspector);
+        workspace.setActive(edit && active == EditingArea::window);
+        for (const auto& slot : actionButtons)
+        {
+            const bool enabled = canDispatch(slot.action);
+            slot.button->setColour(ju::TextButton::buttonColourId, enabled ? slot.colour : ju::Colour(0xff444444));
+            slot.button->setEnabled(enabled);
         }
 
         const bool canChangePlaybackSettings = edit && !edit->getTransport().isPlaying();
@@ -1776,16 +2321,23 @@ private:
     ju::MenuBarComponent menuBar { this };
     Arrangement arrangement { *this };
     Splitter inspectorDivider { *this, true }, workspaceDivider { *this, false };
-    ju::Label position, status, inspector, workspace;
+    ju::Label position, status;
+    AreaLabel inspector, workspace;
     ju::TooltipWindow tooltips { this };
     ju::TextEditor tempo;
     ju::ComboBox signature, recordMode, snap;
     ju::OwnedArray<ju::TextButton> buttons;
     ju::TextButton *playButton = nullptr, *pauseButton = nullptr, *loopButton = nullptr,
         *clickButton = nullptr, *countButton = nullptr, *heightButton = nullptr, *followButton = nullptr;
-    std::vector<ju::Component*> first, second, toolbar, navigation, tabs, editButtons;
+    std::vector<ju::Component*> first, second, panelButtons, navigation, tabs;
+    std::array<ActionGroup, 4> actionGroups;
+    std::vector<ActionButton> actionButtons;
+    ActionSelection actionSelection;
+    std::unique_ptr<te::Clipboard::Clips> clipClipboard;
     std::map<te::EditItemID, std::unique_ptr<Meter>> meters;
-    te::EditItemID selectedItem, dragItem;
+    te::EditItemID dragItem;
+    std::optional<ju::Point<int>> boxAnchor;
+    ju::Rectangle<int> selectionBox;
     te::TimePosition editCursor;
     std::optional<te::TimeRange> timeSelection, rangePreview;
     std::optional<te::TimePosition> dragPreview;

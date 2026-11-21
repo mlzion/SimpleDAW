@@ -1,8 +1,14 @@
 # SimpleDAW project status
 
+## v0.22.1 Universal Actions Toolbar
+
+v0.22.1 replaces the Edit toolbar with the permanent EDIT, MOVE, SIZE and MODIFY groups. Timeline and Tracks have independent mouse selections and visible focus. Inspector and read-only Effects can take focus. Single-clip Copy, Paste and Delete use Tracktion clipboard and undo operations. Windows x64 CI for `ccc2153` passed all four CTests on /MD and /MT, including the new `universal_actions` suite and the three v0.21 regression suites. Both builds passed version, runtime-import and isolated startup checks. The /MD artifact includes the executable and corresponding source. [Windows CI](https://github.com/mlzion/SimpleDAW/actions/runs/44856382800) · [Windows x64 artifact](https://github.com/mlzion/SimpleDAW/actions/runs/44856382800/artifacts/14688326869)
+
+User-reported Windows live acceptance is complete with 45 PASS, 0 PARTIAL, 0 FAIL and 0 UNTESTED across the grouped acceptance checks. The record identifies individual checklist subconditions that were not independently verified. Editing the boundaries of an existing ruler time selection remains a carry-forward usability item. CREATE, MOVE, SIZE, SPLIT, TRIM and reserved positions are disabled. Advanced multiselection edits, unfinished editor functionality and recording/take changes are deferred. [Architecture and action availability](docs/architecture.md#universal-actions-toolbar) · [Windows live acceptance record](docs/testing/v0.22.1-live-test.md)
+
 ## Current development
 
-Phase 1 audio engine and repository documentation have merged into main. The v0.21 Main GUI Foundation is on `feature/v0.21-main-gui` and completed user-reported Windows live acceptance in PR #3 (2026-11-20), with documented deferrals. [Phase 1 PR #1](https://github.com/mlzion/SimpleDAW/pull/1) · [Repository documentation PR #2](https://github.com/mlzion/SimpleDAW/pull/2)
+Phase 1 audio engine and repository documentation have merged into main. The v0.21 Main GUI Foundation merged in PR #3 after user-reported Windows live acceptance (2026-11-20), with documented deferrals. [Phase 1 PR #1](https://github.com/mlzion/SimpleDAW/pull/1) · [Repository documentation PR #2](https://github.com/mlzion/SimpleDAW/pull/2)
 
 The JUCE window adds a two-row transport, a shared track-list and arrangement view, and collapsible resizable Inspector and workspace panels. The view reads Tracktion's Edit and uses engine track, clip, metering and transport APIs. The shared row layout keeps vertical scrolling and MIN/MAX track heights synchronized. JUCE application properties persist panel sizes and visibility.
 
@@ -35,7 +41,7 @@ User-reported Windows 11 live acceptance completed on 2026-11-20: 43 functional 
 ## Known limitations
 
 - Inspector content and Mixer, Piano Roll and Drum Editor content are placeholders. Effects shows the chain read-only. The read-only 1 and 2 input badges are temporary until Inspector routing is available. Drum Master processing is planned for v0.26.
-- Cut, Copy, Paste and Duplicate are disabled. Basic clip moves work within a lane while stopped. Complex looping, stretched media and overlapping takes can have simplified previews. Locating audio updates the selected clip source and matching take references.
+- Cut and Duplicate remain disabled. v0.22.1 adds Timeline Copy and Paste for one clip. Basic clip moves work within a lane while stopped. Complex looping, stretched media and overlapping takes can have simplified previews. Locating audio updates the selected clip source and matching take references.
 - Save As creates a copy in the current folder so relative media paths still resolve. Source media remain in their original locations.
 - Count-in is off or one bar. Punch and Loop share the ruler selection. If a range has not been selected or set in the project, Loop uses the arrangement length or at least one bar.
 - VST3 scans run in-process and WAV export waits synchronously. The distributed build uses the system Microsoft x64 v14 runtime. The optional ASIO build remains separate. [Feasibility notes](docs/feasibility.md) · [Licensing](docs/licensing.md)
