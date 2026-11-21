@@ -681,6 +681,14 @@ public:
                    "paste preserves timing, track offsets and selection"))
             return false;
 
+        gui.snap.setSelectedId(1, ju::dontSendNotification);
+        if (!check(!gui.canDispatch(Action::left) && !gui.canDispatch(Action::endMinus)
+                && gui.canDispatch(Action::up), "Snap Off leaves vertical movement available"))
+            return false;
+        gui.snap.setSelectedId(4, ju::dontSendNotification);
+        if (!check(!gui.canDispatch(Action::endPlus), "source limit rejects SIZE for the entire group"))
+            return false;
+
         gui.dispatchAction(Action::left);
         const auto movedStart = gui.trackAt(2)->getClips().getFirst()->getPosition().getStart();
         if (!check(movedStart < groupAnchor, "horizontal MOVE steps left"))
@@ -1530,7 +1538,7 @@ private:
                 if (start)
                 {
                     position.time = position.time.withStart(position.getStart() + delta);
-                    position.offset += delta;
+                    position.offset = position.offset + delta;
                 }
                 else
                     position.time = position.time.withEnd(position.getEnd() + delta);
