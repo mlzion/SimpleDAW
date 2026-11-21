@@ -10,6 +10,7 @@ These PDFs are the shared reference set for specification reviews and phased dev
 
 ## Subsequent acceptance and change handoffs
 
+- [v0.22 design decisions — Reviews 01–82](v0.22-design-decisions-reviews-01-82.md) — accepted UAT and later-phase recording design decisions; Review 83 pending. v0.22.1 is limited to the UAT foundation, not advanced recording features.
 - [v0.21 acceptance and v0.22 handoff](v0.21-acceptance-v0.22-handoff.md) — records accepted live testing, documented limitations and candidate v0.22 work. This supplement does not supersede the dated PDFs or approve pending designs.
 
 ## How to use this set
