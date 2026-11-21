@@ -1055,13 +1055,15 @@ private:
         gui.dispatchAction(Action::copy);
         gui.actionSelection.tracks = { second.itemID };
         gui.dispatchAction(Action::paste);
-        if (!isArmed(input, first.itemID) || !isArmed(input, second.itemID))
+        if (!isArmed(input, first.itemID) || !isArmed(input, second.itemID)
+            || !second.getOutput().usesDefaultAudioOut())
             return false;
         gui.useHistory(false);
         if (!isArmed(input, first.itemID) || isArmed(input, second.itemID))
             return false;
         gui.useHistory(true);
-        if (!isArmed(input, first.itemID) || !isArmed(input, second.itemID))
+        if (!isArmed(input, first.itemID) || !isArmed(input, second.itemID)
+            || !second.getOutput().usesDefaultAudioOut())
             return false;
         auto* firstMeterPlugin = first.getLevelMeterPlugin();
         auto* secondMeterPlugin = second.getLevelMeterPlugin();
@@ -1774,7 +1776,7 @@ private:
             if (auto* output = track->getOutput().getDestinationTrack())
                 settings.outputTrack = output->itemID;
             else
-                settings.outputDevice = track->getOutput().state[te::IDs::name].toString();
+                settings.outputDevice = track->getOutput().state.getChildWithName(te::IDs::DEVICE)[te::IDs::name].toString();
         }
         trackClipboard = std::move(clipboard);
     }

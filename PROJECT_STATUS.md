@@ -12,6 +12,9 @@ The implementation branch adds multi-clip Cut, Copy, Paste, Delete, Move and Siz
 
 Before the Snap Off update, Windows x64 CI passed all four CTests on both /MD and /MT at `d0aa5d1`. Both builds passed version 0.22.2, runtime import inspection and isolated startup. The /MD build produced the executable and matching source ZIP. The Snap Off and Track Settings updates passed local C++ syntax and whitespace checks. The new runtime cases await execution. Windows CI for the update requires explicit approval. Windows live acceptance remains pending. [Windows CI](https://github.com/mlzion/SimpleDAW/actions/runs/44870812968) · [Windows x64 download](https://github.com/mlzion/SimpleDAW/actions/runs/44870812968/artifacts/14694276548) · [Editable checklist](docs/testing/v0.22.2-live-test.md)
 
+Windows x64 CI for `962d725` compiled both /MD and /MT. Each passed `project_round_trip`, `main_gui` and `universal_actions`, including the 10 ms Snap Off cases. Both failed `gui_corrections` at hosted playback after Track Settings Paste wrote a blank output route. The fix reads the device name from Tracktion's output device child and adds a default-output assertion. The fix passed local C++ syntax and whitespace checks. Version, runtime imports, isolated startup and artifact packaging were skipped on the failed run. A fresh Windows run requires explicit approval. [CI failure and logs](https://github.com/mlzion/SimpleDAW/actions/runs/44874777669)
+
+
 ## Current development
 
 Phase 1 audio engine and repository documentation have merged into main. The v0.21 Main GUI Foundation merged in PR #3 after user-reported Windows live acceptance (2026-11-20), with documented deferrals. [Phase 1 PR #1](https://github.com/mlzion/SimpleDAW/pull/1) · [Repository documentation PR #2](https://github.com/mlzion/SimpleDAW/pull/2)
