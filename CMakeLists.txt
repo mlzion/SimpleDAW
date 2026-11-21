@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(SimpleDAW VERSION 0.21.0 LANGUAGES C CXX)
+project(SimpleDAW VERSION 0.22.1 LANGUAGES C CXX)
 
 include(FetchContent)
 # Use the JUCE revision recorded by Tracktion Engine v3.2.0.
@@ -74,5 +74,6 @@ if(BUILD_TESTING)
     add_test(NAME project_round_trip COMMAND SimpleDAW --smoke-test)
     add_test(NAME main_gui COMMAND SimpleDAW --gui-test)
     add_test(NAME gui_corrections COMMAND SimpleDAW --correction-test)
-    set_tests_properties(project_round_trip main_gui gui_corrections PROPERTIES TIMEOUT 60)
+    add_test(NAME universal_actions COMMAND SimpleDAW --uat-test)
+    set_tests_properties(project_round_trip main_gui gui_corrections universal_actions PROPERTIES TIMEOUT 60)
 endif()
