@@ -727,9 +727,12 @@ public:
         gui.actionSelection.tracks = { secondTrackID, fourthTrackID };
         gui.dispatchAction(Action::up);
         if (!check(gui.trackAt(0)->itemID == secondTrackID && gui.trackAt(1)->itemID == fourthTrackID
-                && gui.actionSelection.clips.size() == 1 && !gui.canDispatch(Action::startPlus),
+                && gui.actionSelection.clips.size() == 1,
                    "track MOVE makes a contiguous block and preserves the Timeline selection"))
             return false;
+        for (const auto action : { Action::startMinus, Action::startPlus, Action::endMinus, Action::endPlus })
+            if (!check(!gui.canDispatch(action), "all SIZE actions are disabled with Tracks focused"))
+                return false;
         gui.useHistory(false);
         if (!check(gui.trackAt(1)->itemID == secondTrackID && gui.trackAt(3)->itemID == fourthTrackID,
                    "one global undo restores track order"))
