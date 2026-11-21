@@ -12,6 +12,10 @@ PR #10 implements the PR #12 simplification. Timeline groups retain Cut, Copy, P
 
 The revised source passed local C++ syntax and whitespace checks. Runtime tests and Windows live acceptance await a newly authorized build. The earlier Windows run for `962d725` passed three of four CTests on both runtimes, including Snap Off, and failed hosted playback in the superseded Track UAT settings path. It produced no package. [Earlier CI](https://github.com/mlzion/SimpleDAW/actions/runs/44874777669) · [Editable checklist](docs/testing/v0.22.2-live-test.md)
 
+### Targeted UAT rework
+
+R1 shares the 24-track limit between Insert and Paste and scrolls pasted tracks into view. R3 derives active track highlights from Timeline clip membership or the stored Track List selection, and the Inspector follows that editing context. R2 awaits clarification of the minimum at meter changes and handling of already-short clips. R4 awaits the migration policy for legacy tracks and confirmation of Insert compatibility. All four CTests passed in a local Linux build with the pinned JUCE and Tracktion sources, including Paste from 20 through 24, rejection at the limit, Undo/Redo, reopen and focus-driven highlights. All Windows rework retests are pending. [Rework task sheet](docs/tasks/v0.22.2-uat-rework-task-sheet.md)
+
 ## Current development
 
 Phase 1 audio engine and repository documentation have merged into main. The v0.21 Main GUI Foundation merged in PR #3 after user-reported Windows live acceptance (2026-11-20), with documented deferrals. [Phase 1 PR #1](https://github.com/mlzion/SimpleDAW/pull/1) · [Repository documentation PR #2](https://github.com/mlzion/SimpleDAW/pull/2)

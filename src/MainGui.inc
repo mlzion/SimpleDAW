@@ -584,6 +584,26 @@ public:
                 && gui.actionSelection.clips.size() == 2 && gui.canDispatch(Action::remove)
                 && gui.canDispatch(Action::copy), "separate track focus and selection"))
             return false;
+        if (!check(!gui.trackIsHighlighted(*first) && gui.trackIsHighlighted(*second),
+                   "Track List focus highlights only its selected track"))
+            return false;
+        click({ gui.timeX(seconds(1.0)), 10 });
+        if (!check(gui.actionSelection.track == second->itemID && gui.trackIsHighlighted(*first)
+                && gui.trackIsHighlighted(*second) && gui.inspector.getText().contains("2 clips selected")
+                && gui.canDispatch(Action::copy),
+                   "Timeline focus highlights both clip tracks without retargeting Track List actions"))
+            return false;
+        click(midiPoint);
+        if (!check(gui.trackIsHighlighted(*first) && !gui.trackIsHighlighted(*second)
+                && gui.actionSelection.track == second->itemID,
+                   "single Timeline selection clears stale track highlight"))
+            return false;
+        click(audioPoint, true);
+        click({ 30, rowY(1) });
+        if (!check(!gui.trackIsHighlighted(*first) && gui.trackIsHighlighted(*second)
+                && gui.actionSelection.clips.size() == 2,
+                   "returning to Tracks restores the stored highlight and retains both clips"))
+            return false;
         const auto trackFrom = ju::Point<int>(20, rulerHeight + 1);
         const auto trackTo = ju::Point<int>(70, rowY(1));
         gui.arrangement.mouseDown(mouse(gui.arrangement, trackFrom, ju::ModifierKeys::leftButtonModifier, trackFrom));
@@ -616,8 +636,9 @@ public:
             return false;
 
         click({ gui.timeX(seconds(4.13)), rowY(1) });
-        if (!check(gui.actionSelection.clips.empty() && gui.canDispatch(Action::paste),
-                   "empty lane click clears clips and sets paste destination"))
+        if (!check(gui.actionSelection.clips.empty() && gui.canDispatch(Action::paste)
+                && !gui.trackIsHighlighted(*first) && !gui.trackIsHighlighted(*second),
+                   "empty Timeline selection sets paste destination without a stale track highlight"))
             return false;
         const auto destination = gui.editCursor;
         gui.dispatchAction(Action::paste);
@@ -866,13 +887,36 @@ public:
                    "Inspector preserves compatible destination automation"))
             return false;
 
-        gui.edit->ensureNumberOfAudioTracks(maxTracks);
-        gui.selectTrack(0);
-        if (!check(!gui.canDispatch(Action::paste), "Track Paste is disabled at the 24-track limit"))
+        gui.edit->ensureNumberOfAudioTracks(20);
+        gui.selectTrack(19);
+        for (int count = 21; count <= maxTracks; ++count)
+        {
+            if (!check(gui.canDispatch(Action::paste), "Track Paste is available for tracks 21–24"))
+                return false;
+            gui.dispatchAction(Action::paste);
+            if (!check(gui.trackCount() == count && gui.actionTrack() == gui.trackAt(count - 1)
+                    && gui.selection < gui.firstRow + gui.rowsOnScreen(),
+                       "Track Paste inserts and reveals the new bottom row"))
+                return false;
+        }
+        const auto lastID = gui.actionTrack()->itemID;
+        if (!check(!gui.canDispatch(Action::paste) && !gui.canAddTrack(), "track creation is disabled at 24 tracks"))
             return false;
         gui.dispatchAction(Action::paste);
-        if (!check(gui.trackCount() == maxTracks, "Track Paste never exceeds the track limit"))
+        gui.addTrack(false);
+        if (!check(gui.trackCount() == maxTracks, "neither Paste nor Insert creates a 25th track"))
             return false;
+        gui.useHistory(false);
+        if (!check(gui.trackCount() == maxTracks - 1 && !gui.trackForID(lastID), "undo removes track 24"))
+            return false;
+        gui.useHistory(true);
+        if (!check(gui.trackCount() == maxTracks && gui.trackForID(lastID) && gui.save(), "redo restores and saves track 24"))
+            return false;
+        auto reopened = te::loadEditFromFile(engine, project);
+        if (!check(reopened && te::getAudioTracks(*reopened).size() == maxTracks
+                && te::findTrackForID(*reopened, lastID), "all 24 tracks survive reopening"))
+            return false;
+        reopened.reset();
         gui.setProject(te::createEmptyEdit(engine, project), project);
         return check(!gui.clipClipboard && !gui.trackClipboard && !gui.inspectorClipboard && gui.actionSelection.clips.empty(), "opening a project clears clipboard and selection");
     }
@@ -1353,7 +1397,7 @@ private:
             case locateFile:
                 info.setActive(stopped && activeEditingArea() == EditingArea::timeline && missingWave(selectedClip()));
                 break;
-            case audioTrack: case midiTrack: info.setActive(stopped && trackCount() < maxTracks); break;
+            case audioTrack: case midiTrack: info.setActive(stopped && canAddTrack()); break;
             case armAudio: info.setActive(edit && !edit->getTransport().isRecording() && hasTrack); break;
             case midiItem: case audioFile: case importAudio: case armMidi: case synth: case reverb: case vst3:
                 info.setActive(stopped && hasTrack); break;
@@ -1811,13 +1855,21 @@ private:
         trackClipboard = std::move(snapshot);
     }
 
+    bool canAddTrack() const
+    {
+        return edit && trackCount() < maxTracks
+            && te::getAllTracks(*edit).size() < engine.getEngineBehaviour().getEditLimits().maxNumTracks;
+    }
+
     bool canPasteTrack() const
     {
-        return actionTrack() && trackClipboard && trackCount() < maxTracks && outputAvailable(trackClipboard->output);
+        return actionTrack() && trackClipboard && canAddTrack() && outputAvailable(trackClipboard->output);
     }
 
     void pasteTrack(te::AudioTrack& anchor)
     {
+        if (!canPasteTrack())
+            return;
         const auto& snapshot = *trackClipboard;
         const auto devices = edit->state.getChildWithName(te::IDs::INPUTDEVICES);
         if (!snapshot.inputs.empty())
@@ -1884,6 +1936,7 @@ private:
             input.device.addChild(assignment, -1, &history);
         }
         selectTrack(te::getAudioTracks(*edit).indexOf(duplicate));
+        revealTrack(selection);
         edit->restartPlayback();
     }
 
@@ -2067,7 +2120,7 @@ private:
     void useInspectorSettings(bool apply)
     {
         auto* track = actionTrack();
-        if (!editingStopped() || !panels.inspectorOpen || !track)
+        if (!editingStopped() || !panels.inspectorOpen || inspectorContext != EditingArea::tracks || !track)
             return;
         actionSelection.requestedArea = EditingArea::inspector;
         if (!apply)
@@ -2322,7 +2375,7 @@ private:
         if (!ready())
             return;
         const auto count = trackCount();
-        if (count >= maxTracks)
+        if (!canAddTrack())
             return report("Track limit reached");
         edit->getUndoManager().beginNewTransaction(midi ? "Add MIDI track" : "Add audio track");
         edit->ensureNumberOfAudioTracks(count + 1);
@@ -2332,8 +2385,7 @@ private:
             track->setColour(palette(count));
             edit->markAsChanged();
             selectTrack(count);
-            if (count >= firstRow + rowsOnScreen())
-                scrollRows(count - firstRow - rowsOnScreen() + 1);
+            revealTrack(count);
         }
     }
 
@@ -2487,6 +2539,14 @@ private:
         arrangement.repaint();
     }
 
+    void revealTrack(int row)
+    {
+        if (row < firstRow)
+            scrollRows(row - firstRow);
+        else if (row >= firstRow + rowsOnScreen())
+            scrollRows(row - firstRow - rowsOnScreen() + 1);
+    }
+
     void setViewStart(double seconds)
     {
         viewStart = ju::jlimit(0.0, ju::jmax(0.0, totalSeconds() - visibleSeconds()), seconds);
@@ -2610,16 +2670,27 @@ private:
             }
     }
 
+    bool trackIsHighlighted(const te::AudioTrack& track) const
+    {
+        const auto active = activeEditingArea();
+        if (active == EditingArea::tracks)
+            return actionSelection.track == track.itemID;
+        if (active == EditingArea::timeline)
+            for (auto* clip : track.getClips())
+                if (actionSelection.clips.contains(clip->itemID))
+                    return true;
+        return false;
+    }
+
     void paintTrack(ju::Graphics& g, te::AudioTrack& track, int row, int y, ju::Colour colour)
     {
-        const auto selected = actionSelection.track == track.itemID;
-        const auto primaryTrack = selection == row;
+        const auto selected = trackIsHighlighted(track);
         auto bounds = trackBounds(y);
-        g.setColour(ju::Colour(0xff242424).interpolatedWith(colour, (selected || primaryTrack) ? 0.25f : 0.12f));
+        g.setColour(ju::Colour(0xff242424).interpolatedWith(colour, selected ? 0.25f : 0.12f));
         g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
-        if (selected || primaryTrack)
+        if (selected)
         {
-            g.setColour(selected && activeEditingArea() == EditingArea::tracks ? ju::Colours::white : colour);
+            g.setColour(ju::Colours::white);
             g.drawRoundedRectangle(bounds.toFloat(), 4.0f, 2.0f);
         }
         auto indicators = bounds.removeFromRight(24).reduced(3, 2);
@@ -3094,11 +3165,6 @@ private:
         workspace.setText(activeTab == 1 ? selectedEffects()
             : static_cast<ju::TextButton*>(tabs[activeTab])->getButtonText() + " - coming in a later release",
             ju::dontSendNotification);
-        auto* inspectorTrack = actionTrack();
-        inspector.setText(inspectorTrack ? "INSPECTOR\n\n" + inspectorTrack->getName()
-            : "INSPECTOR\n\nSelect a track", ju::dontSendNotification);
-        inspectorButtons[0]->setEnabled(editingStopped() && inspectorTrack);
-        inspectorButtons[1]->setEnabled(editingStopped() && inspectorTrack && canApplyInspectorSettings(*inspectorTrack));
         if (edit)
         {
             std::erase_if(actionSelection.clips, [this](auto id) { return !te::findClipForID(*edit, id); });
@@ -3108,6 +3174,23 @@ private:
         const auto active = activeEditingArea();
         if (actionSelection.requestedArea && actionSelection.requestedArea != active)
             actionSelection.requestedArea = active;
+        if (active != EditingArea::inspector)
+            inspectorContext = active;
+
+        ju::String description;
+        auto* inspectorTrack = inspectorContext == EditingArea::tracks ? actionTrack() : nullptr;
+        if (inspectorTrack)
+            description = inspectorTrack->getName();
+        else if (inspectorContext == EditingArea::timeline)
+        {
+            if (auto* clip = selectedClip())
+                description = clip->getName();
+            else if (!actionSelection.clips.empty())
+                description = ju::String(static_cast<int>(actionSelection.clips.size())) + " clips selected";
+        }
+        inspector.setText(description.isEmpty() ? "INSPECTOR" : "INSPECTOR\n\n" + description, ju::dontSendNotification);
+        inspectorButtons[0]->setEnabled(editingStopped() && inspectorTrack);
+        inspectorButtons[1]->setEnabled(editingStopped() && inspectorTrack && canApplyInspectorSettings(*inspectorTrack));
         inspector.setActive(edit && active == EditingArea::inspector);
         workspace.setActive(edit && active == EditingArea::window);
         for (const auto& slot : actionButtons)
@@ -3188,6 +3271,7 @@ private:
     std::array<ActionGroup, 4> actionGroups;
     std::vector<ActionButton> actionButtons;
     ActionSelection actionSelection;
+    EditingArea inspectorContext = EditingArea::timeline;
     std::unique_ptr<te::Clipboard::Clips> clipClipboard;
     std::optional<TrackSnapshot> trackClipboard;
     std::optional<TrackSettings> inspectorClipboard;
