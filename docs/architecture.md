@@ -12,18 +12,20 @@ The Windows CTest runs the executable in smoke-test mode. It generates a short i
 
 ## Universal Actions Toolbar
 
-The v0.22.1 toolbar displays a fixed action inventory independently of transport. Each action button checks the same dispatcher used by Edit menu Copy, Paste and clip Delete. Edit menu Undo and Redo use the project's Tracktion UndoManager. The existing Delete shortcut also clears the Timeline ruler range when the Timeline has focus and its clip selection is empty.
+The four fixed 2×2 action groups use the same dispatcher as the Edit menu. The global UNDO and REDO buttons use the project's Tracktion UndoManager through the same history handler as the menu. Both are available independently of editing area while transport is stopped. The Delete shortcut also clears the ruler range when the Timeline has focus and its clip selection is empty.
 
-The dispatcher resolves the most recently clicked editing area. If it closes, fallback checks available selected areas in priority order (editing windows, Inspector, Timeline, Tracks), then defaults to Timeline. The Inspector and read-only Effects workspace can take focus. Only the Timeline and Tracks surfaces currently supply selected object IDs. Clicking or box-selecting in either leaves the other selection intact. Left boxes replace selection and intersect visible objects. The existing single-clip drag and ruler range remain available. The Tracks area also preserves the application's primary track destination for existing Insert commands.
+The dispatcher resolves the most recently clicked editing area. If it closes, fallback checks available selected areas in priority order (editing windows, Inspector, Timeline, Tracks), then defaults to Timeline. The Inspector and read-only Effects workspace can take focus. Only the Timeline and Tracks surfaces currently supply selected object IDs. Timeline supports clip box selection and preserves the separate single-track selection. Track header clicks never build a group. The existing single-clip drag and ruler range remain available. The Tracks area also preserves the application's primary track destination for existing Insert commands.
 
-| UAT action | v0.22.1 availability |
+| Action | v0.22.2 availability |
 | --- | --- |
-| Copy | One ordinary, unlinked audio or MIDI clip in Timeline while stopped. Uses a project-local Tracktion clipboard snapshot. |
-| Paste | A clipboard snapshot and a destination in Timeline while stopped, with at most one selected clip. Uses the snapped edit cursor, or the exact cursor with snap off, and selects the new clip. Both SimpleDAW track menu types create Tracktion audio tracks, which can host WAV and MIDI clips. |
-| Delete | One Timeline clip while stopped. Non-ripple removal uses the existing missing-audio confirmation and one undo transaction. |
-| Create | Deferred until generic creation semantics are supported. Existing explicit Insert commands remain available. |
-| Move and Size | Deferred. Existing single-clip mouse movement stays available. |
-| Split and Trim | Deferred until timeline structural editing is implemented. |
-| Reserved MODIFY positions | Disabled and unassigned. |
+| CUT / COPY / PASTE | Timeline WAV and MIDI clips while stopped. Clipboard data is project-local. Paste starts at the snapped or exact cursor on the destination lane and preserves group start offsets and visible lane gaps. MIDI and tempo-synced lengths keep their beat durations. Both track menu types create Tracktion audio tracks that accept WAV and MIDI. Paste requires existing usable lanes and selects all pasted clips. Cut and Paste are separate transactions. |
+| DELETE | Selected clips are removed without ripple. Missing audio and track deletion require confirmation. Track deletion uses Tracktion's track removal and routing cleanup. |
+| MOVE | Clips move one existing audio lane vertically or one grid step horizontally. Timing and lane spacing are preserved. The selected track moves one row among siblings. |
+| SIZE | With one clip selected, START and END each move earlier with − and later with +. START updates the source offset to keep source alignment. Invalid bounds, missing media, loops, multi-take clips and unsupported audio modes reject the step. |
+| MODIFY | SPLIT, TRIM and the two reserved positions remain disabled. |
 
-Advanced multiselection edits, additive right-drag boxes, track operations, editor object selection, punch and take work are outside this phase. See the [approved decisions](specifications/v0.22-design-decisions-reviews-01-82.md) and [Windows live checklist](testing/v0.22.1-live-test.md).
+Clip and track actions resolve all selected IDs and preflight their destinations or bounds before mutation. Each edit has one history transaction. Horizontal MOVE applies the same time delta to every selected clip. SIZE requires one clip. Snap On uses one selected grid division at the earliest affected boundary. Snap Off uses exactly 10 ms per press regardless of tempo. All four SIZE buttons are disabled with Tracks active. The existing MIN/MAX control persists the track-height setting. [Approved decisions](specifications/v0.22-design-decisions-reviews-01-82.md) · [Windows live checklist](testing/v0.22.2-live-test.md)
+
+Track UAT COPY snapshots the complete track into a project-local clipboard. PASTE inserts the snapshot below the current selected track, remaps object IDs, preserves compatible input assignment and arm state, and creates a unique name. The source and insertion anchor are independent. At 24 tracks or when the original input cannot be duplicated faithfully, paste leaves the Edit intact.
+
+Inspector COPY SETTINGS / APPLY SETTINGS uses a separate project-local snapshot. It transfers mixer values, effects and output routing. Existing input, arm, monitoring, name, color, height, clips, mute and solo are preserved. Compatible destination automation follows matching effect identities and parameter IDs. Repeated effects match by occurrence when their counts agree. A missing automation target or feedback route rejects the apply before mutation.
