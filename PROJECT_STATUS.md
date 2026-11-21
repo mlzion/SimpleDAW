@@ -6,6 +6,10 @@ v0.22.1 replaces the Edit toolbar with the permanent EDIT, MOVE, SIZE and MODIFY
 
 User-reported Windows live acceptance is complete with 45 PASS, 0 PARTIAL, 0 FAIL and 0 UNTESTED across the grouped acceptance checks. The record identifies individual checklist subconditions that were not independently verified. Editing the boundaries of an existing ruler time selection remains a carry-forward usability item. CREATE, MOVE, SIZE, SPLIT, TRIM and reserved positions are disabled. Advanced multiselection edits, unfinished editor functionality and recording/take changes are deferred. [Architecture and action availability](docs/architecture.md#universal-actions-toolbar) · [Windows live acceptance record](docs/testing/v0.22.1-live-test.md)
 
+## v0.22.2 — next planned phase (design approved; not implemented)
+
+The v0.22.1 UAT foundation has merged in PR #6. For v0.22.2, replace disabled UAT CREATE with CUT in the EDIT group; restore permanently visible global Undo and Redo beside the UAT. Narrow UAT buttons as needed (up to 80% width reduction, not mandatory) while retaining height, legibility, and usability at the minimum supported window width. Keep the four 2×2 UAT groups unchanged. Preserve Insert-menu creation for now; large circular + buttons at the Tracks header and Timeline are approved as a future design direction, not v0.22.2 implementation. Duplicate/Clone/Loop remain Inspector Clip Actions. Loop/time-range boundary editing is a separate carry-forward usability item. [Approved handoff](docs/specifications/v0.22-design-decisions-reviews-01-82.md#v0222-toolbar-and-creation-controls-handoff--accepted-2026-11-20)
+
 ## Current development
 
 Phase 1 audio engine and repository documentation have merged into main. The v0.21 Main GUI Foundation merged in PR #3 after user-reported Windows live acceptance (2026-11-20), with documented deferrals. [Phase 1 PR #1](https://github.com/mlzion/SimpleDAW/pull/1) · [Repository documentation PR #2](https://github.com/mlzion/SimpleDAW/pull/2)
