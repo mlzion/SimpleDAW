@@ -11,6 +11,8 @@
 namespace te = tracktion;
 namespace ju = juce;
 
+bool runEffectsFoundationTest(te::Engine&);
+
 namespace
 {
 constexpr int maxTracks = 24;
@@ -526,7 +528,8 @@ public:
             return;
 
         const bool testing = command == "--smoke-test" || command == "--gui-test"
-            || command == "--correction-test" || command == "--uat-test";
+            || command == "--correction-test" || command == "--uat-test"
+            || command == "--effects-foundation-test";
         std::unique_ptr<te::EngineBehaviour> engineBehaviour;
         if (testing)
             engineBehaviour = std::make_unique<SmokeTestEngineBehaviour>();
@@ -541,6 +544,8 @@ public:
                 passed = MainGui::testCorrections(*engine);
             else if (command == "--uat-test")
                 passed = MainGui::testUniversalActions(*engine);
+            else if (command == "--effects-foundation-test")
+                passed = runEffectsFoundationTest(*engine);
             else
                 passed = smokeTest(*engine);
             setApplicationReturnValue(passed ? 0 : 1);
