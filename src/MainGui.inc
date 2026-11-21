@@ -570,7 +570,7 @@ public:
         click({ 30, rowY(1) }, true);
         if (!check(gui.activeEditingArea() == EditingArea::tracks && gui.actionSelection.tracks.size() == 2
                 && gui.actionSelection.clips.size() == 2 && gui.canDispatch(Action::remove)
-                && !gui.canDispatch(Action::copy), "separate track focus and selection"))
+                && gui.canDispatch(Action::copy), "separate track focus and selection"))
             return false;
         const auto trackFrom = ju::Point<int>(20, rulerHeight + 1);
         const auto trackTo = ju::Point<int>(70, rowY(1));
@@ -775,8 +775,81 @@ public:
                     return false;
             }
         }
+        gui.actionSelection.requestedArea = EditingArea::tracks;
+        auto* third = gui.trackAt(2);
+        auto* fourth = gui.trackAt(3);
+        first->getVolumePlugin()->setVolumeDb(-6.0f);
+        first->getVolumePlugin()->setPan(0.25f);
+        third->getVolumePlugin()->setVolumeDb(-12.0f);
+        const auto nearSetting = [](double actual, double expected) { return std::abs(actual - expected) < 0.0001; };
+        const auto secondBefore = second->getVolumePlugin()->getVolumeDb();
+        const auto fourthBefore = fourth->getVolumePlugin()->getVolumeDb();
+        gui.actionSelection.tracks = { third->itemID, first->itemID };
+        gui.dispatchAction(Action::copy);
+        gui.actionSelection.tracks = { fourth->itemID };
+        if (!check(!gui.canDispatch(Action::paste) && !gui.canDispatch(Action::cut),
+                   "unequal track selections reject paste and track CUT is disabled"))
+            return false;
+        gui.dispatchAction(Action::paste);
+        if (!check(nearSetting(fourth->getVolumePlugin()->getVolumeDb(), fourthBefore), "rejected paste leaves settings intact"))
+            return false;
+
+        gui.actionSelection.tracks = { fourth->itemID, second->itemID };
+        gui.dispatchAction(Action::paste);
+        if (!check(nearSetting(second->getVolumePlugin()->getVolumeDb(), -6.0)
+                && nearSetting(fourth->getVolumePlugin()->getVolumeDb(), -12.0),
+                   "track settings pair in top-to-bottom order"))
+            return false;
+        gui.useHistory(false);
+        if (!check(nearSetting(second->getVolumePlugin()->getVolumeDb(), secondBefore)
+                && nearSetting(fourth->getVolumePlugin()->getVolumeDb(), fourthBefore),
+                   "one undo restores all pasted track settings"))
+            return false;
+        gui.useHistory(true);
+        if (!check(nearSetting(fourth->getVolumePlugin()->getVolumeDb(), -12.0), "one redo restores the paired paste"))
+            return false;
+
+        first->getOutput().setOutputToTrack(third);
+        gui.actionSelection.tracks = { first->itemID };
+        gui.dispatchAction(Action::copy);
+        gui.actionSelection.tracks = { second->itemID, fourth->itemID };
+        if (!check(gui.canDispatch(Action::paste), "one source can paste to multiple tracks"))
+            return false;
+        gui.dispatchAction(Action::paste);
+        if (!check(nearSetting(second->getVolumePlugin()->getPan(), 0.25) && nearSetting(fourth->getVolumePlugin()->getPan(), 0.25)
+                && second->getOutput().getDestinationTrack() == third && fourth->getOutput().getDestinationTrack() == third
+                && te::findClipForID(*gui.edit, audioID) != nullptr && !fourth->getClips().isEmpty(),
+                   "one source applies pan and output routing without replacing destination clips"))
+            return false;
+
+        if (!check(insertBuiltIn<te::ReverbPlugin>(*fourth), "create destination effect automation fixture"))
+            return false;
+        auto* effect = fourth->pluginList.findFirstPluginOfType<te::ReverbPlugin>();
+        auto* parameter = effect->getAutomatableParameters().getFirst();
+        if (!check(parameter != nullptr, "reverb has an automatable parameter"))
+            return false;
+        parameter->getCurve().addPoint(te::TimePosition::fromSeconds(1.0), 0.5f, 0.0f);
+        second->getVolumePlugin()->setPan(-0.25f);
+        gui.dispatchAction(Action::paste);
+        if (!check(nearSetting(second->getVolumePlugin()->getPan(), -0.25)
+                && fourth->pluginList.findFirstPluginOfType<te::ReverbPlugin>() == effect
+                && parameter->hasAutomationPoints(), "one incompatible automation target rejects the entire paste"))
+            return false;
+
+        if (!check(insertBuiltIn<te::ReverbPlugin>(*first), "create source effect for compatible automation"))
+            return false;
+        gui.actionSelection.tracks = { first->itemID };
+        gui.dispatchAction(Action::copy);
+        gui.actionSelection.tracks = { fourth->itemID };
+        gui.dispatchAction(Action::paste);
+        auto* replacementEffect = fourth->pluginList.findFirstPluginOfType<te::ReverbPlugin>();
+        if (!check(replacementEffect && replacementEffect != effect
+                && replacementEffect->getAutomatableParameters().getFirst()->hasAutomationPoints(),
+                   "compatible effects preserve destination automation"))
+            return false;
+
         gui.setProject(te::createEmptyEdit(engine, project), project);
-        return check(!gui.clipClipboard && gui.actionSelection.clips.empty(), "opening a project clears clipboard and selection");
+        return check(!gui.clipClipboard && gui.trackClipboard.empty() && gui.actionSelection.clips.empty(), "opening a project clears clipboard and selection");
     }
 
     static bool testCorrections(te::Engine& engine)
@@ -973,6 +1046,22 @@ private:
             return false;
         if (toggleInput(input, first).failed() || isArmed(input, first.itemID)
             || !isArmed(input, second.itemID) || toggleInput(input, first).failed())
+            return false;
+        using Action = UniversalAction;
+        if (toggleInput(input, second).failed())
+            return false;
+        gui.actionSelection.requestedArea = EditingArea::tracks;
+        gui.actionSelection.tracks = { first.itemID };
+        gui.dispatchAction(Action::copy);
+        gui.actionSelection.tracks = { second.itemID };
+        gui.dispatchAction(Action::paste);
+        if (!isArmed(input, first.itemID) || !isArmed(input, second.itemID))
+            return false;
+        gui.useHistory(false);
+        if (!isArmed(input, first.itemID) || isArmed(input, second.itemID))
+            return false;
+        gui.useHistory(true);
+        if (!isArmed(input, first.itemID) || !isArmed(input, second.itemID))
             return false;
         auto* firstMeterPlugin = first.getLevelMeterPlugin();
         auto* secondMeterPlugin = second.getLevelMeterPlugin();
@@ -1629,6 +1718,283 @@ private:
         return remaining;
     }
 
+    struct TrackInputSetting
+    {
+        ju::ValueTree device, assignment;
+    };
+
+    struct TrackSettings
+    {
+        std::vector<ju::ValueTree> plugins;
+        std::vector<TrackInputSetting> inputs;
+        te::EditItemID outputTrack;
+        ju::String outputDevice;
+    };
+
+    std::vector<te::AudioTrack*> selectedSettingsTracks() const
+    {
+        std::vector<te::AudioTrack*> tracks;
+        for (auto* track : te::getAudioTracks(*edit))
+            if (actionSelection.tracks.contains(track->itemID))
+                tracks.push_back(track);
+        if (tracks.size() != actionSelection.tracks.size())
+            return {};
+        return tracks;
+    }
+
+    std::vector<TrackInputSetting> inputSettings(te::EditItemID target) const
+    {
+        std::vector<TrackInputSetting> inputs;
+        for (auto device : edit->state.getChildWithName(te::IDs::INPUTDEVICES))
+            for (auto assignment : device)
+                if (assignment.hasType(te::IDs::INPUTDEVICEDESTINATION)
+                    && te::EditItemID::fromProperty(assignment, te::IDs::targetID) == target)
+                    inputs.push_back({ device, assignment });
+        return inputs;
+    }
+
+    void copyTrackSettings(const std::vector<te::AudioTrack*>& tracks)
+    {
+        std::vector<TrackSettings> clipboard;
+        for (auto* track : tracks)
+        {
+            auto& settings = clipboard.emplace_back();
+            for (auto* plugin : track->pluginList)
+            {
+                plugin->flushPluginStateToValueTree();
+                auto state = plugin->state.createCopy();
+                te::AutomationCurve::removeAllAutomationCurvesRecursively(state);
+                state.removeChild(state.getChildWithName(te::IDs::MODIFIERASSIGNMENTS), nullptr);
+                state.removeProperty(te::IDs::masterPluginID, nullptr);
+                settings.plugins.push_back(state);
+            }
+            settings.inputs = inputSettings(track->itemID);
+            for (auto& input : settings.inputs)
+                input.assignment = input.assignment.createCopy();
+            if (auto* output = track->getOutput().getDestinationTrack())
+                settings.outputTrack = output->itemID;
+            else
+                settings.outputDevice = track->getOutput().state[te::IDs::name].toString();
+        }
+        trackClipboard = std::move(clipboard);
+    }
+
+    bool trackPasteCountMatches(size_t destinations) const
+    {
+        return destinations != 0 && (trackClipboard.size() == 1 || destinations == trackClipboard.size());
+    }
+
+    struct TrackSettingsPaste
+    {
+        te::AudioTrack* track;
+        const TrackSettings* settings;
+        std::vector<te::Plugin::Ptr> plugins;
+        std::map<te::EditItemID, te::EditItemID> replacedPlugins;
+    };
+
+    bool validateTrackRouting(const std::vector<TrackSettingsPaste>& plan)
+    {
+        std::map<te::EditItemID, const TrackSettings*> replacements;
+        for (const auto& item : plan)
+            replacements.emplace(item.track->itemID, item.settings);
+
+        const auto devices = edit->state.getChildWithName(te::IDs::INPUTDEVICES);
+        if (std::any_of(plan.begin(), plan.end(), [](const auto& item) { return !item.settings->inputs.empty(); }))
+            edit->getTransport().ensureContextAllocated();
+        const auto inputInstances = edit->getAllInputDevices();
+        auto& manager = engine.getDeviceManager();
+        std::map<te::EditItemID, std::vector<te::EditItemID>> edges;
+        std::vector<ju::ValueTree> usedTrackInputs;
+
+        for (auto* track : te::getAudioTracks(*edit))
+        {
+            const auto replacement = replacements.find(track->itemID);
+            const auto* settings = replacement == replacements.end() ? nullptr : replacement->second;
+            if (settings && settings->outputTrack.isValid() && !trackForID(settings->outputTrack))
+                return false;
+            if (settings && !settings->outputTrack.isValid() && settings->outputDevice.isNotEmpty()
+                && settings->outputDevice != te::DeviceManager::getDefaultAudioOutDeviceName(false)
+                && settings->outputDevice != te::DeviceManager::getDefaultMidiOutDeviceName(false)
+                && !manager.findOutputDeviceForID(settings->outputDevice)
+                && !manager.findOutputDeviceWithName(settings->outputDevice))
+                return false;
+
+            if (auto* output = settings ? trackForID(settings->outputTrack) : track->getOutput().getDestinationTrack())
+                edges[track->itemID].push_back(output->itemID);
+
+            const auto inputs = settings ? settings->inputs : inputSettings(track->itemID);
+            if (settings && inputs.size() > static_cast<size_t>(edit->getEditInputDevices().getMaxNumInputs()))
+                return false;
+            for (const auto& input : inputs)
+            {
+                if (settings && (input.device.getParent() != devices
+                    || std::none_of(inputInstances.begin(), inputInstances.end(), [&](auto* instance) {
+                        return instance->state == input.device && !instance->isRecording();
+                    })))
+                    return false;
+                const auto source = te::EditItemID::fromProperty(input.device, te::IDs::sourceTrack);
+                if (source.isValid())
+                {
+                    if (settings && !trackForID(source))
+                        return false;
+                    if (std::find(usedTrackInputs.begin(), usedTrackInputs.end(), input.device) != usedTrackInputs.end())
+                        return false;
+                    usedTrackInputs.push_back(input.device);
+                    edges[source].push_back(track->itemID);
+                }
+            }
+        }
+        // Validate the final combined graph, including routes between destinations in this paste.
+        std::set<te::EditItemID> visiting, finished;
+        const auto acyclic = [&](auto&& visit, te::EditItemID track) -> bool {
+            if (finished.contains(track))
+                return true;
+            if (!visiting.insert(track).second)
+                return false;
+            for (auto next : edges[track])
+                if (!visit(visit, next))
+                    return false;
+            visiting.erase(track);
+            finished.insert(track);
+            return true;
+        };
+        return std::all_of(edges.begin(), edges.end(), [&](const auto& edge) { return acyclic(acyclic, edge.first); });
+    }
+
+    bool prepareTrackPlugins(TrackSettingsPaste& item)
+    {
+        const auto& oldPlugins = item.track->pluginList;
+        if (item.track->isFrozen(te::Track::anyFreeze)
+            || item.settings->plugins.size() > static_cast<size_t>(engine.getEngineBehaviour().getEditLimits().maxPluginsOnTrack))
+            return false;
+
+        std::map<te::EditItemID, te::EditItemID> ids;
+        for (const auto& snapshot : item.settings->plugins)
+        {
+            auto state = snapshot.createCopy();
+            te::EditItemID::remapIDs(state, nullptr, *edit, &ids);
+            auto plugin = edit->getPluginCache().getOrCreatePluginFor(state);
+            if (!plugin || plugin->isMissing() || !item.track->canContainPlugin(plugin.get()))
+                return false;
+            const auto sidechain = plugin->getSidechainSourceID();
+            if (sidechain.isValid() && (!trackForID(sidechain) || sidechain == item.track->itemID))
+                return false;
+            item.plugins.push_back(plugin);
+        }
+
+        for (int index = 0; index < oldPlugins.size(); ++index)
+        {
+            auto* old = oldPlugins[index];
+            const auto matches = [old](te::Plugin* candidate) {
+                return old->getPluginType() == candidate->getPluginType()
+                    && old->getIdentifierString() == candidate->getIdentifierString();
+            };
+            const auto before = std::count_if(oldPlugins.begin(), oldPlugins.begin() + index, matches);
+            const auto count = std::count_if(oldPlugins.begin(), oldPlugins.end(), matches);
+            std::vector<te::Plugin*> candidates;
+            for (const auto& plugin : item.plugins)
+                if (matches(plugin.get()))
+                    candidates.push_back(plugin.get());
+            // Repeated effects are paired by occurrence only when the pairing is unambiguous.
+            auto* replacement = candidates.size() == static_cast<size_t>(count) ? candidates[size_t(before)] : nullptr;
+            auto state = replacement ? replacement->state : ju::ValueTree{};
+
+            // Parameter IDs and ranges must agree before carrying automation into a new effect.
+            for (auto child : old->state)
+            {
+                if (child.hasType(te::IDs::AUTOMATIONCURVE))
+                {
+                    const auto parameters = old->getAutomatableParameters();
+                    const auto previous = std::find_if(parameters.begin(), parameters.end(),
+                        [&child](const auto* parameter) { return parameter->getCurve().state == child; });
+                    if (previous == parameters.end() || !replacement)
+                        return false;
+                    auto next = replacement->getAutomatableParameterByID((*previous)->paramID);
+                    if (!next || (*previous)->getValueRange() != next->getValueRange())
+                        return false;
+                    auto curve = child.createCopy();
+                    // Tracktion's child-added listener uses the name to bind a replacement curve.
+                    curve.setProperty(te::IDs::name, next->paramID, nullptr);
+                    state.addChild(curve, -1, nullptr);
+                    next->curveHasChanged();
+                }
+                if (child.hasType(te::IDs::MODIFIERASSIGNMENTS) && child.getNumChildren() > 0)
+                {
+                    for (auto assignment : child)
+                        if (!replacement || !replacement->getAutomatableParameterByID(assignment[te::IDs::paramID].toString()))
+                            return false;
+                    state.getOrCreateChildWithName(te::IDs::MODIFIERASSIGNMENTS, nullptr)
+                        .copyPropertiesAndChildrenFrom(child, nullptr);
+                }
+            }
+            for (auto* track : te::getAllTracks(*edit))
+            {
+                if (te::EditItemID::fromProperty(track->state, te::IDs::currentAutoParamPluginID) != old->itemID)
+                    continue;
+                if (!replacement || !replacement->getAutomatableParameterByID(track->state[te::IDs::currentAutoParamTag].toString()))
+                    return false;
+                item.replacedPlugins.emplace(old->itemID, replacement->itemID);
+            }
+        }
+        return true;
+    }
+
+    void pasteTrackSettings(const std::vector<te::AudioTrack*>& tracks)
+    {
+        std::vector<TrackSettingsPaste> plan;
+        for (size_t index = 0; index < tracks.size(); ++index)
+            plan.push_back({ tracks[index], &trackClipboard[trackClipboard.size() == 1 ? 0 : index], {}, {} });
+        if (!validateTrackRouting(plan) || !std::all_of(plan.begin(), plan.end(), [this](auto& item) {
+                return prepareTrackPlugins(item);
+            }))
+        {
+            report("Track settings are incompatible with the selection");
+            return;
+        }
+
+        auto& history = edit->getUndoManager();
+        history.beginNewTransaction("Paste track settings");
+        // Disconnect destinations before reconnecting so intermediate routes cannot form a loop.
+        for (const auto& item : plan)
+        {
+            for (auto input : inputSettings(item.track->itemID))
+                input.device.removeChild(input.assignment, &history);
+            item.track->getOutput().setOutputToDefaultDevice(false);
+        }
+        for (const auto& item : plan)
+        {
+            auto& list = item.track->pluginList;
+            for (auto plugin : list.getPlugins())
+                plugin->removeFromParent();
+            for (const auto& plugin : item.plugins)
+                if (!list.insertPlugin(plugin->state, -1))
+                {
+                    history.undoCurrentTransactionOnly();
+                    edit->restartPlayback();
+                    report("Could not paste track settings");
+                    return;
+                }
+            for (auto* track : te::getAllTracks(*edit))
+            {
+                auto state = track->state;
+                const auto id = te::EditItemID::fromProperty(state, te::IDs::currentAutoParamPluginID);
+                if (const auto replacement = item.replacedPlugins.find(id); replacement != item.replacedPlugins.end())
+                    state.setProperty(te::IDs::currentAutoParamPluginID, replacement->second, &history);
+            }
+            if (auto* output = trackForID(item.settings->outputTrack))
+                item.track->getOutput().setOutputToTrack(output);
+            else
+                item.track->getOutput().setOutputToDeviceID(item.settings->outputDevice);
+            for (auto input : item.settings->inputs)
+            {
+                auto assignment = input.assignment.createCopy();
+                assignment.setProperty(te::IDs::targetID, item.track->itemID, nullptr);
+                input.device.addChild(assignment, -1, &history);
+            }
+        }
+        edit->restartPlayback();
+    }
+
     bool canDispatch(UniversalAction action) const
     {
         using Action = UniversalAction;
@@ -1636,6 +2002,10 @@ private:
             return false;
         if (activeEditingArea() == EditingArea::tracks)
         {
+            if (action == Action::copy)
+                return !selectedSettingsTracks().empty();
+            if (action == Action::paste)
+                return trackPasteCountMatches(selectedSettingsTracks().size());
             if (action == Action::remove)
                 return !actionSelection.tracks.empty()
                     && std::all_of(actionSelection.tracks.begin(), actionSelection.tracks.end(),
@@ -1704,9 +2074,19 @@ private:
         if (action == Action::remove || action == Action::cut)
             deleteSelection(tracks, action == Action::cut);
         else if (action == Action::copy)
-            snapshotClips(selectedClips());
+        {
+            if (tracks)
+                copyTrackSettings(selectedSettingsTracks());
+            else
+                snapshotClips(selectedClips());
+        }
         else if (action == Action::paste)
-            pasteClips(pastePlan());
+        {
+            if (tracks)
+                pasteTrackSettings(selectedSettingsTracks());
+            else
+                pasteClips(pastePlan());
+        }
         else if (tracks)
         {
             const auto order = trackOrder(action);
@@ -1807,6 +2187,7 @@ private:
         if (auto* track = trackAt(selection))
             actionSelection.tracks.insert(track->itemID);
         clipClipboard.reset();
+        trackClipboard.clear();
         boxAnchor.reset();
         selectionBox = {};
         dragItem = {};
@@ -2757,6 +3138,7 @@ private:
     std::vector<ActionButton> actionButtons;
     ActionSelection actionSelection;
     std::unique_ptr<te::Clipboard::Clips> clipClipboard;
+    std::vector<TrackSettings> trackClipboard;
     std::map<te::EditItemID, std::unique_ptr<Meter>> meters;
     te::EditItemID dragItem;
     std::optional<ju::Point<int>> boxAnchor;
