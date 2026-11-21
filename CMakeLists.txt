@@ -48,7 +48,7 @@ if(MSVC)
     endif()
 endif()
 juce_generate_juce_header(SimpleDAW)
-target_sources(SimpleDAW PRIVATE src/Main.cpp)
+target_sources(SimpleDAW PRIVATE src/Main.cpp tests/EffectsFoundation.cpp)
 target_compile_features(SimpleDAW PRIVATE cxx_std_20)
 target_compile_definitions(SimpleDAW PRIVATE
     SIMPLEDAW_RELEASE_VERSION="${SIMPLEDAW_RELEASE_VERSION}"
@@ -75,5 +75,7 @@ if(BUILD_TESTING)
     add_test(NAME main_gui COMMAND SimpleDAW --gui-test)
     add_test(NAME gui_corrections COMMAND SimpleDAW --correction-test)
     add_test(NAME universal_actions COMMAND SimpleDAW --uat-test)
-    set_tests_properties(project_round_trip main_gui gui_corrections universal_actions PROPERTIES TIMEOUT 60)
+    add_test(NAME effects_foundation COMMAND SimpleDAW --effects-foundation-test)
+    set_tests_properties(project_round_trip main_gui gui_corrections universal_actions effects_foundation
+        PROPERTIES TIMEOUT 60)
 endif()
