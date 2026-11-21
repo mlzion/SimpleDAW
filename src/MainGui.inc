@@ -510,6 +510,7 @@ public:
         if (!check(midi && writeTestWave(audio) && insertAudio(*second, audio, seconds(3)), "create MIDI and WAV"))
             return false;
         const auto midiID = midi->itemID;
+        midi = nullptr; // The test replaces the Edit, so keep only the fixture's ID.
         const auto audioID = second->getClips().getFirst()->itemID;
         gui.updateControls();
         if (!check(gui.actionButtons.size() == 16 && std::none_of(gui.actionButtons.begin(), gui.actionButtons.end(),
@@ -567,7 +568,7 @@ public:
 
         click(midiPoint);
         gui.dispatchAction(Action::copy);
-        if (!check(gui.selectedClip() == midi.get() && gui.canDispatch(Action::paste), "copy retains selection"))
+        if (!check(gui.actionSelection.clips == ItemSelection { midiID } && gui.canDispatch(Action::paste), "copy retains selection"))
             return false;
         gui.mouseDown(mouse(gui.inspector, { 10, 10 }, ju::ModifierKeys::leftButtonModifier, { 10, 10 }));
         if (!check(gui.activeEditingArea() == EditingArea::inspector && !gui.canDispatch(Action::paste),
@@ -580,7 +581,7 @@ public:
             return false;
         gui.panels.workspaceOpen = false;
         gui.saveLayout();
-        if (!check(gui.activeEditingArea() == EditingArea::timeline && gui.selectedClip() == midi.get(),
+        if (!check(gui.activeEditingArea() == EditingArea::timeline && gui.actionSelection.clips == ItemSelection { midiID },
                    "hiding Effects falls back to Timeline before Tracks"))
             return false;
         gui.panels.workspaceOpen = true;
