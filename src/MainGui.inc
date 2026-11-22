@@ -6,7 +6,7 @@
         newProject = 100, openProject, saveProject, saveProjectAs, importAudio, exportAudio, exitApp,
         undo, redo, cut, copy, paste, duplicate, deleteItem,
         audioTrack, midiTrack, midiItem, devices, about, armAudio, armMidi, synth, reverb, vst3,
-        audioFile, locateFile, monitoringReport, playStop, startRecording
+        locateFile, monitoringReport, playStop, startRecording, importMidiFile
     };
 
     enum class EditingArea { window, inspector, timeline, tracks };
@@ -353,6 +353,123 @@ public:
         inspector.setInterceptsMouseClicks(true, true);
         for (auto* control : inspectorButtons)
             inspector.addAndMakeVisible(control);
+        button(clipInspectorButtons, "DUPLICATE", [this] { duplicateInspectedClip(); });
+        for (auto* control : clipInspectorButtons)
+            inspector.addChildComponent(control);
+        inspector.addChildComponent(inspectorName);
+        inspectorName.setEditable(true);
+        inspectorName.onEditorShow = [this] {
+            actionSelection.requestedArea = EditingArea::inspector;
+            updateControls();
+        };
+        inspectorName.onTextChange = [this] {
+            if (!editingStopped())
+                return;
+            const auto name = inspectorName.getText().trim();
+            if (name.isEmpty())
+            {
+                updateControls();
+                return;
+            }
+            if (inspectorContext == EditingArea::tracks)
+            {
+                if (auto* track = actionTrack(); track && name != track->getName())
+                {
+                    edit->getUndoManager().beginNewTransaction("Rename track");
+                    track->setName(name);
+                }
+            }
+            else if (inspectorContext == EditingArea::timeline)
+            {
+                if (auto* clip = selectedClip(); clip && name != clip->getName())
+                {
+                    edit->getUndoManager().beginNewTransaction("Rename clip");
+                    clip->setName(name);
+                }
+            }
+            updateControls();
+        };
+        auto& mute = button(trackInspectorToggles, "MUTE", [this] {
+            if (auto* track = actionTrack())
+            {
+                edit->getUndoManager().beginNewTransaction("Mute track");
+                track->setMute(!track->isMuted(false));
+                updateControls();
+            }
+        });
+        auto& solo = button(trackInspectorToggles, "SOLO", [this] {
+            if (auto* track = actionTrack())
+            {
+                edit->getUndoManager().beginNewTransaction("Solo track");
+                track->setSolo(!track->isSolo(false));
+                updateControls();
+            }
+        });
+        inspector.addChildComponent(mute);
+        inspector.addChildComponent(solo);
+        for (auto* slider : { &inspectorVolume, &inspectorPan, &inspectorGain,
+                             &inspectorFadeIn, &inspectorFadeOut })
+        {
+            slider->setTextBoxStyle(ju::Slider::TextBoxRight, false, 76, 26);
+            slider->setChangeNotificationOnlyOnRelease(true);
+            inspector.addChildComponent(*slider);
+        }
+        inspectorVolume.setName("Track volume");
+        inspectorPan.setName("Track pan");
+        inspectorGain.setName("Clip gain");
+        inspectorFadeIn.setName("Fade in");
+        inspectorFadeOut.setName("Fade out");
+        for (auto* slider : { &inspectorVolume, &inspectorPan, &inspectorGain,
+                             &inspectorFadeIn, &inspectorFadeOut })
+            slider->setTooltip(slider->getName());
+        inspectorVolume.setSliderStyle(ju::Slider::LinearVertical);
+        inspectorVolume.setRange(-60, 6, 0.1);
+        inspectorVolume.setTextValueSuffix(" dB");
+        inspectorPan.setRange(-100, 100, 1);
+        inspectorPan.setDoubleClickReturnValue(true, 0);
+        inspectorPan.textFromValueFunction = [](double value) {
+            return value == 0 ? ju::String("Center")
+                : ju::String(value < 0 ? "L" : "R") + ju::String(static_cast<int>(std::abs(value)));
+        };
+        inspectorPan.valueFromTextFunction = [](const ju::String& text) {
+            const auto value = text.trim().toUpperCase();
+            if (value.startsWithChar('L'))
+                return -value.substring(1).getDoubleValue();
+            if (value.startsWithChar('R'))
+                return value.substring(1).getDoubleValue();
+            return value.getDoubleValue();
+        };
+        inspectorGain.setRange(-60, 24, 0.1);
+        inspectorGain.setTextValueSuffix(" dB");
+        inspectorGain.setDoubleClickReturnValue(true, 0);
+        for (auto* fade : { &inspectorFadeIn, &inspectorFadeOut })
+            fade->setTextValueSuffix(" s");
+        inspectorVolume.onValueChange = [this] {
+            if (auto* track = actionTrack(); track && inspectorContext == EditingArea::tracks)
+                if (auto* plugin = track->getVolumePlugin())
+                {
+                    edit->getUndoManager().beginNewTransaction("Track volume");
+                    plugin->setVolumeDb(static_cast<float>(inspectorVolume.getValue()));
+                }
+        };
+        inspectorPan.onValueChange = [this] {
+            if (auto* track = actionTrack(); track && inspectorContext == EditingArea::tracks)
+                if (auto* plugin = track->getVolumePlugin())
+                {
+                    edit->getUndoManager().beginNewTransaction("Track pan");
+                    plugin->setPan(static_cast<float>(inspectorPan.getValue() / 100));
+                }
+        };
+        inspectorGain.onValueChange = [this] {
+            if (auto* clip = inspectedAudioClip())
+            {
+                edit->getUndoManager().beginNewTransaction("Clip gain");
+                clip->setGainDB(static_cast<float>(inspectorGain.getValue()));
+                updateControls();
+            }
+        };
+        inspectorFadeIn.onValueChange = [this] { setInspectorFade(true); };
+        inspectorFadeOut.onValueChange = [this] { setInspectorFade(false); };
         heightButton = &button(navigation, "MIN", [this] {
             panels.tallTracks = !panels.tallTracks;
             saveLayout();
@@ -435,12 +552,21 @@ public:
         {
             inspector.setBounds(area.removeFromRight(ju::jmin(panels.inspectorWidth, maxInspector())));
             inspectorDivider.setBounds(area.removeFromRight(8));
-            auto settingsArea = inspector.getLocalBounds().reduced(8).withTrimmedTop(56);
+            auto controls = inspector.getLocalBounds().reduced(8).withTrimmedTop(105);
+            inspectorName.setBounds(controls.removeFromTop(32));
+            controls.removeFromTop(4);
+            auto trackControls = controls;
+            auto toggles = trackControls.removeFromTop(38);
+            trackInspectorToggles[0]->setBounds(toggles.removeFromLeft(toggles.getWidth() / 2).reduced(2));
+            trackInspectorToggles[1]->setBounds(toggles.reduced(2));
+            inspectorVolume.setBounds(trackControls.removeFromTop(120));
+            inspectorPan.setBounds(trackControls.removeFromTop(36));
             for (auto* control : inspectorButtons)
-            {
-                control->setBounds(settingsArea.removeFromTop(36));
-                settingsArea.removeFromTop(4);
-            }
+                control->setBounds(trackControls.removeFromTop(36).reduced(2));
+            inspectorGain.setBounds(controls.removeFromTop(36));
+            inspectorFadeIn.setBounds(controls.removeFromTop(36));
+            inspectorFadeOut.setBounds(controls.removeFromTop(36));
+            clipInspectorButtons.front()->setBounds(controls.removeFromTop(36));
         }
 
         workspace.setVisible(panels.workspaceOpen);
@@ -950,6 +1076,75 @@ public:
         return check(!gui.clipClipboard && !gui.trackClipboard && !gui.inspectorClipboard && gui.actionSelection.clips.empty(),
                      "opening a project clears clipboard and selection")
             && testClipPlacementAndMinimum(gui, engine, project, audio, check);
+    }
+
+    static bool testMidiImport(te::Engine& engine)
+    {
+        auto dir = ju::File::getSpecialLocation(ju::File::tempDirectory)
+            .getNonexistentChildFile("SimpleDAW-midi-import", {});
+        if (dir.createDirectory().failed())
+            return false;
+        const ju::ScopeGuard cleanup { [&] { dir.deleteRecursively(); } };
+        const auto project = dir.getChildFile("import.tracktionedit");
+        const auto file = dir.getChildFile("conductor.mid");
+        const auto writeMidi = [](const ju::File& target, bool multipleNotes) {
+            ju::MidiFile midi;
+            midi.setTicksPerQuarterNote(480);
+            ju::MidiMessageSequence conductor;
+            conductor.addEvent(ju::MidiMessage::tempoMetaEvent(1000000));
+            midi.addTrack(conductor);
+            ju::MidiMessageSequence notes;
+            notes.addEvent(ju::MidiMessage::noteOn(1, 64, static_cast<ju::uint8>(91)), 240);
+            notes.addEvent(ju::MidiMessage::noteOff(1, 64), 600);
+            midi.addTrack(notes);
+            if (multipleNotes)
+                midi.addTrack(notes);
+            ju::FileOutputStream stream(target);
+            return stream.openedOk() && midi.writeTo(stream, 1);
+        };
+        if (!writeMidi(file, false))
+            return false;
+
+        MainGui gui(engine, dir.getChildFile("gui.settings"));
+        gui.setProject(te::createEmptyEdit(engine, project), project);
+        gui.edit->ensureNumberOfAudioTracks(2);
+        auto* midiTrack = gui.trackAt(0);
+        auto* audioTrack = gui.trackAt(1);
+        midiTrack->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        audioTrack->state.setProperty(trackTypeProperty, "Audio", nullptr);
+        const auto start = te::TimePosition::fromSeconds(2.0);
+        const auto multiple = dir.getChildFile("multiple.mid");
+        if (!writeMidi(multiple, true)
+            || gui.importMidi(*audioTrack, file, start).wasOk()
+            || gui.importMidi(*midiTrack, multiple, start).wasOk()
+            || gui.importMidi(*midiTrack, dir.getChildFile("missing.mid"), start).wasOk()
+            || !midiTrack->getClips().isEmpty() || !audioTrack->getClips().isEmpty())
+            return false;
+
+        const auto bpm = gui.edit->tempoSequence.getTempoAt(start).getBpm();
+        if (gui.importMidi(*midiTrack, file, start).failed())
+            return false;
+        const auto id = gui.selectedClip()->itemID;
+        const auto verify = [&](te::Edit& editToCheck) {
+            auto* clip = dynamic_cast<te::MidiClip*>(te::findClipForID(editToCheck, id));
+            if (!clip || clip->getPosition().getStart() != start
+                || editToCheck.tempoSequence.getTempoAt(start).getBpm() != bpm)
+                return false;
+            const auto& notes = clip->getSequence().getNotes();
+            return notes.size() == 1 && notes[0]->getNoteNumber() == 64 && notes[0]->getVelocity() == 91
+                && notes[0]->getStartBeat().inBeats() == 0.5
+                && notes[0]->getLengthBeats().inBeats() == 0.75;
+        };
+        if (!verify(*gui.edit))
+            return false;
+        gui.useHistory(false);
+        if (!midiTrack->getClips().isEmpty())
+            return false;
+        gui.useHistory(true);
+        if (!verify(*gui.edit) || !gui.save())
+            return false;
+        auto reopened = te::loadEditFromFile(engine, project);
+        return reopened && verify(*reopened);
     }
 
     static bool testClipPlacementAndMinimum(MainGui& gui, te::Engine& engine, const ju::File& project,
@@ -1506,9 +1701,9 @@ private:
         };
         switch (index)
         {
-            case 0: add({ newProject, openProject, saveProject, saveProjectAs, importAudio, exportAudio, exitApp }); break;
+            case 0: add({ newProject, openProject, saveProject, saveProjectAs, importAudio, importMidiFile, exportAudio, exitApp }); break;
             case 1: add({ undo, redo, cut, copy, paste, duplicate, deleteItem, locateFile }); break;
-            case 2: add({ audioTrack, midiTrack, midiItem, audioFile, synth, reverb, vst3 }); break;
+            case 2: add({ audioTrack, midiTrack, midiItem, synth, reverb, vst3 }); break;
             case 3: add({ devices, armAudio, armMidi, monitoringReport }); break;
             case 4: add({ about }); break;
             default: break;
@@ -1521,7 +1716,7 @@ private:
 
     void getAllCommands(ju::Array<ju::CommandID>& list) override
     {
-        for (int id = newProject; id <= startRecording; ++id)
+        for (int id = newProject; id <= importMidiFile; ++id)
             list.add(id);
     }
 
@@ -1532,9 +1727,9 @@ private:
             "Undo", "Redo", "Cut", "Copy", "Paste", "Duplicate", "Delete",
             "Audio Track", "MIDI Track", "MIDI Item", "Audio and MIDI Devices", "About SimpleDAW",
             "Arm Audio Input", "Arm MIDI Input", "Add MIDI Synth", "Add Reverb", "Load VST3",
-            "Audio File", "Locate File", "Audio Monitoring Report", "Play / Stop", "Record"
+            "Locate File", "Audio Monitoring Report", "Play / Stop", "Record", "Import MIDI"
         };
-        if (id < newProject || id > startRecording)
+        if (id < newProject || id > importMidiFile)
         {
             info.setActive(false);
             return;
@@ -1559,7 +1754,8 @@ private:
                 break;
             case audioTrack: case midiTrack: info.setActive(stopped && canAddTrack()); break;
             case armAudio: info.setActive(edit && !edit->getTransport().isRecording() && hasTrack); break;
-            case midiItem: case audioFile: case importAudio: case armMidi: case synth: case reverb: case vst3:
+            case importMidiFile: info.setActive(stopped && actionTrack()); break;
+            case midiItem: case importAudio: case armMidi: case synth: case reverb: case vst3:
                 info.setActive(stopped && hasTrack); break;
             case playStop: case startRecording: info.setActive(edit != nullptr); break;
             default: break;
@@ -1590,7 +1786,8 @@ private:
             case openProject: chooseProject(false); break;
             case saveProject: save(); break;
             case saveProjectAs: saveAs(); break;
-            case audioFile: case importAudio: importWave(); break;
+            case importAudio: importWave(); break;
+            case importMidiFile: chooseMidiImport(); break;
             case exportAudio: exportProject(); break;
             case exitApp: ju::JUCEApplication::getInstance()->systemRequestedQuit(); break;
             case undo: useHistory(false); break;
@@ -1907,6 +2104,80 @@ private:
             }
         }
         actionSelection.clips = std::move(pasted);
+    }
+
+    te::AudioClipBase* inspectedAudioClip() const
+    {
+        return inspectorContext == EditingArea::timeline
+            ? dynamic_cast<te::AudioClipBase*>(selectedClip()) : nullptr;
+    }
+
+    void setInspectorFade(bool fadeIn)
+    {
+        auto* clip = inspectedAudioClip();
+        if (!editingStopped() || !clip || clip->isLooping())
+            return;
+        const auto opposite = fadeIn ? clip->getFadeOut() : clip->getFadeIn();
+        const auto remaining = std::max(0.0, (clip->getPosition().getLength() - opposite).inSeconds());
+        const auto requested = fadeIn ? inspectorFadeIn.getValue() : inspectorFadeOut.getValue();
+        const auto length = te::TimeDuration::fromSeconds(std::min(requested, remaining));
+        edit->getUndoManager().beginNewTransaction(fadeIn ? "Clip fade in" : "Clip fade out");
+        if (fadeIn)
+        {
+            clip->setFadeInType(te::AudioFadeCurve::linear);
+            clip->setFadeIn(length);
+        }
+        else
+        {
+            clip->setFadeOutType(te::AudioFadeCurve::linear);
+            clip->setFadeOut(length);
+        }
+        updateControls();
+    }
+
+    void duplicateInspectedClip()
+    {
+        if (!editingStopped() || inspectorContext != EditingArea::timeline)
+            return;
+        auto* source = selectedClip();
+        if (!source)
+            return;
+        auto* track = dynamic_cast<te::AudioTrack*>(source->getTrack());
+        if (!track)
+            return;
+        const auto type = dynamic_cast<te::MidiClip*>(source) ? TrackType::midi : TrackType::audio;
+        if (const auto error = placementError(type, *track); error.isNotEmpty())
+            return warnPlacement(error);
+
+        const auto position = source->getPosition();
+        auto length = position.getLength();
+        if (type == TrackType::midi)
+        {
+            auto& tempo = edit->tempoSequence;
+            const auto beats = tempo.toBeats(position.getEnd()) - tempo.toBeats(position.getStart());
+            length = tempo.toTime(tempo.toBeats(editCursor) + beats) - editCursor;
+        }
+        if (length <= te::TimeDuration{} || editCursor + length > te::Edit::getMaximumEditEnd())
+            return report("The duplicate would exceed the available timeline");
+
+        auto state = source->state.createCopy();
+        te::EditItemID::remapIDs(state, nullptr, *edit);
+        state.removeProperty(te::IDs::linkID, nullptr);
+        state.setProperty(te::IDs::start, editCursor.inSeconds(), nullptr);
+        state.setProperty(te::IDs::length, length.inSeconds(), nullptr);
+        auto& undo = edit->getUndoManager();
+        undo.beginNewTransaction("Duplicate clip");
+        if (auto* duplicateClip = track->insertClipWithState(state))
+        {
+            actionSelection.clips = { duplicateClip->itemID };
+            actionSelection.requestedArea = EditingArea::inspector;
+            updateControls();
+        }
+        else
+        {
+            undo.undoCurrentTransactionOnly();
+            report("Could not duplicate the clip");
+        }
     }
 
     std::vector<te::Clip*> selectedClips() const
@@ -3527,17 +3798,77 @@ private:
             inspectorContext = active;
 
         ju::String description;
+        ju::String inspectorDetails;
         auto* inspectorTrack = inspectorContext == EditingArea::tracks ? actionTrack() : nullptr;
+        auto* inspectorClip = inspectorContext == EditingArea::timeline ? selectedClip() : nullptr;
         if (inspectorTrack)
-            description = inspectorTrack->getName();
-        else if (inspectorContext == EditingArea::timeline)
         {
-            if (auto* clip = selectedClip())
-                description = clip->getName();
-            else if (!actionSelection.clips.empty())
-                description = ju::String(static_cast<int>(actionSelection.clips.size())) + " clips selected";
+            description = inspectorTrack->getName();
+            const auto row = te::getAudioTracks(*edit).indexOf(inspectorTrack) + 1;
+            const auto type = trackType(*inspectorTrack);
+            inspectorDetails = ju::String(row) + (type == TrackType::audio ? "A" : type == TrackType::midi ? "M" : "")
+                + "  " + trackTypeName(type);
         }
-        inspector.setText(description.isEmpty() ? "INSPECTOR" : "INSPECTOR\n\n" + description, ju::dontSendNotification);
+        else if (inspectorClip)
+        {
+            description = inspectorClip->getName();
+            const auto position = inspectorClip->getPosition();
+            inspectorDetails = dynamic_cast<te::MidiClip*>(inspectorClip) ? "MIDI" : "Audio";
+            if (auto* track = inspectorClip->getTrack())
+                inspectorDetails += "  " + track->getName();
+            inspectorDetails += "\nStart " + ju::String(position.getStart().inSeconds(), 3)
+                + " s\nLength " + ju::String(position.getLength().inSeconds(), 3) + " s";
+        }
+        else if (inspectorContext == EditingArea::timeline && !actionSelection.clips.empty())
+            inspectorDetails = ju::String(static_cast<int>(actionSelection.clips.size())) + " clips selected";
+        inspector.setText(inspectorDetails.isEmpty() ? "INSPECTOR" : "INSPECTOR\n\n" + inspectorDetails,
+                          ju::dontSendNotification);
+        const bool canEditInspector = editingStopped() && (inspectorTrack || inspectorClip);
+        inspectorName.setVisible(inspectorTrack || inspectorClip);
+        inspectorName.setEnabled(canEditInspector);
+        if (!inspectorName.isBeingEdited())
+            inspectorName.setText(description, ju::dontSendNotification);
+        for (auto* control : inspectorButtons)
+            control->setVisible(inspectorTrack != nullptr);
+        clipInspectorButtons.front()->setVisible(inspectorClip != nullptr);
+        clipInspectorButtons.front()->setEnabled(canEditInspector);
+        for (auto* control : trackInspectorToggles)
+            control->setVisible(inspectorTrack != nullptr);
+        auto* volume = inspectorTrack ? inspectorTrack->getVolumePlugin() : nullptr;
+        for (auto* control : { &inspectorVolume, &inspectorPan })
+            control->setVisible(volume != nullptr);
+        if (volume)
+        {
+            if (!inspectorVolume.isMouseButtonDown())
+                inspectorVolume.setValue(volume->getVolumeDb(), ju::dontSendNotification);
+            if (!inspectorPan.isMouseButtonDown())
+                inspectorPan.setValue(volume->getPan() * 100, ju::dontSendNotification);
+        }
+        if (inspectorTrack)
+        {
+            static_cast<ju::Button*>(trackInspectorToggles[0])->setToggleState(inspectorTrack->isMuted(false), ju::dontSendNotification);
+            static_cast<ju::Button*>(trackInspectorToggles[1])->setToggleState(inspectorTrack->isSolo(false), ju::dontSendNotification);
+        }
+        auto* audio = inspectedAudioClip();
+        for (auto* slider : { &inspectorGain, &inspectorFadeIn, &inspectorFadeOut })
+            slider->setVisible(audio != nullptr);
+        if (audio)
+        {
+            inspectorGain.setEnabled(canEditInspector);
+            if (!inspectorGain.isMouseButtonDown())
+                inspectorGain.setValue(audio->getGainDB(), ju::dontSendNotification);
+            const auto duration = audio->getPosition().getLength().inSeconds();
+            const auto syncFade = [&](ju::Slider& slider, te::TimeDuration fade, te::TimeDuration opposite) {
+                slider.setEnabled(canEditInspector && !audio->isLooping());
+                if (!slider.isMouseButtonDown())
+                {
+                    slider.setRange(0, std::max(0.001, duration - opposite.inSeconds()), 0.001);
+                    slider.setValue(fade.inSeconds(), ju::dontSendNotification);
+                }
+            };
+            syncFade(inspectorFadeIn, audio->getFadeIn(), audio->getFadeOut());
+            syncFade(inspectorFadeOut, audio->getFadeOut(), audio->getFadeIn());
+        }
         inspectorButtons[0]->setEnabled(editingStopped() && inspectorTrack);
         inspectorButtons[1]->setEnabled(editingStopped() && inspectorTrack && canApplyInspectorSettings(*inspectorTrack));
         inspector.setActive(edit && active == EditingArea::inspector);
@@ -3609,6 +3940,9 @@ private:
     Splitter inspectorDivider { *this, true }, workspaceDivider { *this, false };
     ju::Label position, status;
     AreaLabel inspector, workspace;
+    ju::Label inspectorName;
+    std::vector<ju::Component*> clipInspectorButtons, trackInspectorToggles;
+    ju::Slider inspectorVolume, inspectorPan, inspectorGain, inspectorFadeIn, inspectorFadeOut;
     ju::TooltipWindow tooltips { this };
     ju::TextEditor tempo;
     ju::ComboBox signature, recordMode, snap;

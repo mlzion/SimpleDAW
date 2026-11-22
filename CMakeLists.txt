@@ -76,6 +76,7 @@ if(BUILD_TESTING)
     add_test(NAME gui_corrections COMMAND SimpleDAW --correction-test)
     add_test(NAME universal_actions COMMAND SimpleDAW --uat-test)
     add_test(NAME effects_foundation COMMAND SimpleDAW --effects-foundation-test)
-    set_tests_properties(project_round_trip main_gui gui_corrections universal_actions effects_foundation
+    add_test(NAME midi_import COMMAND SimpleDAW --midi-import-test)
+    set_tests_properties(project_round_trip main_gui gui_corrections universal_actions effects_foundation midi_import
         PROPERTIES TIMEOUT 60)
 endif()

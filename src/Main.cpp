@@ -478,6 +478,98 @@ private:
             });
     }
 
+    ju::Result importMidi(te::AudioTrack& track, const ju::File& file, te::TimePosition start)
+    {
+        if (const auto error = placementError(TrackType::midi, track); error.isNotEmpty())
+            return ju::Result::fail(error);
+
+        ju::FileInputStream stream(file);
+        ju::MidiFile midi;
+        if (!stream.openedOk() || !midi.readFrom(stream, true))
+            return ju::Result::fail("Could not read the MIDI file");
+        const auto ticksPerBeat = midi.getTimeFormat();
+        if (ticksPerBeat <= 0)
+            return ju::Result::fail("MIDI import requires musical ticks per quarter note");
+
+        const ju::MidiMessageSequence* notes = nullptr;
+        for (int index = 0; index < midi.getNumTracks(); ++index)
+        {
+            const auto* sequence = midi.getTrack(index);
+            bool hasNotes = false;
+            for (const auto* event : *sequence)
+                if (event->message.isNoteOn())
+                {
+                    hasNotes = true;
+                    break;
+                }
+            if (!hasNotes)
+                continue;
+            if (notes)
+                return ju::Result::fail("The MIDI file has multiple note-bearing tracks");
+            notes = sequence;
+        }
+        if (!notes)
+            return ju::Result::fail("The MIDI file contains no notes");
+
+        const auto endTick = notes->getEndTime();
+        for (const auto* event : *notes)
+            if (event->message.isNoteOn()
+                && (!event->noteOffObject
+                    || event->noteOffObject->message.getTimeStamp() <= event->message.getTimeStamp()))
+                return ju::Result::fail("The MIDI track contains a note without a valid duration");
+
+        const auto startBeat = edit->tempoSequence.toBeats(start);
+        const auto end = edit->tempoSequence.toTime(startBeat + te::BeatDuration::fromBeats(endTick / ticksPerBeat));
+        if (start < te::TimePosition{} || end <= start || end > te::Edit::getMaximumEditEnd())
+            return ju::Result::fail("The MIDI clip would exceed the available timeline");
+
+        auto& undo = edit->getUndoManager();
+        undo.beginNewTransaction("Import MIDI");
+        auto clip = te::insertMIDIClip(track, file.getFileNameWithoutExtension(), { start, end });
+        if (!clip)
+            return ju::Result::fail("Could not create the MIDI clip");
+        for (const auto* event : *notes)
+        {
+            const auto& note = event->message;
+            if (!note.isNoteOn())
+                continue;
+            const auto tick = note.getTimeStamp();
+            const auto duration = event->noteOffObject->message.getTimeStamp() - tick;
+            clip->getSequence().addNote(note.getNoteNumber(), te::BeatPosition::fromBeats(tick / ticksPerBeat),
+                te::BeatDuration::fromBeats(duration / ticksPerBeat), note.getVelocity(), 0, &undo);
+        }
+        actionSelection.clips = { clip->itemID };
+        actionSelection.requestedArea = EditingArea::timeline;
+        edit->markAsChanged();
+        updateControls();
+        return ju::Result::ok();
+    }
+
+    void chooseMidiImport()
+    {
+        if (!ready())
+            return;
+        auto* track = actionTrack();
+        if (!track)
+            return report("Select a MIDI track first");
+        if (const auto error = placementError(TrackType::midi, *track); error.isNotEmpty())
+            return warnPlacement(error);
+        const auto trackID = track->itemID;
+        auto* project = edit.get();
+        const auto start = editCursor;
+        chooseFile("Import MIDI at the edit cursor", "*.mid;*.midi",
+            ju::FileBrowserComponent::openMode | ju::FileBrowserComponent::canSelectFiles,
+            [this, project, trackID, start](const ju::File& file) {
+                if (edit.get() != project || !ready())
+                    return;
+                if (auto* destination = te::findAudioTrackForID(*edit, trackID))
+                {
+                    const auto result = importMidi(*destination, file, start);
+                    report(result.wasOk() ? ju::String("MIDI imported") : result.getErrorMessage());
+                }
+            });
+    }
+
     void loadVst3()
     {
         if (!selectedTrack())
@@ -548,7 +640,7 @@ public:
 
         const bool testing = command == "--smoke-test" || command == "--gui-test"
             || command == "--correction-test" || command == "--uat-test"
-            || command == "--effects-foundation-test";
+            || command == "--effects-foundation-test" || command == "--midi-import-test";
         std::unique_ptr<te::EngineBehaviour> engineBehaviour;
         if (testing)
             engineBehaviour = std::make_unique<SmokeTestEngineBehaviour>();
@@ -563,6 +655,8 @@ public:
                 passed = MainGui::testCorrections(*engine);
             else if (command == "--uat-test")
                 passed = MainGui::testUniversalActions(*engine);
+            else if (command == "--midi-import-test")
+                passed = MainGui::testMidiImport(*engine);
             else if (command == "--effects-foundation-test")
                 passed = runEffectsFoundationTest(*engine);
             else

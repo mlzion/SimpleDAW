@@ -1,5 +1,11 @@
 # SimpleDAW project status
 
+## v0.23.1 Inspector implementation in progress
+
+The feature branch records the approved E1 handoff, output and insert policies, record-arm behavior, beat-based MIDI import and automation limits. It adds the File MIDI import path, removes the obsolete Insert Audio command, and starts the selection-aware Inspector with editable names, track mute/solo and mixer settings, audio gain and fades, and independent clip duplication. [Design and clarifications](docs/specifications/v0.23.1-inspector-and-midi-import.md)
+
+Remaining implementation includes clone families and loop controls, MIDI playback modifiers, audio overlap and visual indicators, and the rest of the track controls and E1 integration. Bus 1 and Bus 2 are deferred. Linux CTests, including the new MIDI import suite, are **NOT RUN**. The current environment lacks CMake/CTest, Xvfb and Linux development packages and denied system package installation. Windows CI and live acceptance remain pending. [Windows live acceptance checklist](docs/testing/v0.23.1-live-test.md)
+
 ## Windows build policy
 
 Windows x64 development, acceptance and distribution use `/MD`. The acceptance workflow contains one `/MD` job and runs only by explicit, authorized manual dispatch. `/MT` remains available for requested local diagnostics. The source package, notices and separately installed Microsoft runtime requirements continue to apply. The policy branch passed all five CTests on local Linux, including Effects Foundation E0, and static checks of workflow triggers and package contents. Windows CI was not run for this update. [Build policy](docs/build/windows-build-policy.md) · [Diagnostic commands](docs/msvc-dynamic-runtime.md#requested-mt-diagnostics)
