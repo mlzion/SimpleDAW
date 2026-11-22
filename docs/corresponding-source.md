@@ -2,7 +2,7 @@
 
 The source archive contains three top-level source directories, `SimpleDAW`, `JUCE` and `Tracktion`, and a `SOURCE-REVISIONS.txt` file that records their exact Git commits. The SimpleDAW tree contains its licence, third-party notices, build scripts and tests. JUCE and Tracktion include the bundled dependency sources and notices. A copy of these instructions is included as `BUILD.md` at the archive root.
 
-The Windows workflow creates the archive from the exact three Git checkouts, extracts it into a fresh directory, and uses the extracted sources to build and run the Windows tests. Its run summary records the revisions and SHA-256 checksums for the source archive and executable. The Windows workflow publishes the tested `/MD` executable and matching source together in a versioned artifact, such as `SimpleDAW-v0.21-Windows-x64`. GitHub adds the ZIP extension to the download.
+The explicitly authorized, manually dispatched Windows x64 workflow creates the archive from the exact three Git checkouts, extracts it into a fresh directory, and uses the extracted sources to build and run the Windows tests. Its run summary records the revisions and SHA-256 checksums for the source archive and executable. The Windows workflow publishes the tested `/MD` executable and matching source together in a versioned artifact, such as `SimpleDAW-v0.21-Windows-x64`. GitHub adds the ZIP extension to the download.
 
 ## Rebuild on Windows
 
@@ -18,7 +18,7 @@ ctest --test-dir build -C Release --output-on-failure
 ./SimpleDAW/scripts/Verify-Portable.ps1 -BuildDirectory build -MsvcRuntime MD
 ```
 
-The default uses `/MD` and requires a compatible x64 Microsoft Visual C++ Redistributable to run. For `/MT` development tests, use a fresh build directory, configure with `-DSIMPLEDAW_MSVC_DYNAMIC_RUNTIME=OFF` and run the verification script with `-MsvcRuntime MT`.
+The default uses `/MD` and requires a compatible x64 Microsoft Visual C++ Redistributable to run. For an explicitly requested `/MT` diagnostic, use a fresh build directory, configure with `-DSIMPLEDAW_MSVC_DYNAMIC_RUNTIME=OFF` and run the verification script with `-MsvcRuntime MT`.
 
 To replace SoundTouch, work on a copy of the archive, modify or replace its compatible sources under `Tracktion/modules/tracktion_engine/3rd_party/soundtouch`, and rerun the commands in a fresh build directory. Tracktion compiles the bundled source into the executable. The complete application source and scripts in the archive allow rebuilding and relinking with that modified version while retaining a single EXE.
 

@@ -32,3 +32,10 @@
 - A deliberate /MT diagnostic build remains possible.
 - Documentation consistently states the /MD policy and existing runtime/source obligations.
 - No application functionality changes.
+
+## Build paths
+
+- Acceptance uses `.github/workflows/windows.yml` with the sole trigger `workflow_dispatch`. After explicit authorization, select the approved ref and run `gh workflow run windows.yml --ref <approved-ref>`. This builds and tests `/MD` and publishes the executable with its matching source and notices.
+- Request an `/MT` diagnostic separately and use the [local diagnostic commands](../msvc-dynamic-runtime.md#requested-mt-diagnostics). The standard workflow has one runtime.
+- The separate LLVM MinGW investigation remains manually dispatched and does not publish an acceptance build.
+- Normal Linux CMake builds retain the existing CTest suite.

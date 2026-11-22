@@ -6,7 +6,7 @@ SimpleDAW is free and open-source software. Its original code is released under 
 
 ## Download and run on Windows x64
 
-1. Open a successful v0.22.1 pull request run of the Windows workflow. Under **Artifacts**, download `SimpleDAW-v0.22.1-Windows-x64.zip`. GitHub may ask you to sign in. [Windows workflow runs](https://github.com/mlzion/SimpleDAW/actions/workflows/windows.yml?query=branch%3Afeature%2Fv0.22.1-universal-actions)
+1. Open the successful Windows workflow run for the version you want to test. Under **Artifacts**, download `SimpleDAW-v0.22.1-Windows-x64.zip`. GitHub may ask you to sign in. [Windows workflow runs](https://github.com/mlzion/SimpleDAW/actions/workflows/windows.yml?query=branch%3Afeature%2Fv0.22.1-universal-actions)
 2. Install Microsoft's x64 Visual C++ v14 Redistributable if a compatible version is absent. [Official Microsoft x64 download](https://aka.ms/vc14/vc_redist.x64.exe)
 3. Extract `SimpleDAW-v0.22.1.exe` to any folder you can read and execute from, then double-click it. SimpleDAW has no installer. Preferences live under your application-data folder. Projects and recorded media need a writable project location.
 
@@ -35,4 +35,4 @@ The default build uses JUCE's Windows audio backends, including WASAPI. For ASIO
 5. Use the ruler to position the edit cursor. Drag across the ruler to set a time range for Loop or Time-Selection Punch. Space plays or stops, R records, and Ctrl+S saves. Timeline Copy, Paste and Delete are available in the toolbar for single-clip editing while stopped. The Delete key removes a selected clip or clears the ruler range when Timeline has focus with no selected clips. Space and Delete stay with the editor while typing.
 6. Save after recording to retain the new items in the project. New, Open and Exit prompt if there are unsaved edits. Keep recorded and imported media at their original paths. Use **File → Export Audio** to render a new stereo WAV.
 
-The Windows workflow runs CTest, inspects DLL imports, and checks isolated startup. Use the [v0.22.1 live acceptance checklist](docs/testing/v0.22.1-live-test.md) for Windows verification and [project status](PROJECT_STATUS.md) for current limits.
+Windows x64 development, acceptance and distribution use `/MD`. The manually dispatched Windows workflow requires explicit approval and runs CTest, inspects DLL imports, and checks isolated startup. Linux CTests remain available through CMake. [Windows build policy](docs/build/windows-build-policy.md) Use the [v0.22.1 live acceptance checklist](docs/testing/v0.22.1-live-test.md) for Windows verification and [project status](PROJECT_STATUS.md) for current limits.
