@@ -2,9 +2,9 @@
 
 ## v0.23.1 Inspector implementation in progress
 
-Draft PR #20 contains File MIDI import, the initial Track and Clip Inspectors, and independent Duplicate. MIDI velocity and transpose use Tracktion's playback sequence hook and leave source notes intact. Native audio and MIDI loops support enable, count, pattern SIZE and undo, with audio fades stored while looping. Clone-family metadata persists shared edits and determines parent promotion from member order. The Track Inspector adds an independent meter and effect-chain selection and management with stable Tracktion IDs. [Design and clarifications](docs/specifications/v0.23.1-inspector-and-midi-import.md)
+Draft PR #20 contains the Track and Clip Inspectors, File MIDI import, loop controls and source-linked Clone/Unclone. Tracktion's MIDI playback hook applies velocity and transpose while retaining source notes. The pinned Tracktion graph gates audio REPLACE overlaps before summing. The timeline uses the same precedence and draws a combined thumbnail envelope for overlapping MIX clips.
 
-Remaining work includes audio MIX/REPLACE graph processing, visual repetition of loop content, complete clone source/color synchronization, track input and separate arm, EQ, automation, per-track height and the E1 editor handoff. Bus 1 and Bus 2 are deferred. Linux CTests are **NOT RUN** because CMake/CTest, Xvfb and development dependencies are unavailable and system package installation requires privileges. Windows CI and live acceptance remain pending. [Requirements checklist](docs/testing/v0.23.1-live-test.md#requirements-status) · [Draft PR #20](https://github.com/mlzion/SimpleDAW/pull/20)
+The Track Inspector provides input assignment and separate arm, automatic monitoring, independent metering, native three-band EQ, Volume/Pan automation selection, per-track MIN/MAX, and effect rows addressed by stable Tracktion IDs. Double-click targets the existing E1 `MainGui::openEffectsEditor(trackID, pluginID)` contract from PR #21. E1 integration and Windows x64 /MD live acceptance remain pending. Bus 1 and Bus 2 are deferred. [Requirements and acceptance checklist](docs/testing/v0.23.1-live-test.md) · [Draft PR #20](https://github.com/mlzion/SimpleDAW/pull/20) · [Effects Editor PR #21](https://github.com/mlzion/SimpleDAW/pull/21)
 
 ## Windows build policy
 

@@ -1598,7 +1598,18 @@ public:
             return false;
         gui.useHistory(true);
         gui.edit->restartPlayback();
-        if (!exportWave(*gui.edit, replaceFile) || !gui.save())
+        const auto initialUpper = upper->getPosition();
+        auto shifted = initialUpper;
+        shifted.time = shifted.time + te::TimeDuration::fromSeconds(0.05);
+        undo.beginNewTransaction("Move Replace fixture");
+        upper->setPosition(shifted);
+        const auto suppression = simpleDaw::suppressedAudioRanges(*lower, clips);
+        if (suppression.size() != 1 || suppression.front().getStart() != shifted.getStart()
+            || suppression.front().getEnd() != lower->getPosition().getEnd()
+            || !simpleDaw::suppressedAudioRanges(*upper, clips).empty())
+            return false;
+        gui.useHistory(false);
+        if (upper->getPosition() != initialUpper || !exportWave(*gui.edit, replaceFile) || !gui.save())
             return false;
 
         const auto peak = [](const ju::File& file) {
@@ -2971,6 +2982,8 @@ private:
         return clips;
     }
 
+    inline static const juce::Identifier midiTrimExtentProperty { "simpleDawMidiTrimExtent" };
+
     struct ClipChange
     {
         te::Clip* clip;
@@ -2978,6 +2991,7 @@ private:
         te::ClipPosition position;
         std::optional<te::TimeRange> loopTime;
         std::optional<te::BeatRange> loopBeats;
+        bool sourceResize = false;
     };
 
     std::vector<ClipChange> movePlan(const std::vector<te::Clip*>& clips, int rowDelta,
@@ -3058,6 +3072,16 @@ private:
                 history.undoCurrentTransactionOnly();
                 report("Could not move clips");
                 return false;
+            }
+            if (change.sourceResize && dynamic_cast<te::MidiClip*>(change.clip))
+            {
+                const auto& tempo = edit->tempoSequence;
+                const auto oldExtent = (tempo.toBeats(previous.getEnd()) - tempo.toBeats(previous.getStartOfSource())).inBeats();
+                const auto newExtent = (tempo.toBeats(change.position.getEnd())
+                    - tempo.toBeats(change.position.getStartOfSource())).inBeats();
+                const auto storedExtent = static_cast<double>(change.clip->state.getProperty(midiTrimExtentProperty, 0.0));
+                change.clip->state.setProperty(midiTrimExtentProperty,
+                    std::max({ storedExtent, oldExtent, newExtent }), &history);
             }
             if (change.loopTime)
                 change.clip->setLoopRange(*change.loopTime);
@@ -3141,7 +3165,7 @@ private:
         if (clip->isLooping())
             return resizeLoopFamily(*clip, position);
 
-        std::vector<ClipChange> changes { { clip, nullptr, position } };
+        std::vector<ClipChange> changes { { clip, nullptr, position, {}, {}, true } };
         for (auto* member : cloneMembers(*clip))
         {
             if (member == clip)
@@ -3162,7 +3186,7 @@ private:
             const auto end = memberStart + size;
             if (end <= memberStart || end > te::Edit::getMaximumEditEnd())
                 return {};
-            changes.push_back({ member, nullptr, { { memberStart, end }, offset } });
+            changes.push_back({ member, nullptr, { { memberStart, end }, offset }, {}, {}, true });
         }
         return changes;
     }
@@ -4547,6 +4571,94 @@ private:
         }
     }
 
+    void paintMixedWaveform(ju::Graphics& g, te::AudioTrack& track, int y, int height, ju::Colour colour)
+    {
+        struct Source
+        {
+            te::AudioClipBase* clip;
+            te::ClipPosition position;
+            ju::AudioThumbnail* thumbnail;
+        };
+        std::vector<Source> mixed;
+        std::vector<te::TimeRange> replaced;
+        for (auto* item : track.getClips())
+            if (auto* audio = dynamic_cast<te::AudioClipBase*>(item); audio && !audio->isMuted())
+            {
+                if (simpleDaw::replacesAudio(*audio))
+                {
+                    replaced.push_back(audio->getPosition().time);
+                    continue;
+                }
+                auto file = audio->getPlaybackFile().getFile();
+                if (!file.existsAsFile())
+                    file = audio->getOriginalFile();
+                if (file.existsAsFile())
+                    mixed.push_back({ audio, audio->getPosition(), &arrangement.waveform(audio->itemID, file) });
+            }
+        if (mixed.size() < 2)
+            return;
+
+        const auto centre = static_cast<float>(y + 10 + height / 2);
+        const auto scale = static_cast<float>(std::max(1, height - 26)) * 0.5f;
+        g.setColour(colour);
+        bool previousMixed = false;
+        for (int x = headerWidth; x < arrangement.getWidth(); ++x)
+        {
+            const auto left = timeAt(x);
+            const auto right = timeAt(x + 1);
+            const auto time = te::TimePosition::fromSeconds((left + right) * 0.5);
+            if (std::any_of(replaced.begin(), replaced.end(), [&](auto range) { return range.contains(time); }))
+            {
+                previousMixed = false;
+                continue;
+            }
+            float lower = 0.0f, upper = 0.0f;
+            int count = 0;
+            for (const auto& source : mixed)
+            {
+                if (!source.position.time.contains(time))
+                    continue;
+                ++count;
+                const auto elapsed = std::max(0.0, left - source.position.getStart().inSeconds());
+                auto start = source.position.getOffset().inSeconds() + elapsed;
+                auto duration = right - left;
+                if (source.clip->isLooping() && !source.clip->beatBasedLooping())
+                {
+                    const auto length = source.clip->getLoopLength().inSeconds();
+                    const auto phase = std::fmod(start, length);
+                    start = source.clip->getLoopStart().inSeconds() + phase;
+                    duration = std::min(duration, length - phase);
+                }
+                if (source.thumbnail->getNumChannels() <= 0)
+                    continue;
+                float lo = 0.0f, hi = 0.0f;
+                source.thumbnail->getApproximateMinMax(start, start + duration, 0, lo, hi);
+                const auto attack = source.clip->getFadeIn().inSeconds();
+                const auto release = source.clip->getFadeOut().inSeconds();
+                auto gain = ju::Decibels::decibelsToGain(source.clip->getGainDB());
+                if (attack > 0.0)
+                    gain *= static_cast<float>(std::min(1.0, elapsed / attack));
+                if (release > 0.0)
+                    gain *= static_cast<float>(juce::jlimit(0.0, 1.0,
+                        (source.position.getEnd().inSeconds() - left) / release));
+                lower += lo * gain;
+                upper += hi * gain;
+            }
+            if (count > 1)
+            {
+                g.drawVerticalLine(x, centre - ju::jlimit(-1.0f, 1.0f, upper) * scale,
+                                      centre - ju::jlimit(-1.0f, 1.0f, lower) * scale);
+                if (!previousMixed)
+                {
+                    g.setColour(colour.withAlpha(0.5f));
+                    g.drawVerticalLine(x, centre - scale, centre + scale);
+                    g.setColour(colour);
+                }
+            }
+            previousMixed = count > 1;
+        }
+    }
+
     void paintMidiNotes(ju::Graphics& g, te::MidiClip& clip, te::ClipPosition position, ju::Rectangle<int> area)
     {
         auto& tempo = edit->tempoSequence;
@@ -4624,12 +4736,21 @@ private:
                 if (file.existsAsFile())
                 {
                     if (auto* track = dynamic_cast<te::AudioTrack*>(clip.getTrack()))
-                        for (auto range : simpleDaw::suppressedAudioRanges(*audio, track->getClips()))
-                        {
+                    {
+                        auto hideWaveform = [&](te::TimeRange range) {
                             const auto a = timeX(range.getStart());
                             const auto b = timeX(range.getEnd());
                             g.excludeClipRegion(content.withX(a).withWidth(std::max(0, b - a)));
-                        }
+                        };
+                        for (auto range : simpleDaw::suppressedAudioRanges(*audio, track->getClips()))
+                            hideWaveform(range);
+                        if (!dragPreview && !audio->isMuted() && !simpleDaw::replacesAudio(*audio))
+                            for (auto* other : track->getClips())
+                                if (auto* wave = dynamic_cast<te::AudioClipBase*>(other);
+                                    wave && wave != audio && !wave->isMuted() && !simpleDaw::replacesAudio(*wave)
+                                    && !missingWave(wave) && wave->getPosition().time.overlaps(positionInEdit.time))
+                                    hideWaveform(wave->getPosition().time);
+                    }
                     paintAudioWaveform(g, *audio, positionInEdit, content, file);
                     if (height > 44)
                         paintAudioEnvelope(g, *audio, positionInEdit, content);
@@ -4665,7 +4786,9 @@ private:
                 const auto origin = tempo.toBeats(positionInEdit.getStartOfSource());
                 const auto start = tempo.toBeats(positionInEdit.getStart()) - origin;
                 const auto end = tempo.toBeats(positionInEdit.getEnd()) - origin;
-                bool leftTrim = false, rightTrim = false;
+                bool leftTrim = start.inBeats() > 1.0e-6;
+                bool rightTrim = end.inBeats() + 1.0e-6
+                    < static_cast<double>(clip.state.getProperty(midiTrimExtentProperty, 0.0));
                 for (auto* note : midi->getSequence().getNotes())
                 {
                     leftTrim |= note->getStartBeat() - te::BeatPosition{} < start;
@@ -4791,6 +4914,8 @@ private:
                 const auto target = dragPreview && actionSelection.clips.contains(clip->itemID) ? row + dragRowDelta : row;
                 paintClip(g, *clip, rowTop(target), rowHeight(target), colour);
             }
+            if (!dragPreview)
+                paintMixedWaveform(g, track, y, rowHeight(row), colour);
             if (edit->getTransport().isRecording())
                 paintRecording(g, track, y, rowHeight(row), colour);
             g.setColour(ju::Colour(0xff353535));
