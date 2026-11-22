@@ -20,7 +20,7 @@ Branch: `design-sandbox`
 
 | ID | Idea | Subsystem / phase | Status | Notes |
 | --- | --- | --- | --- | --- |
-| IDEA-001 | Clip locking | Timeline / Clip Inspector | PROPOSED | Prevent moving or editing locked clips; show lock icon and/or dashed border. Deletion policy pending. |
+| IDEA-001 | Clip locking | Timeline / Clip Inspector; post-v0.23.1 timeline/clip-editing polish | APPROVED | Total editing lockdown; Inspector-only unlock; gray clip presentation. Specification promotion and implementation not yet authorized. |
 
 ## Detailed discussions
 
@@ -28,20 +28,26 @@ Add an entry for each idea with its ID, date, status, scope, behavior, tradeoffs
 
 ### IDEA-001 — Clip Locking (2026-11-22)
 
-**Status:** PROPOSED  
-**Subsystem:** Timeline / Clip Inspector
+**Status:** APPROVED (sandbox design decision; not yet canonical)  
+**Subsystem:** Timeline / Clip Inspector / Universal Actions Toolbar  
+**Recommended implementation phase:** **Post-v0.23.1 Timeline & Clip Editing polish**, after Inspector + E1 live acceptance and integration. Bundle with the next authorized clip-editing refinement phase, rather than interrupting active Inspector/E1 acceptance or the separate Piano Roll branch. Exact release version to be assigned when promoted into the Master Spec.
 
-**User request:** Add a lock feature to clips. Locked clips cannot be moved or edited. Indicate locking with a lock icon or dashed borders on the clip.
+**Approved behavior:**
+- Lock and Unlock are controlled from the Clip Inspector.
+- A locked clip is completely protected from editing: no move, resize, trim, split, fade/property changes, cut, delete, copy, duplicate, or other clip-edit operations. Unlock first; no copy/paste exception.
+- Locked clips cannot be added to an editable multi-selection set, including right-click toggle or drag-box selection.
+- A normal click on a locked clip can target it for **Inspector viewing and unlocking only**; it does not add the clip to the editable selection set. This distinction must be preserved in the UAT action dispatcher.
+- All editable Clip Inspector controls are disabled/grayed out except Unlock. Property values remain visible.
+- On the timeline, locked clips are visually grayed/desaturated without adding another icon or dashed selection border. Waveforms/MIDI notes remain recognizable; existing selection/focus cues must remain unambiguous.
+- Playback is unchanged.
+- Clip lock state persists across save/reopen; locking and unlocking participate in Undo/Redo.
+- Locking a clip does not freeze or block its parent track's mixer settings or effects.
 
-**Proposed behavior for discussion:**
-- Lock/unlock from the Clip Inspector.
-- Locked clips remain visible and playable.
-- Prevent move, resize, split, trim, and other clip edits while locked.
-- Show a visible lock icon, dashed border, or both on the timeline.
+**Implementation/acceptance notes:** Enforce the lock centrally across all edit entry points, not just by disabling Inspector buttons. Test direct gestures, UAT actions, right-click selection, marquee selection, group operations, save/reopen, and Undo/Redo. Locked clips must never be silently included in editable groups.
 
-**Pending decisions:** Whether delete/cut must be blocked until unlock; how duplication/copying of locked clips behaves; whether lock is retained on duplicates; whether locked clips may still be selected; exact visual treatment and undo behavior.
+**Open implementation detail:** Exact UI rendering and internal separation between Inspector target and editable selection can be chosen during implementation without changing the approved behavior.
 
-**Implementation:** Not authorized. This entry is non-canonical until promoted to the specification.
+**Authority:** Approved for the ideas sandbox only. No Codex implementation or canonical-spec change is authorized until a future promotion decision.
 
 
 ## Promotion log
