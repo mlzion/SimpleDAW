@@ -247,6 +247,12 @@ public:
         addAndMakeVisible(workspace);
         addAndMakeVisible(inspectorDivider);
         addAndMakeVisible(workspaceDivider);
+        addAndMakeVisible(effectsEditorArea);
+        effectsEditorArea.setInterceptsMouseClicks(false, true);
+        effectsEditorArea.addChildComponent(outgoingEffects);
+        effectsEditorArea.addChildComponent(effectsEditor);
+        outgoingEffects.setInterceptsMouseClicks(false, false);
+        effectsEditor.addMouseListener(this, true);
         for (ju::Label* label : std::array<ju::Label*, 4> { &position, &status, &inspector, &workspace })
         {
             addAndMakeVisible(*label);
@@ -334,7 +340,15 @@ public:
             control->setWantsKeyboardFocus(false);
         snap.onChange = [this] { updateControls(); };
         button(panelButtons, "INSPECTOR", [this] { panels.inspectorOpen = !panels.inspectorOpen; saveLayout(); });
-        button(panelButtons, "WORKSPACE", [this] { panels.workspaceOpen = !panels.workspaceOpen; saveLayout(); });
+        button(panelButtons, "WORKSPACE", [this] {
+            if (effectsEditor.isOpen())
+                closeEffectsEditor();
+            else
+            {
+                panels.workspaceOpen = !panels.workspaceOpen;
+                saveLayout();
+            }
+        });
 
         navigationButton(Arrow::screenLeft, "Scroll left one screen", [this] { scrollTime(-visibleSeconds()); });
         navigationButton(Arrow::screenRight, "Scroll right one screen", [this] { scrollTime(visibleSeconds()); });
@@ -378,6 +392,30 @@ public:
         menuBar.setModel(nullptr);
         stop();
         meters.clear();
+    }
+
+    // Inspector calls this on an explicit open request. Selection changes use their usual path.
+    bool openEffectsEditor(te::EditItemID trackID, te::EditItemID pluginID)
+    {
+        const auto outgoing = effectsSnapshot();
+        if (!effectsEditor.open(trackID, pluginID))
+        {
+            report("This effect editor is unavailable");
+            return false;
+        }
+        actionSelection.requestedArea = EditingArea::window;
+        effectsEditor.setVisible(true);
+        effectsEditor.toFront(false);
+        resized();
+        slideEffectsOut(outgoing);
+        if (effectsEditor.isShowing())
+        {
+            const auto destination = effectsEditorArea.getLocalBounds();
+            effectsEditor.setBounds(destination.translated(0, destination.getHeight()));
+            effectsAnimator.animateComponent(&effectsEditor, destination, 1.0f, 220, false, 1.0, 0.0);
+        }
+        updateControls();
+        return true;
     }
 
     void installWindowShortcuts(ju::Component& host)
@@ -443,11 +481,12 @@ public:
             }
         }
 
-        workspace.setVisible(panels.workspaceOpen);
-        workspaceDivider.setVisible(panels.workspaceOpen);
+        const bool showWorkspace = panels.workspaceOpen && !effectsEditor.isOpen();
+        workspace.setVisible(showWorkspace);
+        workspaceDivider.setVisible(showWorkspace);
         for (auto* tab : tabs)
-            tab->setVisible(panels.workspaceOpen);
-        if (panels.workspaceOpen)
+            tab->setVisible(showWorkspace);
+        if (showWorkspace)
         {
             auto bottom = area.removeFromBottom(ju::jmin(panels.workspaceHeight, maxWorkspace()));
             auto tabBar = bottom.removeFromTop(36);
@@ -457,6 +496,13 @@ public:
         }
 
         arrangement.setBounds(area);
+        if (effectsEditor.isOpen())
+        {
+            auto timeline = area.withTrimmedLeft(headerWidth);
+            effectsAnimator.cancelAnimation(&effectsEditor, false);
+            effectsEditorArea.setBounds(timeline.removeFromBottom(ju::roundToInt(0.8 * timeline.getHeight())));
+            effectsEditor.setBounds(effectsEditorArea.getLocalBounds());
+        }
         scrollRows(0);
     }
 
@@ -504,6 +550,8 @@ public:
         return !gui.inspector.isVisible() && gui.workspace.getHeight() == 124
             && tracks.size() >= 2 && tracks.getLast()->getClips().size() == 1;
     }
+
+    static bool testEffectsEditor(te::Engine& engine);
 
     static bool testUniversalActions(te::Engine& engine)
     {
@@ -1688,8 +1736,8 @@ private:
 
     EditingArea activeEditingArea() const
     {
-        // Effects exposes the existing chain read-only. The other workspace tabs are placeholders.
-        return actionSelection.activeArea(panels.workspaceOpen && activeTab == 1, panels.inspectorOpen);
+        return actionSelection.activeArea(effectsEditor.isOpen() || (panels.workspaceOpen && activeTab == 1),
+                                          panels.inspectorOpen);
     }
 
     bool editingStopped() const
@@ -1714,8 +1762,7 @@ private:
             return;
         const auto* primary = trackAt(selection);
         const auto primaryID = primary ? primary->itemID : te::EditItemID{};
-        auto& history = edit->getUndoManager();
-        if (redoAction ? history.redo() : history.undo())
+        if (EffectsEditor::applyHistory(*edit, redoAction))
         {
             selection = te::getAudioTracks(*edit).indexOf(trackForID(primaryID));
             edit->restartPlayback();
@@ -2598,8 +2645,50 @@ private:
         return track->getName() + "\n" + (names.isEmpty() ? "No effects or instruments" : names.joinIntoString("\n"));
     }
 
+    ju::Image effectsSnapshot()
+    {
+        if (effectsEditor.isOpen() && effectsEditor.isShowing())
+            return effectsEditor.createComponentSnapshot(effectsEditor.getLocalBounds());
+        return {};
+    }
+
+    void slideEffectsOut(const ju::Image& snapshot)
+    {
+        effectsAnimator.cancelAnimation(&outgoingEffects, false);
+        outgoingEffects.setVisible(snapshot.isValid());
+        if (!snapshot.isValid())
+            return;
+        const auto bounds = effectsEditorArea.getLocalBounds();
+        outgoingEffects.setImage(snapshot);
+        outgoingEffects.setBounds(bounds);
+        outgoingEffects.setAlpha(1.0f);
+        effectsAnimator.animateComponent(&outgoingEffects, bounds.translated(0, bounds.getHeight()),
+                                         0.0f, 220, false, 0.0, 1.0);
+    }
+
+    void hideEffectsEditor()
+    {
+        effectsAnimator.cancelAnimation(&effectsEditor, false);
+        effectsEditor.close();
+        effectsEditor.setVisible(false);
+        if (actionSelection.requestedArea == EditingArea::window)
+            actionSelection.requestedArea.reset();
+        resized();
+    }
+
+    void closeEffectsEditor()
+    {
+        const auto outgoing = effectsSnapshot();
+        hideEffectsEditor();
+        slideEffectsOut(outgoing);
+        updateControls();
+    }
+
     void setProject(std::unique_ptr<te::Edit> next, const ju::File& file)
     {
+        if (effectsEditor.isOpen())
+            hideEffectsEditor();
+        slideEffectsOut({});
         meters.clear();
         arrangement.waves.clear();
         edit = std::move(next);
@@ -3246,7 +3335,8 @@ private:
             return;
         if (event.eventComponent == &inspector)
             actionSelection.requestedArea = EditingArea::inspector;
-        else if (event.eventComponent == &workspace && activeTab == 1)
+        else if ((event.eventComponent == &workspace && activeTab == 1)
+                 || event.eventComponent == &effectsEditor || effectsEditor.isParentOf(event.eventComponent))
             actionSelection.requestedArea = EditingArea::window;
         updateControls();
     }
@@ -3502,6 +3592,11 @@ private:
 
     void updateControls()
     {
+        if (effectsEditor.isOpen() && !effectsEditor.refresh())
+        {
+            hideEffectsEditor();
+            report("The edited effect is no longer available");
+        }
         playButton->setToggleState(edit && edit->getTransport().isPlaying(), ju::dontSendNotification);
         pauseButton->setToggleState(paused, ju::dontSendNotification);
         loopButton->setToggleState(edit && edit->getTransport().looping.get(), ju::dontSendNotification);
@@ -3523,7 +3618,7 @@ private:
         const auto active = activeEditingArea();
         if (actionSelection.requestedArea && actionSelection.requestedArea != active)
             actionSelection.requestedArea = active;
-        if (active != EditingArea::inspector)
+        if (active != EditingArea::inspector && !(active == EditingArea::window && effectsEditor.isOpen()))
             inspectorContext = active;
 
         ju::String description;
@@ -3542,6 +3637,7 @@ private:
         inspectorButtons[1]->setEnabled(editingStopped() && inspectorTrack && canApplyInspectorSettings(*inspectorTrack));
         inspector.setActive(edit && active == EditingArea::inspector);
         workspace.setActive(edit && active == EditingArea::window);
+        effectsEditor.setActive(edit && active == EditingArea::window);
         for (const auto& slot : actionButtons)
         {
             const bool enabled = canDispatch(slot.action) || incompatiblePlacement(slot.action).isNotEmpty();
@@ -3609,6 +3705,10 @@ private:
     Splitter inspectorDivider { *this, true }, workspaceDivider { *this, false };
     ju::Label position, status;
     AreaLabel inspector, workspace;
+    ju::Component effectsEditorArea;
+    ju::ImageComponent outgoingEffects;
+    EffectsEditor effectsEditor { [this] { return edit.get(); }, [this] { closeEffectsEditor(); } };
+    ju::ComponentAnimator effectsAnimator;
     ju::TooltipWindow tooltips { this };
     ju::TextEditor tempo;
     ju::ComboBox signature, recordMode, snap;

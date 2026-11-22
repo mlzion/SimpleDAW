@@ -142,6 +142,8 @@ bool smokeTest(te::Engine& engine)
         && samples.getMagnitude(0, samples.getNumSamples()) > 0.01f;
 }
 
+#include "EffectsEditor.h"
+
 class MainGui final : public ju::Component, private ju::Timer, private ju::MenuBarModel,
                       private ju::ApplicationCommandTarget
 {
@@ -535,6 +537,8 @@ private:
     std::unique_ptr<ju::FileChooser> chooser;
 };
 
+#include "../tests/EffectsEditor.inc"
+
 class Application final : public ju::JUCEApplication
 {
 public:
@@ -548,7 +552,7 @@ public:
 
         const bool testing = command == "--smoke-test" || command == "--gui-test"
             || command == "--correction-test" || command == "--uat-test"
-            || command == "--effects-foundation-test";
+            || command == "--effects-foundation-test" || command == "--effects-editor-test";
         std::unique_ptr<te::EngineBehaviour> engineBehaviour;
         if (testing)
             engineBehaviour = std::make_unique<SmokeTestEngineBehaviour>();
@@ -563,6 +567,8 @@ public:
                 passed = MainGui::testCorrections(*engine);
             else if (command == "--uat-test")
                 passed = MainGui::testUniversalActions(*engine);
+            else if (command == "--effects-editor-test")
+                passed = MainGui::testEffectsEditor(*engine);
             else if (command == "--effects-foundation-test")
                 passed = runEffectsFoundationTest(*engine);
             else

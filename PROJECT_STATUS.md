@@ -71,3 +71,9 @@ User-reported Windows 11 live acceptance completed on 2026-11-20: 43 functional 
 The isolated effects branch adds a windowless CTest path for the pinned Tracktion Reverb and Compressor. Native plugin lists, parameters, bypass and Edit serialization supply the foundation. The Compressor serves as a second insert for chain verification. The proposed Inspector/Effects Editor contract retains eight user audio-effect slots per track and records the remaining decisions for E1. [E0 tests and integration contract](docs/testing/effects-foundation-e0.md)
 
 Local Debian 13 x64 Release build with Clang 19 and Xvfb passed all five CTests: `project_round_trip`, `main_gui`, `gui_corrections`, `universal_actions` and `effects_foundation`. Windows CI has not been dispatched and live device acceptance is pending.
+
+## Effects Editor E1
+
+The E1 feature branch adds a reusable slide-up editor for native Tracktion Reverb and Compressor. It binds to track and plugin IDs in the active Edit, edits native parameter state during playback, displays bypass, and closes on target deletion or project replacement. Reverb uses independent Wet and Dry levels. Inspector owns chain actions and will call the editor on an effect-row double-click. [Integration contract and acceptance checklist](docs/testing/effects-editor-e1.md)
+
+**PASS** — Debian 13 x64 Release build with Clang 19 and Xvfb passed all six CTests, including E0 and the new `effects_editor` suite. Five additional consecutive E1 runs passed. **PENDING** — Inspector integration and separately authorized integrated Windows x64 /MD build and live acceptance.
