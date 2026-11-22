@@ -6,6 +6,8 @@ Draft PR #20 contains the Track and Clip Inspectors, File MIDI import, loop cont
 
 The Track Inspector provides input assignment and separate arm, automatic monitoring, independent metering, native three-band EQ, Volume/Pan automation selection, per-track MIN/MAX, and effect rows addressed by stable Tracktion IDs. Double-click targets the existing E1 `MainGui::openEffectsEditor(trackID, pluginID)` contract from PR #21. E1 integration and Windows x64 /MD live acceptance remain pending. Bus 1 and Bus 2 are deferred. [Requirements and acceptance checklist](docs/testing/v0.23.1-live-test.md) · [Draft PR #20](https://github.com/mlzion/SimpleDAW/pull/20) · [Effects Editor PR #21](https://github.com/mlzion/SimpleDAW/pull/21)
 
+The Linux x64 Release build with GCC 14 and Xvfb passed all 11 CTests. Coverage includes rendered overlap audio, clip import and playback modifiers, loop and clone undo/reopen, effect ID handoff and the existing UAT and recording regressions. Windows CI was not dispatched.
+
 ## Windows build policy
 
 Windows x64 development, acceptance and distribution use `/MD`. The acceptance workflow contains one `/MD` job and runs only by explicit, authorized manual dispatch. `/MT` remains available for requested local diagnostics. The source package, notices and separately installed Microsoft runtime requirements continue to apply. The policy branch passed all five CTests on local Linux, including Effects Foundation E0, and static checks of workflow triggers and package contents. Windows CI was not run for this update. [Build policy](docs/build/windows-build-policy.md) · [Diagnostic commands](docs/msvc-dynamic-runtime.md#requested-mt-diagnostics)
@@ -64,7 +66,7 @@ The existing generated-audio CTest covers import, project reopen, reverb persist
 
 User-reported Windows 11 live acceptance completed on 2026-11-20: 43 functional checks passed, D03 and E01 partial, F03 MIDI hardware test not performed. C06 final punch capture passed, but its live waveform preview is misaligned and deferred to v0.22. The post-recording Save/Delete prompt is also proposed for v0.22. The tested build is probably workflow #49 (not locally verified). Hardware: HD USB Audio Device, Windows Audio Exclusive Mode, 48 kHz / 480 samples; actual round-trip latency was not measured. VST3 amp modelers and built-in reverb passed, exact plugin names unrecorded. See the updated live acceptance checksheet. [Live test checksheet](docs/testing/v0.21-live-test.md)
 
-## Known limitations
+## Known limitations on the accepted baseline
 
 - Inspector content and Mixer, Piano Roll and Drum Editor content are placeholders. Effects shows the chain read-only. The read-only 1 and 2 input badges are temporary until Inspector routing is available. Drum Master processing is planned for v0.26.
 - Duplicate remains disabled. Single-clip mouse dragging works within a lane while stopped. Complex looping, stretched media and overlapping takes can have simplified previews. Locating audio updates the selected clip source and matching take references.

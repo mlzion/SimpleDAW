@@ -33,11 +33,28 @@ public:
 const ju::Identifier midiVelocityProperty("simpleDawMidiVelocity");
 const ju::Identifier midiTransposeProperty("simpleDawMidiTranspose");
 
+void markAudioPlacement(te::AudioClipBase& clip)
+{
+    auto order = simpleDaw::overlapPlacement(clip);
+    for (auto* track : te::getAudioTracks(clip.edit))
+        for (auto* item : track->getClips())
+            if (dynamic_cast<te::AudioClipBase*>(item))
+                order = std::max(order, simpleDaw::overlapPlacement(*item));
+    clip.state.setProperty(simpleDaw::overlapPlacementProperty, order + 1, &clip.edit.getUndoManager());
+}
+
 class SimpleDawEngineBehaviour final : public te::EngineBehaviour
 {
 public:
     explicit SimpleDawEngineBehaviour(bool testingIn) : testing(testingIn) {}
     bool autoInitialiseDeviceManager() override { return !testing; }
+
+    void newClipAdded(te::Clip& clip, bool fromRecording) override
+    {
+        if (fromRecording)
+            if (auto* audio = dynamic_cast<te::AudioClipBase*>(&clip))
+                markAudioPlacement(*audio);
+    }
 
     ju::MidiMessageSequence createPlaybackMidiSequence(const te::MidiList& list, te::MidiClip& clip,
         te::MidiList::TimeBase timeBase, bool generateMPE) override
@@ -93,19 +110,23 @@ bool insertAudio(te::AudioTrack& track, const ju::File& file, te::TimePosition s
     if (!audio.isValid() || audio.getLength() <= 0.0)
         return false;
 
-    return track.insertWaveClip(file.getFileNameWithoutExtension(), file,
-        {{ start, start + te::TimeDuration::fromSeconds(audio.getLength()) }, {}}, false) != nullptr;
+    auto clip = track.insertWaveClip(file.getFileNameWithoutExtension(), file,
+        {{ start, start + te::TimeDuration::fromSeconds(audio.getLength()) }, {}}, false);
+    if (!clip)
+        return false;
+    markAudioPlacement(*clip);
+    return true;
 }
 
 template<typename PluginType>
-bool insertBuiltIn(te::AudioTrack& track, bool synth = false)
+bool insertBuiltIn(te::AudioTrack& track, bool synth = false, int index = 0)
 {
     auto plugin = track.edit.getPluginCache().createNewPlugin(PluginType::xmlTypeName,
         te::PluginManager::createBuiltInPluginDescription<PluginType>(synth));
     if (plugin == nullptr)
         return false;
 
-    track.pluginList.insertPlugin(plugin, 0, nullptr);
+    track.pluginList.insertPlugin(plugin, index, nullptr);
     return true;
 }
 
@@ -658,7 +679,8 @@ private:
                         return report("Could not load VST3");
 
                     edit->getUndoManager().beginNewTransaction("Insert VST3");
-                    track->pluginList.insertPlugin(plugin, 0, nullptr);
+                    track->pluginList.insertPlugin(plugin,
+                        descriptions[choice - 1]->isInstrument ? 0 : audioInsertIndex(*track), nullptr);
                     report("Inserted " + descriptions[choice - 1]->name);
                 }
             });

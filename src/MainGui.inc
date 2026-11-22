@@ -1429,23 +1429,28 @@ public:
 
     static bool testInspectorClone(te::Engine& engine)
     {
+        const auto fail = [](int line) {
+            std::fprintf(stderr, "Inspector regression failed at MainGui.inc:%d\n", line);
+            return false;
+        };
         const auto dir = ju::File::getSpecialLocation(ju::File::tempDirectory)
             .getNonexistentChildFile("SimpleDAW-inspector-clone", {});
         if (dir.createDirectory().failed())
-            return false;
+            return fail(__LINE__);
         const ju::ScopeGuard cleanup { [&] { dir.deleteRecursively(); } };
         const auto project = dir.getChildFile("clone.tracktionedit");
         MainGui gui(engine, dir.getChildFile("gui.settings"));
         gui.setProject(te::createEmptyEdit(engine, project), project);
+        const auto sourceRow = gui.trackCount();
         gui.addTrack(true);
         gui.addTrack(true);
         gui.addTrack(false);
-        gui.selectTrack(0);
+        gui.selectTrack(sourceRow);
         const auto start = te::TimePosition::fromSeconds(1);
         const auto duration = te::TimeDuration::fromSeconds(1);
         auto source = te::insertMIDIClip(*gui.actionTrack(), "Parent", { start, duration });
         if (!source)
-            return false;
+            return fail(__LINE__);
         const auto sourceID = source->itemID;
         gui.actionSelection.clips = { sourceID };
         gui.actionSelection.requestedArea = EditingArea::timeline;
@@ -1455,41 +1460,41 @@ public:
         auto* clone = gui.selectedClip();
         if (!clone || clone == source.get() || clone->getPosition().getStart() != gui.editCursor
             || gui.cloneMembers(*clone).size() != 2 || gui.cloneMembers(*clone).front() != source.get())
-            return false;
+            return fail(__LINE__);
         const auto cloneID = clone->itemID;
         const auto move = gui.movePlan({ clone }, 1, duration);
-        if (!gui.applyClipChanges(move, "Move clone") || clone->getTrack() != gui.trackAt(1)
+        if (!gui.applyClipChanges(move, "Move clone") || clone->getTrack() != gui.trackAt(sourceRow + 1)
             || source->getPosition().getStart() != start || !gui.movePlan({ clone }, 1, {}).empty())
-            return false;
+            return fail(__LINE__);
         gui.useHistory(false);
-        if (clone->getTrack() != gui.trackAt(0))
-            return false;
+        if (clone->getTrack() != gui.trackAt(sourceRow))
+            return fail(__LINE__);
         gui.useHistory(true);
-        if (clone->getTrack() != gui.trackAt(1))
-            return false;
+        if (clone->getTrack() != gui.trackAt(sourceRow + 1))
+            return fail(__LINE__);
         gui.setMidiInspectorValue(midiVelocityProperty, 50, 100, "Velocity");
         if (static_cast<int>(source->state.getProperty(midiVelocityProperty)) != 50)
-            return false;
+            return fail(__LINE__);
         gui.toggleInspectorClone();
         if (gui.cloneMembers(*source).size() != 1)
-            return false;
+            return fail(__LINE__);
         gui.useHistory(false);
         if (gui.cloneMembers(*source).size() != 2)
-            return false;
+            return fail(__LINE__);
         gui.edit->getUndoManager().beginNewTransaction("Remove parent");
         source->removeFromParent();
         if (gui.cloneMembers(*clone).size() != 1 || gui.cloneMembers(*clone).front() != clone)
-            return false;
+            return fail(__LINE__);
         gui.useHistory(false);
         gui.editCursor = start + duration * 6;
         gui.copyInspectedClip(false);
         auto* duplicate = gui.selectedClip();
         if (!duplicate || duplicate->itemID == cloneID || gui.cloneMembers(*duplicate).size() != 1
-            || duplicate->getTrack() != gui.trackAt(1))
-            return false;
+            || duplicate->getTrack() != gui.trackAt(sourceRow + 1))
+            return fail(__LINE__);
         gui.setMidiInspectorValue(midiVelocityProperty, 70, 100, "Velocity");
         if (static_cast<int>(source->state[midiVelocityProperty]) != 50 || !gui.save())
-            return false;
+            return fail(__LINE__);
         auto reopened = te::loadEditFromFile(engine, project);
         auto* restoredSource = reopened ? te::findClipForID(*reopened, sourceID) : nullptr;
         auto* restoredClone = reopened ? te::findClipForID(*reopened, cloneID) : nullptr;
@@ -1509,14 +1514,14 @@ public:
         const auto project = dir.getChildFile("effects.tracktionedit");
         MainGui gui(engine, dir.getChildFile("gui.settings"));
         gui.setProject(te::createEmptyEdit(engine, project), project);
-        gui.addTrack(false);
+        gui.addTrack(true);
         auto* track = gui.actionTrack();
-        if (!track)
+        if (!track || !insertBuiltIn<te::FourOscPlugin>(*track, true))
             return false;
         for (int i = 0; i < 9; ++i)
             gui.editInspectorEffect(0);
         auto effects = audioInserts(track);
-        if (effects.size() != 8)
+        if (effects.size() != 8 || track->pluginList.indexOf(effects.front()) <= 0)
             return false;
         const auto id = effects.front()->itemID;
         gui.inspectorEffectID = id;
@@ -1558,10 +1563,14 @@ public:
 
     static bool testAudioOverlap(te::Engine& engine)
     {
+        const auto fail = [](int line) {
+            std::fprintf(stderr, "Inspector regression failed at MainGui.inc:%d\n", line);
+            return false;
+        };
         const auto dir = ju::File::getSpecialLocation(ju::File::tempDirectory)
             .getNonexistentChildFile("SimpleDAW-audio-overlap", {});
         if (dir.createDirectory().failed())
-            return false;
+            return fail(__LINE__);
         const ju::ScopeGuard cleanup { [&] { dir.deleteRecursively(); } };
         const auto project = dir.getChildFile("overlap.tracktionedit");
         const auto source = dir.getChildFile("source.wav");
@@ -1571,31 +1580,31 @@ public:
         auto* track = gui.actionTrack();
         const auto start = te::TimePosition::fromSeconds(0.1);
         if (!track || !writeTestWave(source) || !insertAudio(*track, source, start) || !insertAudio(*track, source, start))
-            return false;
+            return fail(__LINE__);
 
         auto clips = track->getClips();
         if (clips.size() != 2)
-            return false;
+            return fail(__LINE__);
         auto* lower = dynamic_cast<te::AudioClipBase*>(clips[0]);
         auto* upper = dynamic_cast<te::AudioClipBase*>(clips[1]);
         if (!lower || !upper || !simpleDaw::suppressedAudioRanges(*lower, clips).empty())
-            return false;
+            return fail(__LINE__);
         if (simpleDaw::overlapPlacement(*lower) > simpleDaw::overlapPlacement(*upper))
             std::swap(lower, upper);
         const auto mixFile = dir.getChildFile("mix.wav");
         const auto replaceFile = dir.getChildFile("replace.wav");
         if (!exportWave(*gui.edit, mixFile))
-            return false;
+            return fail(__LINE__);
         auto& undo = gui.edit->getUndoManager();
         undo.beginNewTransaction("Replace fixtures");
         lower->state.setProperty(simpleDaw::replaceOverlapProperty, true, &undo);
         upper->state.setProperty(simpleDaw::replaceOverlapProperty, true, &undo);
         if (simpleDaw::suppressedAudioRanges(*lower, clips).size() != 1
             || !simpleDaw::suppressedAudioRanges(*upper, clips).empty())
-            return false;
+            return fail(__LINE__);
         gui.useHistory(false);
         if (simpleDaw::replacesAudio(*upper))
-            return false;
+            return fail(__LINE__);
         gui.useHistory(true);
         gui.edit->restartPlayback();
         const auto initialUpper = upper->getPosition();
@@ -1607,10 +1616,16 @@ public:
         if (suppression.size() != 1 || suppression.front().getStart() != shifted.getStart()
             || suppression.front().getEnd() != lower->getPosition().getEnd()
             || !simpleDaw::suppressedAudioRanges(*upper, clips).empty())
-            return false;
+            return fail(__LINE__);
         gui.useHistory(false);
-        if (upper->getPosition() != initialUpper || !exportWave(*gui.edit, replaceFile) || !gui.save())
-            return false;
+        const auto restoredUpper = upper->getPosition();
+        if (std::abs((restoredUpper.getStart() - initialUpper.getStart()).inSeconds()) > 1.0e-9
+            || std::abs((restoredUpper.getEnd() - initialUpper.getEnd()).inSeconds()) > 1.0e-9)
+            return fail(__LINE__);
+        if (!exportWave(*gui.edit, replaceFile))
+            return fail(__LINE__);
+        if (!gui.save())
+            return fail(__LINE__);
 
         const auto peak = [](const ju::File& file) {
             ju::AudioFormatManager formats;
@@ -1627,8 +1642,13 @@ public:
         const auto replace = peak(replaceFile);
         auto reopened = te::loadEditFromFile(engine, project);
         auto* restored = reopened ? te::findClipForID(*reopened, upper->itemID) : nullptr;
-        return mix > 0.05f && replace > 0.02f && std::abs(mix / replace - 2.0f) < 0.12f
-            && restored && simpleDaw::replacesAudio(*restored);
+        if (!(mix > 0.05f && replace > 0.02f && std::abs(mix / replace - 2.0f) < 0.12f
+            && restored && simpleDaw::replacesAudio(*restored)))
+        {
+            std::fprintf(stderr, "Overlap render peaks: MIX %.6f, REPLACE %.6f\n", mix, replace);
+            return fail(__LINE__);
+        }
+        return true;
     }
 
     static bool testClipPlacementAndMinimum(MainGui& gui, te::Engine& engine, const ju::File& project,
@@ -2307,7 +2327,8 @@ private:
                     else
                     {
                         edit->getUndoManager().beginNewTransaction("Add Reverb");
-                        report(insertBuiltIn<te::ReverbPlugin>(*track) ? "Reverb inserted" : "Could not insert reverb");
+                        report(insertBuiltIn<te::ReverbPlugin>(*track, false, audioInsertIndex(*track))
+                            ? "Reverb inserted" : "Could not insert reverb");
                     }
                 }
                 break;
@@ -2595,7 +2616,11 @@ private:
             state.setProperty(te::IDs::length, position.getLength().inSeconds(), nullptr);
             state.setProperty(te::IDs::offset, position.getOffset().inSeconds(), nullptr);
             if (auto* clip = plan[i].track->insertClipWithState(state))
+            {
+                if (auto* audio = dynamic_cast<te::AudioClipBase*>(clip))
+                    markAudioPlacement(*audio);
                 pasted.insert(clip->itemID);
+            }
             else
             {
                 history.undoCurrentTransactionOnly();
@@ -2937,6 +2962,8 @@ private:
         undo.beginNewTransaction(linked ? "Clone clip" : "Duplicate clip");
         if (auto* duplicateClip = track->insertClipWithState(state))
         {
+            if (auto* audio = dynamic_cast<te::AudioClipBase*>(duplicateClip))
+                markAudioPlacement(*audio);
             if (linked)
             {
                 auto family = static_cast<int>(source->state.getProperty(cloneFamilyProperty, 0));
@@ -3063,10 +3090,9 @@ private:
         for (const auto& change : changes)
         {
             const auto previous = change.clip->getPosition();
-            if (dynamic_cast<te::AudioClipBase*>(change.clip)
-                && (change.destination || previous.getStart() != change.position.getStart()))
-                change.clip->state.setProperty(simpleDaw::overlapPlacementProperty,
-                    static_cast<juce::int64>(edit->createNewItemID().getRawID()), &history);
+            if (auto* audio = dynamic_cast<te::AudioClipBase*>(change.clip);
+                audio && (change.destination || previous.getStart() != change.position.getStart()))
+                markAudioPlacement(*audio);
             if (change.destination && (!change.clip->moveTo(*change.destination) || change.clip->getTrack() != change.destination))
             {
                 history.undoCurrentTransactionOnly();
@@ -3810,6 +3836,14 @@ private:
         updateControls();
     }
 
+    static int audioInsertIndex(te::AudioTrack& track)
+    {
+        auto* eq = trackEQ(&track);
+        auto* fader = track.getVolumePlugin();
+        const auto index = eq ? track.pluginList.indexOf(eq) : track.pluginList.indexOf(fader);
+        return index >= 0 ? index : track.pluginList.size();
+    }
+
     static std::vector<te::Plugin*> audioInserts(te::AudioTrack* track)
     {
         std::vector<te::Plugin*> result;
@@ -3836,7 +3870,7 @@ private:
             if (effects.size() >= 8)
                 return report("The track has eight or more audio inserts");
             undo.beginNewTransaction("Add Reverb");
-            if (!insertBuiltIn<te::ReverbPlugin>(*track))
+            if (!insertBuiltIn<te::ReverbPlugin>(*track, false, audioInsertIndex(*track)))
                 return report("Could not insert Reverb");
         }
         else
