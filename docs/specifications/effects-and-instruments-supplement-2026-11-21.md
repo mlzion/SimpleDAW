@@ -32,7 +32,7 @@ ACCEPTED DIRECTION: evaluate porting the existing separate Plexi REAPER JSFX DSP
 Routing: existing parent/child track routing may be used; note parent amp after child amp is **series** processing, not independent parallel amps. Parallel amps require distinct paths/tracks. No special amp router is specified.
 
 ## 5. Built-in MIDI instruments — ACCEPTED / PENDING
-ACCEPTED lineup: standard acoustic Piano, electric Organ, simple Analog/subtractive Synth, simple Digital/FM-style Synth. Instrument selection belongs to track Inspector; parameters use shared bottom editor; MIDI input/piano roll/patterns feed instrument, output feeds normal track effects.
+ACCEPTED lineup: standard acoustic Piano, electric Organ, simple Analog/subtractive Synth, simple Digital/FM-style Synth. Instrument selection belongs to track Inspector; parameters use shared bottom editor; MIDI input, clip playback and Piano Roll audition feed the instrument on the containing track’s output channel. Instrument audio feeds normal track effects. See the [MIDI track routing amendment](midi-track-routing.md).
 ACCEPTED approach: sample-based piano; synthesized organ and synthesizers. Sample licensing, distribution, exact sound library, voices, presets, polyphony, and detailed controls PENDING. Do not assume Tracktion ships a redistributable piano library.
 
 ## 6. Track LFO modulation — ACCEPTED

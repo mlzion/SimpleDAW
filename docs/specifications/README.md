@@ -8,6 +8,10 @@ These PDFs are the shared reference set for specification reviews and phased dev
 | [Universal Actions Integration Specification](SimpleDAW_Universal_Actions_Integration_Spec.pdf) | Integration draft and decision register, 20 November 2026; separates accepted principles, pending details and recommendations. 3 pages. |
 | [Development Phase Plan — Draft 0.1](SimpleDAW_Development_Phase_Plan_Draft_0_1.pdf) | Preliminary phases 0–12, dependencies and acceptance criteria, 20 November 2026. Phase identifiers are not application versions. 3 pages. |
 
+## Current Master Specification amendment
+
+- [MIDI track routing](midi-track-routing.md) — approved amendment to Master Specification sections 8 and 14. Governs Setup, both Inspectors, Piano Roll audition, MIDI import and saved-project compatibility.
+
 ## Subsequent acceptance and change handoffs
 
 - [v0.22 design decisions — Reviews 01–82](v0.22-design-decisions-reviews-01-82.md) — accepted UAT and later-phase recording design decisions; Review 83 pending. v0.22.1 is limited to the UAT foundation, not advanced recording features.
@@ -19,7 +23,7 @@ These PDFs are the shared reference set for specification reviews and phased dev
 - [Clip Glue, Groups, Parent/Child Tracks and MIX/REPLACE (21 Nov 2026)](clip-glue-group-parent-overlap-2026-11-21.md) — **ACCEPTED design, not implemented**; newer supplement governing clip actions, group badges, track hierarchy, bus routing, and audible overlap/waveform precedence. Planned for later phases; does not alter v0.22.2 scope.
 
 
-- [v0.23.1 Inspector, Clone/Loop and MIDI Import decisions](v0.23.1-inspector-and-midi-import.md) — **ACCEPTED DESIGN, NOT IMPLEMENTED**; latest authority for Track, Audio Clip and MIDI Clip Inspectors, clone/loop semantics, and single-track MIDI import; supersedes conflicting older descriptions. Historical Master Spec PDF is preserved.
+- [v0.23.1 Inspector, Clone/Loop and MIDI Import decisions](v0.23.1-inspector-and-midi-import.md) — **ACCEPTED DESIGN, NOT IMPLEMENTED**; authority for Track, Audio Clip and MIDI Clip Inspectors and clone/loop semantics, as amended by the MIDI track routing decision; supersedes conflicting older descriptions. Historical Master Spec PDF is preserved.
 - [v0.23.1 Codex first-iteration task sheet](../tasks/v0.23.1-inspector-first-iteration.md) — implementation scope, E1 integration boundaries, exclusions, acceptance tests and Windows /MD build policy. Merge documentation before starting implementation.
 
 ## How to use this set
