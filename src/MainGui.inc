@@ -12,7 +12,7 @@
     enum class EditingArea { window, inspector, timeline, tracks };
     enum class UniversalAction
     {
-        create, remove, copy, paste, up, down, left, right,
+        cut, remove, copy, paste, up, down, left, right,
         startMinus, startPlus, endMinus, endPlus, split, trim, reserved
     };
 
@@ -21,7 +21,8 @@
     struct ActionSelection
     {
         std::optional<EditingArea> requestedArea;
-        ItemSelection clips, tracks;
+        ItemSelection clips;
+        te::EditItemID track;
 
         EditingArea activeArea(bool hasWindow, bool hasInspector) const
         {
@@ -29,7 +30,7 @@
                 && (*requestedArea != EditingArea::inspector || hasInspector))
                 return *requestedArea;
             // Only existing selections can supply a fallback. Both panels currently have none.
-            return clips.empty() && !tracks.empty() ? EditingArea::tracks : EditingArea::timeline;
+            return clips.empty() && track.isValid() ? EditingArea::tracks : EditingArea::timeline;
         }
 
         static void click(ItemSelection& items, te::EditItemID id, bool toggle)
@@ -319,7 +320,7 @@ public:
         snap.setSelectedId(4, ju::dontSendNotification);
 
         using Action = UniversalAction;
-        addActionGroup(0, "EDIT", 0xff263e53, { { "CREATE", Action::create }, { "DELETE", Action::remove },
+        addActionGroup(0, "EDIT", 0xff263e53, { { "CUT", Action::cut }, { "DELETE", Action::remove },
                                                 { "COPY", Action::copy }, { "PASTE", Action::paste } });
         addActionGroup(1, "MOVE", 0xff2b4257, { { "↑  UP", Action::up }, { "↓  DOWN", Action::down },
                                                 { "←  LEFT", Action::left }, { "→  RIGHT", Action::right } });
@@ -327,6 +328,11 @@ public:
                                                 { "END −", Action::endMinus }, { "END +", Action::endPlus } });
         addActionGroup(3, "MODIFY", 0xff354a5e, { { "SPLIT", Action::split }, { "", Action::reserved },
                                                   { "TRIM", Action::trim }, { "", Action::reserved } });
+        undoButton = &button(historyButtons, "UNDO", [this] { useHistory(false); });
+        redoButton = &button(historyButtons, "REDO", [this] { useHistory(true); });
+        for (auto* control : historyButtons)
+            control->setWantsKeyboardFocus(false);
+        snap.onChange = [this] { updateControls(); };
         button(panelButtons, "INSPECTOR", [this] { panels.inspectorOpen = !panels.inspectorOpen; saveLayout(); });
         button(panelButtons, "WORKSPACE", [this] { panels.workspaceOpen = !panels.workspaceOpen; saveLayout(); });
 
@@ -342,6 +348,11 @@ public:
         zoomIn.setRepeatSpeed(330, 110, 65);
         navigationButton(Arrow::up, "Scroll up", [this] { scrollRows(-1); });
         navigationButton(Arrow::down, "Scroll down", [this] { scrollRows(1); });
+        button(inspectorButtons, "COPY SETTINGS", [this] { useInspectorSettings(false); });
+        button(inspectorButtons, "APPLY SETTINGS", [this] { useInspectorSettings(true); });
+        inspector.setInterceptsMouseClicks(true, true);
+        for (auto* control : inspectorButtons)
+            inspector.addAndMakeVisible(control);
         heightButton = &button(navigation, "MIN", [this] {
             panels.tallTracks = !panels.tallTracks;
             saveLayout();
@@ -398,6 +409,12 @@ public:
             control->setBounds(panelControls.removeFromTop(42));
             panelControls.removeFromTop(4);
         }
+        auto historyControls = toolbar.removeFromRight(106).withTrimmedLeft(7).withTrimmedTop(17);
+        for (auto* control : historyButtons)
+        {
+            control->setBounds(historyControls.removeFromTop(42).reduced(2));
+            historyControls.removeFromTop(4);
+        }
         for (size_t i = 0; i < actionGroups.size(); ++i)
         {
             auto& group = actionGroups[i];
@@ -418,6 +435,12 @@ public:
         {
             inspector.setBounds(area.removeFromRight(ju::jmin(panels.inspectorWidth, maxInspector())));
             inspectorDivider.setBounds(area.removeFromRight(8));
+            auto settingsArea = inspector.getLocalBounds().reduced(8).withTrimmedTop(56);
+            for (auto* control : inspectorButtons)
+            {
+                control->setBounds(settingsArea.removeFromTop(36));
+                settingsArea.removeFromTop(4);
+            }
         }
 
         workspace.setVisible(panels.workspaceOpen);
@@ -498,6 +521,10 @@ public:
             return passed;
         };
         MainGui gui(engine, dir.getChildFile("gui.settings"));
+        if (!check(gui.actionButtons.size() == 16 && std::none_of(gui.actionButtons.begin(), gui.actionButtons.end(),
+                [](const auto& slot) { return slot.button->isEnabled(); }), "four fixed groups and inert initial state"))
+            return false;
+
         gui.setProject(te::createEmptyEdit(engine, project), project);
         gui.edit->ensureNumberOfAudioTracks(2);
         gui.snap.setSelectedId(1, ju::dontSendNotification);
@@ -506,6 +533,8 @@ public:
         auto* first = gui.trackAt(0);
         auto* second = gui.trackAt(1);
         const auto seconds = te::TimePosition::fromSeconds<double>;
+        first->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        second->state.setProperty(trackTypeProperty, "Audio", nullptr);
         auto midi = te::insertMIDIClip(*first, "Test MIDI", { seconds(1), seconds(2) });
         if (!check(midi && writeTestWave(audio) && insertAudio(*second, audio, seconds(3)), "create MIDI and WAV"))
             return false;
@@ -513,9 +542,6 @@ public:
         midi = nullptr; // The test replaces the Edit, so keep only the fixture's ID.
         const auto audioID = second->getClips().getFirst()->itemID;
         gui.updateControls();
-        if (!check(gui.actionButtons.size() == 16 && std::none_of(gui.actionButtons.begin(), gui.actionButtons.end(),
-                [](const auto& slot) { return slot.button->isEnabled(); }), "four fixed groups and inert initial state"))
-            return false;
 
         const auto mouse = [&](ju::Component& component, ju::Point<int> where, int modifiers,
                                ju::Point<int> down, bool dragged = false) {
@@ -537,7 +563,7 @@ public:
             return false;
         click(audioPoint, true);
         if (!check(gui.actionSelection.clips == ItemSelection { midiID, audioID }
-                && !gui.canDispatch(Action::copy) && !gui.canDispatch(Action::remove), "right-click adds a second clip"))
+                && gui.canDispatch(Action::copy) && gui.canDispatch(Action::remove), "right-click adds a second clip"))
             return false;
         click(audioPoint, true);
         if (!check(gui.actionSelection.clips == ItemSelection { midiID }, "second right-click toggles the clip off"))
@@ -556,14 +582,36 @@ public:
 
         click({ 30, rowY(0) });
         click({ 30, rowY(1) }, true);
-        if (!check(gui.activeEditingArea() == EditingArea::tracks && gui.actionSelection.tracks.size() == 2
-                && gui.actionSelection.clips.size() == 2 && !gui.canDispatch(Action::remove), "separate track focus and selection"))
+        if (!check(gui.activeEditingArea() == EditingArea::tracks && gui.actionSelection.track == second->itemID
+                && gui.actionSelection.clips.size() == 2 && gui.canDispatch(Action::remove)
+                && gui.canDispatch(Action::copy), "separate track focus and selection"))
+            return false;
+        if (!check(!gui.trackIsHighlighted(*first) && gui.trackIsHighlighted(*second),
+                   "Track List focus highlights only its selected track"))
+            return false;
+        click({ gui.timeX(seconds(1.0)), 10 });
+        if (!check(gui.actionSelection.track == second->itemID && gui.trackIsHighlighted(*first)
+                && gui.trackIsHighlighted(*second) && gui.inspector.getText().contains("2 clips selected")
+                && gui.canDispatch(Action::copy),
+                   "Timeline focus highlights both clip tracks without retargeting Track List actions"))
+            return false;
+        click(midiPoint);
+        if (!check(gui.trackIsHighlighted(*first) && !gui.trackIsHighlighted(*second)
+                && gui.actionSelection.track == second->itemID,
+                   "single Timeline selection clears stale track highlight"))
+            return false;
+        click(audioPoint, true);
+        click({ 30, rowY(1) });
+        if (!check(!gui.trackIsHighlighted(*first) && gui.trackIsHighlighted(*second)
+                && gui.actionSelection.clips.size() == 2,
+                   "returning to Tracks restores the stored highlight and retains both clips"))
             return false;
         const auto trackFrom = ju::Point<int>(20, rulerHeight + 1);
         const auto trackTo = ju::Point<int>(70, rowY(1));
         gui.arrangement.mouseDown(mouse(gui.arrangement, trackFrom, ju::ModifierKeys::leftButtonModifier, trackFrom));
         gui.arrangement.mouseUp(mouse(gui.arrangement, trackTo, 0, trackFrom, true));
-        if (!check(gui.actionSelection.tracks.size() == 2, "track box selects both headers"))
+        if (!check(!gui.actionSelection.track.isValid() && gui.actionSelection.clips.size() == 2,
+                   "dragging in the header does not select tracks or change the Timeline selection"))
             return false;
 
         click(midiPoint);
@@ -589,23 +637,24 @@ public:
         if (!check(gui.activeEditingArea() == EditingArea::timeline, "showing Effects preserves current focus"))
             return false;
 
-        click({ gui.timeX(seconds(4.13)), rowY(1) });
-        if (!check(gui.actionSelection.clips.empty() && gui.canDispatch(Action::paste),
-                   "empty lane click clears clips and sets paste destination"))
+        click({ gui.timeX(seconds(4.13)), rowY(0) });
+        if (!check(gui.actionSelection.clips.empty() && gui.canDispatch(Action::paste)
+                && !gui.trackIsHighlighted(*first) && !gui.trackIsHighlighted(*second),
+                   "empty Timeline selection sets paste destination without a stale track highlight"))
             return false;
         const auto destination = gui.editCursor;
         gui.dispatchAction(Action::paste);
         auto* pasted = gui.selectedClip();
         if (!check(dynamic_cast<te::MidiClip*>(pasted) && pasted->itemID != midiID
-                && second->getClips().size() == 2 && std::abs((pasted->getPosition().getStart() - destination).inSeconds()) < 0.000001,
+                && first->getClips().size() == 2 && std::abs((pasted->getPosition().getStart() - destination).inSeconds()) < 0.000001,
                    "MIDI Paste creates and selects an independent clip at the unsnapped cursor"))
             return false;
         const auto pasteID = pasted->itemID;
         gui.commandManager.invokeDirectly(undo, false);
-        if (!check(second->getClips().size() == 1 && gui.actionSelection.clips.empty(), "one undo removes paste"))
+        if (!check(first->getClips().size() == 1 && gui.actionSelection.clips.empty(), "one undo removes paste"))
             return false;
         gui.commandManager.invokeDirectly(redo, false);
-        if (!check(te::findClipForID(*gui.edit, pasteID) && second->getClips().size() == 2, "redo restores paste"))
+        if (!check(te::findClipForID(*gui.edit, pasteID) && first->getClips().size() == 2, "redo restores paste"))
             return false;
 
         click(audioPoint);
@@ -615,23 +664,23 @@ public:
                 && te::findClipForID(*gui.edit, pasteID)->getPosition().getStart() == destination, "Delete leaves the gap"))
             return false;
         gui.commandManager.invokeDirectly(undo, false);
-        if (!check(te::findClipForID(*gui.edit, audioID) && second->getClips().size() == 2, "undo restores audio clip"))
+        if (!check(te::findClipForID(*gui.edit, audioID) && second->getClips().size() == 1, "undo restores audio clip"))
             return false;
 
         gui.snap.setSelectedId(4, ju::dontSendNotification);
-        click({ gui.timeX(seconds(2.71)), rowY(0) });
+        click({ gui.timeX(seconds(2.71)), rowY(1) });
         gui.seek(2.71, false);
         const auto snapped = gui.pasteStart();
         gui.dispatchAction(Action::paste);
         auto* pastedWave = dynamic_cast<te::WaveAudioClip*>(gui.selectedClip());
         if (!check(pastedWave && pastedWave->itemID != audioID && pastedWave->getOriginalFile() == audio
-                && pastedWave->getPosition().getStart() == snapped && first->getClips().size() == 2,
+                && pastedWave->getPosition().getStart() == snapped && second->getClips().size() == 2,
                    "WAV Paste preserves media and snaps on the destination lane"))
             return false;
 
         const auto clipCount = first->getClips().size();
         for (const auto& slot : gui.actionButtons)
-            if (slot.action != Action::copy && slot.action != Action::paste && slot.action != Action::remove)
+            if (slot.action == Action::split || slot.action == Action::trim || slot.action == Action::reserved)
             {
                 if (!check(!slot.button->isEnabled() && !gui.canDispatch(slot.action), "deferred actions stay disabled"))
                     return false;
@@ -639,8 +688,395 @@ public:
             }
         if (!check(first->getClips().size() == clipCount, "disabled actions leave clips alone"))
             return false;
+        gui.edit->ensureNumberOfAudioTracks(4);
+        gui.trackAt(2)->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        gui.trackAt(3)->state.setProperty(trackTypeProperty, "Audio", nullptr);
+        gui.actionSelection.clips = { midiID, audioID };
+        gui.selection = 3;
+        gui.dispatchAction(Action::copy);
+        if (!check(!gui.canDispatch(Action::paste) && !gui.canDispatch(Action::up),
+                   "missing destination rejects a group before mutation"))
+            return false;
+        gui.dispatchAction(Action::paste);
+        if (!check(gui.trackAt(3)->getClips().isEmpty(), "rejected paste leaves the destination empty"))
+            return false;
+
+        gui.dispatchAction(Action::cut);
+        if (!check(!te::findClipForID(*gui.edit, midiID) && !te::findClipForID(*gui.edit, audioID),
+                   "cut removes both selected clips"))
+            return false;
+        gui.useHistory(false);
+        if (!check(te::findClipForID(*gui.edit, midiID) && te::findClipForID(*gui.edit, audioID),
+                   "one global undo restores both cut clips"))
+            return false;
+        gui.selection = 2;
+        gui.trackAt(3)->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        gui.dispatchAction(Action::paste);
+        if (!check(gui.trackAt(2)->getClips().isEmpty() && gui.trackAt(3)->getClips().isEmpty()
+                && gui.incompatiblePlacement(Action::paste).contains("Cannot place Audio clips"),
+                   "one incompatible group paste destination leaves both lanes empty"))
+            return false;
+        gui.trackAt(3)->state.setProperty(trackTypeProperty, "Audio", nullptr);
+        gui.seek(5.15, false);
+        const auto groupAnchor = gui.pasteStart();
+        gui.dispatchAction(Action::paste);
+        if (!check(gui.actionSelection.clips.size() == 2 && gui.trackAt(2)->getClips().size() == 1
+                && gui.trackAt(3)->getClips().size() == 1
+                && gui.trackAt(2)->getClips().getFirst()->getPosition().getStart() == groupAnchor
+                && std::abs((gui.trackAt(3)->getClips().getFirst()->getPosition().getStart() - groupAnchor).inSeconds() - 2.0) < 0.000001,
+                   "paste preserves timing, track offsets and selection"))
+            return false;
+
+        gui.snap.setSelectedId(1, ju::dontSendNotification);
+        if (!check(gui.canDispatch(Action::left) && !gui.canDispatch(Action::endMinus)
+                && !gui.canDispatch(Action::up) && gui.incompatiblePlacement(Action::up).isNotEmpty(),
+                   "Snap Off retains horizontal MOVE and blocks an incompatible vertical group move"))
+            return false;
+        gui.snap.setSelectedId(4, ju::dontSendNotification);
+        for (const auto action : { Action::startMinus, Action::startPlus, Action::endMinus, Action::endPlus,
+                                   Action::split, Action::trim, Action::reserved })
+            if (!check(!gui.canDispatch(action), "all group SIZE and MODIFY actions are disabled"))
+                return false;
+
+        gui.dispatchAction(Action::left);
+        const auto movedStart = gui.trackAt(2)->getClips().getFirst()->getPosition().getStart();
+        if (!check(movedStart < groupAnchor, "horizontal MOVE steps left"))
+            return false;
+        gui.dispatchAction(Action::up);
+        if (!check(gui.trackAt(2)->getClips().size() == 1 && gui.trackAt(3)->getClips().size() == 1,
+                   "incompatible vertical MOVE leaves both selected clips in place"))
+            return false;
+
+        auto* movingMidi = gui.trackAt(2)->getClips().getFirst();
+        gui.dragItem = movingMidi->itemID;
+        gui.dragAnchor = movedStart.inSeconds();
+        gui.updateDragPreview(gui.dragAnchor, 1);
+        gui.finishDrag();
+        if (!check(!gui.dragPreview && gui.dragError.isNotEmpty()
+                && gui.trackAt(2)->getClips().size() == 1 && gui.trackAt(3)->getClips().size() == 1,
+                   "incompatible group drop keeps both clips at their original positions"))
+            return false;
+        gui.updateDragPreview(gui.dragAnchor, 0);
+        gui.finishDrag();
+        gui.dragItem = {};
+        gui.dragPreview.reset();
+        const auto firstClips = gui.trackAt(0)->getClips();
+        if (!check(gui.trackAt(3)->getClips().isEmpty()
+                && std::any_of(firstClips.begin(), firstClips.end(),
+                               [movedStart](auto* clip) { return clip->getPosition().getStart() == movedStart; }),
+                   "compatible group drag preserves timing and row offsets"))
+            return false;
+        gui.useHistory(false);
+        if (!check(gui.trackAt(3)->getClips().size() == 1, "one undo restores both rows"))
+            return false;
+        gui.useHistory(false);
+        const auto* pastedMidi = gui.trackAt(2)->getClips().getFirst();
+        if (!check(pastedMidi && pastedMidi->getPosition().getStart() == groupAnchor, "one undo restores group timing"))
+            return false;
+
+        gui.actionSelection.clips = { pastedMidi->itemID };
+        const auto oldPosition = pastedMidi->getPosition();
+        gui.dispatchAction(Action::startPlus);
+        if (!check(pastedMidi->getPosition().getStart() > oldPosition.getStart()
+                && pastedMidi->getPosition().getEnd() == oldPosition.getEnd()
+                && pastedMidi->getPosition().getStartOfSource() == oldPosition.getStartOfSource(),
+                   "START + preserves end and source alignment"))
+            return false;
+        gui.useHistory(false);
+        if (!check(pastedMidi->getPosition() == oldPosition && gui.canUseHistory(true), "one undo restores trim"))
+            return false;
+
+        const auto secondTrackID = gui.trackAt(1)->itemID;
+        const auto firstTrackID = gui.trackAt(0)->itemID;
+        gui.selectTrack(1);
+        gui.dispatchAction(Action::up);
+        if (!check(gui.trackAt(0)->itemID == secondTrackID && gui.trackAt(1)->itemID == firstTrackID
+                && gui.actionSelection.track == secondTrackID && gui.actionSelection.clips.size() == 1,
+                   "track MOVE reorders one track and preserves the Timeline selection"))
+            return false;
+        for (const auto action : { Action::startMinus, Action::startPlus, Action::endMinus, Action::endPlus })
+            if (!check(!gui.canDispatch(action), "all SIZE actions are disabled with Tracks focused"))
+                return false;
+        gui.useHistory(false);
+        if (!check(gui.trackAt(1)->itemID == secondTrackID && gui.trackAt(0)->itemID == firstTrackID,
+                   "one global undo restores track order"))
+            return false;
+        gui.actionSelection.requestedArea = EditingArea::timeline;
+        const auto pastedMidiID = gui.trackAt(2)->getClips().getFirst()->itemID;
+        gui.actionSelection.clips = { pastedMidiID };
+        const auto near = [](double actual, double expected) { return std::abs(actual - expected) < 1.0e-9; };
+        for (const auto& [bpm, grid] : { std::pair{ 80.0, 2 }, std::pair{ 150.0, 4 } })
+        {
+            gui.edit->tempoSequence.getTempoAt(te::TimePosition{}).setBpm(bpm);
+            const auto clipPosition = [&] { return te::findClipForID(*gui.edit, pastedMidiID)->getPosition(); };
+            gui.snap.setSelectedId(grid, ju::dontSendNotification);
+            const auto gridStart = clipPosition().getStart();
+            gui.dispatchAction(Action::right);
+            if (!check(near((clipPosition().getStart() - gridStart).inSeconds(),
+                            60.0 / bpm / (1 << (grid - 2))), "Snap On uses the selected grid division"))
+                return false;
+            gui.useHistory(false);
+            gui.snap.setSelectedId(1, ju::dontSendNotification);
+            for (const auto action : { Action::right, Action::left, Action::startPlus, Action::startMinus,
+                                       Action::endMinus, Action::endPlus })
+            {
+                const auto before = clipPosition();
+                gui.dispatchAction(action);
+                const auto after = clipPosition();
+                const bool earlier = action == Action::left || action == Action::startMinus || action == Action::endMinus;
+                const bool changesStart = action != Action::endMinus && action != Action::endPlus;
+                const bool changesEnd = action != Action::startMinus && action != Action::startPlus;
+                const double delta = earlier ? -0.010 : 0.010;
+                if (!check(near((after.getStart() - before.getStart()).inSeconds(), changesStart ? delta : 0.0)
+                        && near((after.getEnd() - before.getEnd()).inSeconds(), changesEnd ? delta : 0.0),
+                           "Snap Off moves each affected boundary by exactly 10 ms"))
+                    return false;
+                gui.useHistory(false);
+                if (!check(clipPosition() == before, "one undo restores the Snap Off edit"))
+                    return false;
+                gui.useHistory(true);
+                if (!check(clipPosition() == after, "one redo restores the Snap Off edit"))
+                    return false;
+            }
+        }
+        auto* third = gui.trackAt(2);
+        auto* fourth = gui.trackAt(3);
+        first->setName("Source");
+        first->getVolumePlugin()->setVolumeDb(-6.0f);
+        first->getVolumePlugin()->setPan(0.25f);
+        first->getOutput().setOutputToTrack(second);
+        if (!check(insertBuiltIn<te::ReverbPlugin>(*first), "create source effect"))
+            return false;
+        auto* sourceEffect = first->pluginList.findFirstPluginOfType<te::ReverbPlugin>();
+        auto* sourceParameter = sourceEffect->getAutomatableParameters().getFirst();
+        sourceParameter->getCurve().addPoint(seconds(1), 0.5f, 0.0f);
+        gui.selectTrack(0);
+        gui.dispatchAction(Action::copy);
+        gui.selectTrack(2);
+        if (!check(gui.canDispatch(Action::paste) && !gui.canDispatch(Action::cut),
+                   "Track Paste uses a separate anchor and Track Cut is disabled"))
+            return false;
+        gui.dispatchAction(Action::paste);
+        auto* clone = gui.trackAt(3);
+        if (!check(clone != nullptr, "track paste inserts below the anchor"))
+            return false;
+        auto* clonedEffect = clone->pluginList.findFirstPluginOfType<te::ReverbPlugin>();
+        if (!check(gui.trackCount() == 5 && gui.actionSelection.track == clone->itemID && clone->getName() == "Source Copy" && gui.trackAt(2) == third
+                && gui.trackAt(4) == fourth && clone->getColour() == first->getColour()
+                && clone->getClips().size() == first->getClips().size()
+                && clone->getClips().getFirst()->itemID != first->getClips().getFirst()->itemID
+                && clone->getOutput().getDestinationTrack() == second && clonedEffect
+                && clonedEffect->getAutomatableParameters().getFirst()->hasAutomationPoints(),
+                   "Track Paste creates and selects a complete independent copy below the anchor"))
+            return false;
+        const auto cloneID = clone->itemID;
+        gui.useHistory(false);
+        if (!check(gui.trackCount() == 4 && !gui.trackForID(cloneID), "one undo removes the duplicate"))
+            return false;
+        gui.useHistory(true);
+        if (!check(gui.trackCount() == 5 && gui.trackForID(cloneID), "one redo restores the duplicate"))
+            return false;
+
+        gui.selectTrack(2);
+        gui.dispatchAction(Action::paste);
+        if (!check(gui.trackCount() == 6 && gui.trackAt(3)->getName() == "Source Copy 2",
+                   "repeated Track Paste uses a unique suffix"))
+            return false;
+        gui.useHistory(false);
+
+        gui.selectTrack(0);
+        gui.useInspectorSettings(false);
+        gui.selectTrack(4);
+        const auto fourthName = fourth->getName();
+        const auto fourthClips = fourth->getClips().size();
+        const auto fourthColor = fourth->getColour();
+        gui.useInspectorSettings(true);
+        auto* replacement = fourth->pluginList.findFirstPluginOfType<te::ReverbPlugin>();
+        if (!check(replacement && !replacement->getAutomatableParameters().getFirst()->hasAutomationPoints()
+                && std::abs(fourth->getVolumePlugin()->getVolumeDb() + 6.0f) < 0.0001f
+                && fourth->getVolumePlugin()->getPan() == 0.25f && fourth->getOutput().getDestinationTrack() == second
+                && fourth->getName() == fourthName && fourth->getColour() == fourthColor
+                && fourth->getClips().size() == fourthClips,
+                   "Inspector applies mixer, effects and output settings while leaving other track state intact"))
+            return false;
+        replacement->getAutomatableParameters().getFirst()->getCurve().addPoint(seconds(2), 0.4f, 0.0f);
+        gui.selectTrack(2);
+        gui.useInspectorSettings(false);
+        gui.selectTrack(4);
+        gui.useInspectorSettings(true);
+        if (!check(fourth->pluginList.findFirstPluginOfType<te::ReverbPlugin>() == replacement,
+                   "Inspector rejects an apply that would remove destination effect automation"))
+            return false;
+        gui.selectTrack(0);
+        gui.useInspectorSettings(false);
+        gui.selectTrack(4);
+        gui.useInspectorSettings(true);
+        auto* retained = fourth->pluginList.findFirstPluginOfType<te::ReverbPlugin>();
+        if (!check(retained && retained->getAutomatableParameters().getFirst()->hasAutomationPoints(),
+                   "Inspector preserves compatible destination automation"))
+            return false;
+
+        gui.edit->ensureNumberOfAudioTracks(20);
+        gui.selectTrack(19);
+        for (int count = 21; count <= maxTracks; ++count)
+        {
+            if (!check(gui.canDispatch(Action::paste), "Track Paste is available for tracks 21–24"))
+                return false;
+            gui.dispatchAction(Action::paste);
+            if (!check(gui.trackCount() == count && gui.actionTrack() == gui.trackAt(count - 1)
+                    && gui.selection < gui.firstRow + gui.rowsOnScreen(),
+                       "Track Paste inserts and reveals the new bottom row"))
+                return false;
+        }
+        const auto lastID = gui.actionTrack()->itemID;
+        if (!check(!gui.canDispatch(Action::paste) && !gui.canAddTrack(), "track creation is disabled at 24 tracks"))
+            return false;
+        gui.dispatchAction(Action::paste);
+        gui.addTrack(false);
+        if (!check(gui.trackCount() == maxTracks, "neither Paste nor Insert creates a 25th track"))
+            return false;
+        gui.useHistory(false);
+        if (!check(gui.trackCount() == maxTracks - 1 && !gui.trackForID(lastID), "undo removes track 24"))
+            return false;
+        gui.useHistory(true);
+        if (!check(gui.trackCount() == maxTracks && gui.trackForID(lastID) && gui.save(), "redo restores and saves track 24"))
+            return false;
+        auto reopened = te::loadEditFromFile(engine, project);
+        if (!check(reopened && te::getAudioTracks(*reopened).size() == maxTracks
+                && te::findTrackForID(*reopened, lastID), "all 24 tracks survive reopening"))
+            return false;
+        reopened.reset();
         gui.setProject(te::createEmptyEdit(engine, project), project);
-        return check(!gui.clipClipboard && gui.actionSelection.clips.empty(), "opening a project clears clipboard and selection");
+        return check(!gui.clipClipboard && !gui.trackClipboard && !gui.inspectorClipboard && gui.actionSelection.clips.empty(),
+                     "opening a project clears clipboard and selection")
+            && testClipPlacementAndMinimum(gui, engine, project, audio, check);
+    }
+
+    static bool testClipPlacementAndMinimum(MainGui& gui, te::Engine& engine, const ju::File& project,
+                                            const ju::File& audio, bool (*check)(bool, const char*))
+    {
+        using Action = UniversalAction;
+        const auto seconds = te::TimePosition::fromSeconds<double>;
+        gui.edit->ensureNumberOfAudioTracks(3);
+        auto* first = gui.trackAt(0);
+        auto* second = gui.trackAt(1);
+        auto* third = gui.trackAt(2);
+        first->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        second->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        third->state.setProperty(trackTypeProperty, "Audio", nullptr);
+        if (!check(insertAudio(*third, audio, seconds(3)), "create short WAV fixture"))
+            return false;
+
+        gui.selectTrack(2);
+        gui.insertMidi();
+        if (!check(third->getClips().size() == 1 && gui.status.getText().contains("Cannot place MIDI clips"),
+                   "MIDI Item refuses an Audio track"))
+            return false;
+        gui.selectTrack(0);
+        gui.importWave();
+        if (!check(first->getClips().isEmpty() && gui.status.getText().contains("Cannot place Audio clips"),
+                   "Audio File refuses a MIDI track before choosing a file"))
+            return false;
+
+        auto midi = te::insertMIDIClip(*first, "Threshold", { seconds(1), seconds(1.135) });
+        if (!check(midi != nullptr, "create MIDI clip near the size threshold"))
+            return false;
+        const auto id = midi->itemID;
+        midi = nullptr;
+        const auto find = [&] { return te::findClipForID(*gui.edit, id); };
+        gui.actionSelection.requestedArea = EditingArea::timeline;
+        gui.actionSelection.clips = { id };
+        gui.snap.setSelectedId(1, ju::dontSendNotification);
+        const auto original = find()->getPosition();
+        gui.dispatchAction(Action::endMinus);
+        const auto atMinimum = find()->getPosition();
+        if (!check(std::abs(atMinimum.getLength().inSeconds() - 0.125) < 1.0e-9
+                && !gui.canDispatch(Action::endMinus) && !gui.canDispatch(Action::startPlus),
+                   "Snap Off reaches the exact 4/4 threshold and blocks both further shrink actions"))
+            return false;
+        gui.useHistory(false);
+        if (!check(find()->getPosition() == original, "Undo restores pre-trim duration"))
+            return false;
+        gui.useHistory(true);
+        if (!check(find()->getPosition() == atMinimum, "Redo restores exact threshold"))
+            return false;
+        gui.snap.setSelectedId(4, ju::dontSendNotification);
+        if (!check(!gui.canDispatch(Action::endMinus) && !gui.canDispatch(Action::startPlus),
+                   "Snap On does not override the minimum"))
+            return false;
+
+        gui.snap.setSelectedId(1, ju::dontSendNotification);
+        find()->setPosition({ { seconds(1), seconds(1.04) }, {} });
+        if (!check(!gui.canDispatch(Action::startPlus) && !gui.canDispatch(Action::endMinus)
+                && !gui.canDispatch(Action::startMinus) && gui.canDispatch(Action::endPlus),
+                   "legacy short clip can grow without revealing media before its source"))
+            return false;
+        gui.dispatchAction(Action::endPlus);
+        if (!check(std::abs(find()->getPosition().getLength().inSeconds() - 0.05) < 1.0e-9
+                && !gui.canDispatch(Action::endMinus), "a short clip grows by one full Snap Off step"))
+            return false;
+
+        if (!check(gui.canDispatch(Action::down), "compatible single vertical move is available"))
+            return false;
+        gui.dispatchAction(Action::down);
+        if (!check(find()->getTrack() == second && gui.incompatiblePlacement(Action::down).isNotEmpty(),
+                   "single vertical move rejects the next incompatible lane"))
+            return false;
+        gui.dispatchAction(Action::down);
+        if (!check(find()->getTrack() == second && third->getClips().size() == 1, "rejected move starts no transaction"))
+            return false;
+        gui.useHistory(false);
+        if (!check(find()->getTrack() == first, "Undo returns the compatible move to its source"))
+            return false;
+        gui.useHistory(true);
+        if (!check(find()->getTrack() == second, "Redo restores the compatible move"))
+            return false;
+
+        auto& sequence = gui.edit->tempoSequence;
+        sequence.getTimeSigAt(seconds(0)).setStringTimeSig("7/8");
+        sequence.insertTempo(te::BeatPosition::fromBeats(1.0), 70.0, 1.0f);
+        te::tempo::Sequence::Position position(sequence.getInternalSequence());
+        const auto ppq = [&position](double beats) {
+            position.setPPQTime(beats);
+            return position.getTime();
+        };
+        const te::TimeRange acrossTempo { ppq(0.4), ppq(0.8) };
+        if (!check(gui.meetsMinimumDuration(acrossTempo, { ppq(0.4), ppq(0.61875) })
+                && !gui.meetsMinimumDuration(acrossTempo, { ppq(0.4), ppq(0.61) }),
+                   "7/8 minimum uses the start meter and musical duration across a tempo change"))
+            return false;
+
+        gui.selectTrack(0);
+        gui.dispatchAction(Action::copy);
+        gui.selectTrack(2);
+        gui.dispatchAction(Action::paste);
+        if (!check(trackType(*gui.trackAt(3)) == TrackType::midi && gui.trackAt(3)->getClips().isEmpty(),
+                   "duplicate preserves the type of an empty MIDI track"))
+            return false;
+
+        third->state.removeProperty(trackTypeProperty, nullptr);
+        second->state.removeProperty(trackTypeProperty, nullptr);
+        if (!check(gui.save(), "save typed and untyped track fixtures"))
+            return false;
+        gui.setProject(te::loadEditFromFile(engine, project), project);
+        if (!check(gui.trackAt(3)->state[trackTypeProperty].toString() == "MIDI"
+                && gui.trackAt(1)->state[trackTypeProperty].toString() == "MIDI"
+                && gui.trackAt(2)->state[trackTypeProperty].toString() == "Audio",
+                   "reopen preserves explicit typing and infers homogeneous legacy track types"))
+            return false;
+
+        auto* mixed = gui.trackAt(2);
+        if (!check(te::insertMIDIClip(*mixed, "Legacy MIDI", { seconds(1), seconds(2) }) != nullptr,
+                   "create unexpected mixed legacy fixture"))
+            return false;
+        mixed->state.removeProperty(trackTypeProperty, nullptr);
+        if (!check(gui.save(), "save mixed legacy fixture"))
+            return false;
+        gui.setProject(te::loadEditFromFile(engine, project), project);
+        return check(gui.trackAt(2)->getClips().size() == 2 && trackType(*gui.trackAt(2)) == TrackType::mixed
+                && gui.status.getText().contains("Mixed legacy tracks")
+                && placementError(TrackType::audio, *gui.trackAt(2)).isNotEmpty(),
+                     "unexpected mixed legacy track is reported and its clips remain intact");
     }
 
     static bool testCorrections(te::Engine& engine)
@@ -780,7 +1216,8 @@ private:
         if (commandManager.getKeyMappings()->findCommandForKeyPress(ju::KeyPress(key)) != deleteItem
             || !timeSelection)
             return false;
-        selectTrack(0);
+        addTrack(true);
+        const auto midiRow = selection;
         insertMidi();
         auto* clip = selectedClip();
         if (!clip)
@@ -795,9 +1232,9 @@ private:
             return false;
         if (!invokeShortcut(deleteItem, key) || timeSelection || !edit->getTransport().getLoopRange().isEmpty())
             return false;
-        const auto clipCount = trackAt(0)->getClips().size();
+        const auto clipCount = trackAt(midiRow)->getClips().size();
         invokeShortcut(deleteItem, key);
-        return trackAt(0)->getClips().size() == clipCount;
+        return trackAt(midiRow)->getClips().size() == clipCount;
     }
 
     static bool testInputRoutes(te::Engine& engine, const ju::File& directory)
@@ -837,6 +1274,34 @@ private:
             return false;
         if (toggleInput(input, first).failed() || isArmed(input, first.itemID)
             || !isArmed(input, second.itemID) || toggleInput(input, first).failed())
+            return false;
+        using Action = UniversalAction;
+        gui.selectTrack(0);
+        gui.dispatchAction(Action::copy);
+        gui.selectTrack(1);
+        gui.dispatchAction(Action::paste);
+        auto* clone = gui.trackAt(2);
+        if (!clone || !isArmed(input, clone->itemID) || !isArmed(input, first.itemID)
+            || !isArmed(input, second.itemID) || !clone->getOutput().usesDefaultAudioOut())
+            return false;
+        const auto cloneID = clone->itemID;
+        gui.useHistory(false);
+        if (gui.trackCount() != 2 || isArmed(input, cloneID))
+            return false;
+        gui.useHistory(true);
+        if (gui.trackCount() != 3 || !isArmed(input, cloneID))
+            return false;
+        gui.useHistory(false);
+
+        // Applying Inspector settings must not copy the source's input assignment.
+        if (toggleInput(input, second).failed())
+            return false;
+        gui.selectTrack(0);
+        gui.useInspectorSettings(false);
+        gui.selectTrack(1);
+        gui.useInspectorSettings(true);
+        if (!isArmed(input, first.itemID) || isArmed(input, second.itemID)
+            || toggleInput(input, second).failed())
             return false;
         auto* firstMeterPlugin = first.getLevelMeterPlugin();
         auto* secondMeterPlugin = second.getLevelMeterPlugin();
@@ -1081,16 +1546,18 @@ private:
         switch (id)
         {
             case saveProject: case saveProjectAs: case exportAudio: info.setActive(stopped); break;
-            case undo: info.setActive(stopped && edit->getUndoManager().canUndo()); break;
-            case redo: info.setActive(stopped && edit->getUndoManager().canRedo()); break;
-            case cut: case duplicate: info.setActive(false); break;
+            case undo: info.setActive(canUseHistory(false)); break;
+            case redo: info.setActive(canUseHistory(true)); break;
+            case cut: info.setActive(canDispatch(UniversalAction::cut)); break;
+            case duplicate: info.setActive(false); break;
             case copy: info.setActive(canDispatch(UniversalAction::copy)); break;
-            case paste: info.setActive(canDispatch(UniversalAction::paste)); break;
+            case paste: info.setActive(canDispatch(UniversalAction::paste)
+                || incompatiblePlacement(UniversalAction::paste).isNotEmpty()); break;
             case deleteItem: info.setActive(canDispatch(UniversalAction::remove) || canClearTimeSelection()); break;
             case locateFile:
                 info.setActive(stopped && activeEditingArea() == EditingArea::timeline && missingWave(selectedClip()));
                 break;
-            case audioTrack: case midiTrack: info.setActive(stopped && trackCount() < maxTracks); break;
+            case audioTrack: case midiTrack: info.setActive(stopped && canAddTrack()); break;
             case armAudio: info.setActive(edit && !edit->getTransport().isRecording() && hasTrack); break;
             case midiItem: case audioFile: case importAudio: case armMidi: case synth: case reverb: case vst3:
                 info.setActive(stopped && hasTrack); break;
@@ -1126,8 +1593,9 @@ private:
             case audioFile: case importAudio: importWave(); break;
             case exportAudio: exportProject(); break;
             case exitApp: ju::JUCEApplication::getInstance()->systemRequestedQuit(); break;
-            case undo: if (ready() && edit->getUndoManager().undo()) edit->restartPlayback(); break;
-            case redo: if (ready() && edit->getUndoManager().redo()) edit->restartPlayback(); break;
+            case undo: useHistory(false); break;
+            case redo: useHistory(true); break;
+            case cut: dispatchAction(UniversalAction::cut); break;
             case copy: dispatchAction(UniversalAction::copy); break;
             case paste: dispatchAction(UniversalAction::paste); break;
             case deleteItem:
@@ -1224,10 +1692,40 @@ private:
         return actionSelection.activeArea(panels.workspaceOpen && activeTab == 1, panels.inspectorOpen);
     }
 
+    bool editingStopped() const
+    {
+        return edit && !edit->getTransport().isPlaying() && !edit->getTransport().isRecording();
+    }
+
     bool canEditTimeline() const
     {
-        return edit && !edit->getTransport().isPlaying() && !edit->getTransport().isRecording()
-            && activeEditingArea() == EditingArea::timeline;
+        return editingStopped() && activeEditingArea() == EditingArea::timeline;
+    }
+
+    bool canUseHistory(bool redoAction) const
+    {
+        return editingStopped() && (redoAction ? edit->getUndoManager().canRedo()
+                                               : edit->getUndoManager().canUndo());
+    }
+
+    void useHistory(bool redoAction)
+    {
+        if (!canUseHistory(redoAction))
+            return;
+        const auto* primary = trackAt(selection);
+        const auto primaryID = primary ? primary->itemID : te::EditItemID{};
+        auto& history = edit->getUndoManager();
+        if (redoAction ? history.redo() : history.undo())
+        {
+            selection = te::getAudioTracks(*edit).indexOf(trackForID(primaryID));
+            edit->restartPlayback();
+        }
+        updateControls();
+    }
+
+    te::AudioTrack* trackForID(te::EditItemID id) const
+    {
+        return edit && id.isValid() ? dynamic_cast<te::AudioTrack*>(te::findTrackForID(*edit, id)) : nullptr;
     }
 
     te::TimePosition pasteStart() const
@@ -1235,92 +1733,816 @@ private:
         return te::TimePosition::fromSeconds(snapSeconds(editCursor.inSeconds()));
     }
 
-    bool canDispatch(UniversalAction action) const
+    static bool ordinaryClip(te::Clip& clip)
     {
-        if (!canEditTimeline())
+        return !clip.isGrouped() && !clip.isLinked() && !clip.getPosition().time.isEmpty()
+            && (dynamic_cast<te::WaveAudioClip*>(&clip) || dynamic_cast<te::MidiClip*>(&clip));
+    }
+
+    enum class TrackType { audio, midi, mixed };
+    static inline const ju::Identifier trackTypeProperty { "simpleDawTrackType" };
+
+    static ju::String trackTypeName(TrackType type)
+    {
+        switch (type)
+        {
+            case TrackType::audio: return "Audio";
+            case TrackType::midi: return "MIDI";
+            case TrackType::mixed: return "Mixed legacy";
+        }
+        return {};
+    }
+
+    static TrackType clipType(const te::Clip& clip)
+    {
+        return dynamic_cast<const te::MidiClip*>(&clip) ? TrackType::midi : TrackType::audio;
+    }
+
+    static TrackType trackType(const te::AudioTrack& track)
+    {
+        const auto saved = track.state[trackTypeProperty].toString();
+        if (saved == "Audio") return TrackType::audio;
+        if (saved == "MIDI") return TrackType::midi;
+        if (saved == "Mixed legacy") return TrackType::mixed;
+
+        bool audio = false, midi = false;
+        for (auto* clip : track.getClips())
+        {
+            audio |= clipType(*clip) == TrackType::audio;
+            midi |= clipType(*clip) == TrackType::midi;
+        }
+        if (audio && midi) return TrackType::mixed;
+        if (midi || (!audio && track.getName().startsWithIgnoreCase("MIDI "))) return TrackType::midi;
+        return TrackType::audio;
+    }
+
+    static ju::String placementError(TrackType type, const te::AudioTrack& destination)
+    {
+        const auto targetType = trackType(destination);
+        if (targetType == type)
+            return {};
+        if (targetType == TrackType::mixed)
+            return "Cannot place clips on a mixed legacy track. Its existing clips are unchanged.";
+        return "Cannot place " + trackTypeName(type) + " clips on "
+            + (targetType == TrackType::audio ? "an Audio" : "a MIDI") + " track.";
+    }
+
+    void warnPlacement(const ju::String& message)
+    {
+        report(message);
+        if (isShowing())
+            ju::AlertWindow::showMessageBoxAsync(ju::MessageBoxIconType::WarningIcon, "Incompatible track", message, "OK");
+    }
+
+    bool meetsMinimumDuration(te::TimeRange before, te::TimeRange after) const
+    {
+        const auto& sequence = edit->tempoSequence;
+        const auto& meter = sequence.getTimeSigAt(before.getStart());
+        const double minimum = meter.numerator.get() * 4.0 / (16.0 * meter.denominator.get());
+        te::tempo::Sequence::Position position(sequence.getInternalSequence());
+        const auto duration = [&position](te::TimeRange range) {
+            position.set(range.getStart());
+            const auto start = position.getPPQTime();
+            position.set(range.getEnd());
+            return position.getPPQTime() - start;
+        };
+        const auto previous = duration(before);
+        const auto next = duration(after);
+        constexpr auto tolerance = 1.0e-9;
+        return next >= previous - tolerance || next >= minimum - tolerance;
+    }
+
+    bool destinationAvailable(te::AudioTrack* track, int added) const
+    {
+        return track && !track->isFrozen(te::Track::anyFreeze)
+            && track->getClips().size() + added <= engine.getEngineBehaviour().getEditLimits().maxClipsInTrack;
+    }
+
+    struct Placement
+    {
+        te::AudioTrack* track;
+        te::ClipPosition position;
+    };
+
+    std::vector<Placement> pastePlan(ju::String* reason = nullptr) const
+    {
+        if (!clipClipboard || !trackAt(selection))
+            return {};
+        const auto tracks = te::getAudioTracks(*edit);
+        const auto anchor = pasteStart();
+        std::map<te::AudioTrack*, int> added;
+        std::vector<Placement> plan;
+        for (const auto& item : clipClipboard->clips)
+        {
+            auto* track = tracks[selection + item.trackOffset];
+            const auto start = anchor + te::TimeDuration::fromSeconds(double(item.state[te::IDs::start]));
+            const auto& tempoSequence = edit->tempoSequence;
+            const auto end = item.hasBeatTimes ? tempoSequence.toTime(tempoSequence.toBeats(start) + item.lengthBeats)
+                : start + te::TimeDuration::fromSeconds(double(item.state[te::IDs::length]));
+            const auto offset = te::TimeDuration::fromSeconds(item.hasBeatTimes
+                ? item.offsetBeats.inBeats() / tempoSequence.getBeatsPerSecondAt(start)
+                : double(item.state[te::IDs::offset]));
+            if (!destinationAvailable(track, ++added[track]) || start < te::TimePosition{}
+                || end <= start || end > te::Edit::getMaximumEditEnd())
+                return {};
+            const auto type = item.state.hasType(te::IDs::MIDICLIP) ? TrackType::midi : TrackType::audio;
+            const auto error = placementError(type, *track);
+            if (error.isNotEmpty())
+            {
+                if (reason) *reason = error;
+                return {};
+            }
+            plan.push_back({ track, { { start, end }, offset } });
+        }
+        return plan;
+    }
+
+    bool snapshotClips(const std::vector<te::Clip*>& clips)
+    {
+        const auto tracks = te::getAudioTracks(*edit);
+        auto first = tracks.size();
+        te::SelectableList items;
+        for (auto* clip : clips)
+        {
+            first = std::min(first, tracks.indexOf(dynamic_cast<te::AudioTrack*>(clip->getTrack())));
+            items.add(clip);
+        }
+        auto snapshot = std::make_unique<te::Clipboard::Clips>();
+        snapshot->addSelectedClips(items, {}, te::Clipboard::Clips::AutomationLocked::no);
+        if (first < 0 || snapshot->clips.size() != clips.size())
             return false;
 
-        switch (action)
+        // Tracktion records offsets in the full edit tree. The arrangement uses visible audio rows.
+        const auto allTracks = te::getAllTracks(*edit);
+        auto firstFull = allTracks.size();
+        for (auto* clip : clips)
+            firstFull = std::min(firstFull, allTracks.indexOf(clip->getTrack()));
+        for (auto& item : snapshot->clips)
+            item.trackOffset = tracks.indexOf(dynamic_cast<te::AudioTrack*>(allTracks[firstFull + item.trackOffset])) - first;
+        clipClipboard = std::move(snapshot);
+        return true;
+    }
+
+    void pasteClips(const std::vector<Placement>& plan)
+    {
+        auto& history = edit->getUndoManager();
+        history.beginNewTransaction("Paste clips");
+        ItemSelection pasted;
+        std::map<te::EditItemID, te::EditItemID> remappedIDs;
+        for (size_t i = 0; i < plan.size(); ++i)
         {
-            case UniversalAction::copy:
-                if (auto* clip = selectedClip(); clip && !clip->isGrouped() && !clip->isLinked())
-                    return (dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip))
-                        && !clip->getPosition().time.isEmpty();
-                return false;
-            case UniversalAction::remove:
-                return selectedClip() != nullptr;
-            case UniversalAction::paste:
-                if (clipClipboard && actionSelection.clips.size() <= 1)
-                {
-                    auto* destination = trackAt(selection);
-                    if (!destination || destination->getClips().size() >= engine.getEngineBehaviour().getEditLimits().maxClipsInTrack)
-                        return false;
-                    const auto& clip = clipClipboard->clips.front();
-                    const auto end = clip.hasBeatTimes
-                        ? edit->tempoSequence.toTime(edit->tempoSequence.toBeats(pasteStart()) + clip.lengthBeats)
-                        : pasteStart() + te::TimeDuration::fromSeconds(double(clip.state[te::IDs::length]));
-                    return end <= te::Edit::getMaximumEditEnd();
-                }
-                return false;
-            default:
-                return false;
+            auto state = clipClipboard->clips[i].state.createCopy();
+            te::EditItemID::remapIDs(state, nullptr, *edit, &remappedIDs);
+            const auto& position = plan[i].position;
+            state.setProperty(te::IDs::start, position.getStart().inSeconds(), nullptr);
+            state.setProperty(te::IDs::length, position.getLength().inSeconds(), nullptr);
+            state.setProperty(te::IDs::offset, position.getOffset().inSeconds(), nullptr);
+            if (auto* clip = plan[i].track->insertClipWithState(state))
+                pasted.insert(clip->itemID);
+            else
+            {
+                history.undoCurrentTransactionOnly();
+                report("Could not paste clips");
+                return;
+            }
         }
+        actionSelection.clips = std::move(pasted);
+    }
+
+    std::vector<te::Clip*> selectedClips() const
+    {
+        std::vector<te::Clip*> clips;
+        for (auto id : actionSelection.clips)
+        {
+            auto* clip = te::findClipForID(*edit, id);
+            if (!clip)
+                return {};
+            clips.push_back(clip);
+        }
+        return clips;
+    }
+
+    struct ClipChange
+    {
+        te::Clip* clip;
+        te::AudioTrack* destination;
+        te::ClipPosition position;
+    };
+
+    std::vector<ClipChange> movePlan(const std::vector<te::Clip*>& clips, int rowDelta,
+                                     te::TimeDuration delta, ju::String* reason = nullptr) const
+    {
+        const auto tracks = te::getAudioTracks(*edit);
+        std::vector<ClipChange> changes;
+        std::map<te::AudioTrack*, int> outgoing, incoming;
+        if (rowDelta != 0)
+            for (auto* clip : clips)
+                ++outgoing[dynamic_cast<te::AudioTrack*>(clip->getTrack())];
+
+        for (auto* clip : clips)
+        {
+            auto* source = dynamic_cast<te::AudioTrack*>(clip->getTrack());
+            if (!ordinaryClip(*clip) || !source || source->isFrozen(te::Track::anyFreeze))
+                return {};
+            auto position = clip->getPosition();
+            position.time = position.time + delta;
+            if (position.getStart() < te::TimePosition{} || position.getEnd() > te::Edit::getMaximumEditEnd())
+                return {};
+
+            te::AudioTrack* destination = nullptr;
+            if (rowDelta != 0)
+            {
+                destination = tracks[tracks.indexOf(source) + rowDelta];
+                if (!destinationAvailable(destination, ++incoming[destination] - outgoing[destination])
+                    || !clip->canBeAddedTo(*destination))
+                    return {};
+                const auto error = placementError(clipType(*clip), *destination);
+                if (error.isNotEmpty())
+                {
+                    if (reason) *reason = error;
+                    return {};
+                }
+            }
+            changes.push_back({ clip, destination, position });
+        }
+
+        // Move outer rows first, so outgoing clips vacate a lane before incoming clips arrive.
+        if (rowDelta != 0)
+            std::stable_sort(changes.begin(), changes.end(), [&](const auto& a, const auto& b) {
+                return rowDelta < 0 ? tracks.indexOf(a.destination) < tracks.indexOf(b.destination)
+                                    : tracks.indexOf(a.destination) > tracks.indexOf(b.destination);
+            });
+        return changes;
+    }
+
+    bool applyClipChanges(const std::vector<ClipChange>& changes, const ju::String& transaction)
+    {
+        if (changes.empty())
+            return false;
+        auto& history = edit->getUndoManager();
+        history.beginNewTransaction(transaction);
+        for (const auto& change : changes)
+        {
+            if (change.destination && (!change.clip->moveTo(*change.destination) || change.clip->getTrack() != change.destination))
+            {
+                history.undoCurrentTransactionOnly();
+                report("Could not move clips");
+                return false;
+            }
+            if (change.clip->getPosition() != change.position)
+                change.clip->setPosition(change.position);
+        }
+        return true;
+    }
+
+    std::vector<ClipChange> clipChanges(UniversalAction action, const std::vector<te::Clip*>& clips,
+                                        ju::String* reason = nullptr) const
+    {
+        using Action = UniversalAction;
+        if (clips.empty())
+            return {};
+        if (action == Action::up || action == Action::down)
+            return movePlan(clips, action == Action::up ? -1 : 1, {}, reason);
+        const bool move = action == Action::left || action == Action::right;
+        const bool start = action == Action::startMinus || action == Action::startPlus;
+        const bool earlier = action == Action::left || action == Action::startMinus || action == Action::endMinus;
+        const auto grid = snap.getSelectedId();
+        auto delta = te::TimeDuration::fromSeconds(earlier ? -0.010 : 0.010);
+        if (grid > 1)
+        {
+            auto anchor = te::Edit::getMaximumEditEnd();
+            for (auto* clip : clips)
+                anchor = std::min(anchor, (move || start) ? clip->getPosition().getStart() : clip->getPosition().getEnd());
+            const auto& sequence = edit->tempoSequence;
+            const auto step = sequence.getTimeSigAt(anchor).denominator.get() / (4.0 * (1 << (grid - 2)));
+            const auto targetBeat = sequence.toBeats(anchor) + te::BeatDuration::fromBeats(earlier ? -step : step);
+            if (targetBeat < te::BeatPosition{})
+                return {};
+            delta = sequence.toTime(targetBeat) - anchor;
+        }
+
+        if (move)
+            return movePlan(clips, 0, delta);
+
+        auto* clip = clips.front();
+        auto* source = dynamic_cast<te::AudioTrack*>(clip->getTrack());
+        if (clips.size() != 1 || !ordinaryClip(*clip) || !source || source->isFrozen(te::Track::anyFreeze)
+            || clip->isLooping() || clip->getNumTakes(true) > 1)
+            return {};
+
+        auto position = clip->getPosition();
+        const auto original = position.time;
+        if (start)
+        {
+            const auto next = position.getStart() + delta;
+            if (next < te::TimePosition{} || next >= position.getEnd())
+                return {};
+            position.time = position.time.withStart(next);
+            position.offset = position.offset + delta;
+        }
+        else
+        {
+            const auto next = position.getEnd() + delta;
+            if (next <= position.getStart() || next > te::Edit::getMaximumEditEnd())
+                return {};
+            position.time = position.time.withEnd(next);
+        }
+
+        if (position.offset < te::TimeDuration{} || !meetsMinimumDuration(original, position.time))
+            return {};
+        if (auto* wave = dynamic_cast<te::WaveAudioClip*>(clip))
+        {
+            const te::AudioFile sourceFile(engine, wave->getOriginalFile());
+            if (!sourceFile.isValid() || wave->getWarpTime() || wave->getAutoTempo()
+                || (position.offset + position.time.getLength()).inSeconds() * wave->getSpeedRatio()
+                    > sourceFile.getLength() + 1.0e-9)
+                return {};
+        }
+        return { { clip, nullptr, position } };
+    }
+
+    te::AudioTrack* actionTrack() const { return trackForID(actionSelection.track); }
+
+    te::AudioTrack* trackMoveNeighbor(UniversalAction action) const
+    {
+        auto* track = actionTrack();
+        if (!track)
+            return nullptr;
+        const auto tracks = te::getAudioTracks(*edit);
+        auto* neighbor = tracks[tracks.indexOf(track) + (action == UniversalAction::up ? -1 : 1)];
+        return neighbor && neighbor->state.getParent() == track->state.getParent() ? neighbor : nullptr;
+    }
+
+    struct TrackInputSetting
+    {
+        ju::ValueTree device, assignment;
+        std::optional<te::InputDevice::MonitorMode> monitoring;
+    };
+
+    struct TrackOutputSetting
+    {
+        te::EditItemID track;
+        ju::String device;
+    };
+
+    struct TrackSnapshot
+    {
+        ju::ValueTree state;
+        TrackOutputSetting output;
+        std::vector<TrackInputSetting> inputs;
+    };
+
+    struct TrackSettings
+    {
+        std::vector<ju::ValueTree> plugins;
+        TrackOutputSetting output;
+    };
+
+    TrackOutputSetting trackOutput(te::AudioTrack& track) const
+    {
+        auto& output = track.getOutput();
+        if (auto* destination = output.getDestinationTrack())
+            return { destination->itemID, {} };
+        return { {}, output.state.getChildWithName(te::IDs::DEVICE)[te::IDs::name].toString() };
+    }
+
+    bool outputAvailable(const TrackOutputSetting& output) const
+    {
+        if (output.track.isValid())
+            return trackForID(output.track) != nullptr;
+        auto& manager = engine.getDeviceManager();
+        return output.device.isEmpty() || output.device == te::DeviceManager::getDefaultAudioOutDeviceName(false)
+            || output.device == te::DeviceManager::getDefaultMidiOutDeviceName(false)
+            || manager.findOutputDeviceForID(output.device) || manager.findOutputDeviceWithName(output.device);
+    }
+
+    void setTrackOutput(te::AudioTrack& track, const TrackOutputSetting& output)
+    {
+        if (auto* destination = trackForID(output.track))
+            track.getOutput().setOutputToTrack(destination);
+        else
+            track.getOutput().setOutputToDeviceID(output.device);
+    }
+
+    void copyTrack(te::AudioTrack& track)
+    {
+        track.flushStateToValueTree();
+        TrackSnapshot snapshot { track.state.createCopy(), trackOutput(track), {} };
+        snapshot.state.setProperty(trackTypeProperty, trackTypeName(trackType(track)), nullptr);
+        for (auto device : edit->state.getChildWithName(te::IDs::INPUTDEVICES))
+            for (auto assignment : device)
+                if (assignment.hasType(te::IDs::INPUTDEVICEDESTINATION)
+                    && te::EditItemID::fromProperty(assignment, te::IDs::targetID) == track.itemID)
+                {
+                    auto* input = engine.getDeviceManager().findInputDeviceForID(device[te::IDs::deviceID].toString());
+                    snapshot.inputs.push_back({ device, assignment.createCopy(),
+                        input ? std::optional{ input->getMonitorMode() } : std::nullopt });
+                }
+        trackClipboard = std::move(snapshot);
+    }
+
+    bool canAddTrack() const
+    {
+        return edit && trackCount() < maxTracks
+            && te::getAllTracks(*edit).size() < engine.getEngineBehaviour().getEditLimits().maxNumTracks;
+    }
+
+    bool canPasteTrack() const
+    {
+        return actionTrack() && trackClipboard && canAddTrack() && outputAvailable(trackClipboard->output)
+            && trackClipboard->state[trackTypeProperty].toString() != "Mixed legacy";
+    }
+
+    void pasteTrack(te::AudioTrack& anchor)
+    {
+        if (!canPasteTrack())
+            return;
+        const auto& snapshot = *trackClipboard;
+        const auto devices = edit->state.getChildWithName(te::IDs::INPUTDEVICES);
+        if (!snapshot.inputs.empty())
+            edit->getTransport().ensureContextAllocated();
+        const auto instances = edit->getAllInputDevices();
+        for (const auto& input : snapshot.inputs)
+        {
+            if (input.device.getParent() != devices || std::none_of(instances.begin(), instances.end(), [&](auto* instance) {
+                    // Track-to-track input devices allow only one target.
+                    return instance->state == input.device && !instance->owner.isTrackDevice() && !instance->isRecording()
+                        && input.monitoring && instance->owner.getMonitorMode() == *input.monitoring;
+                }))
+            {
+                report("Cannot duplicate the copied track's input assignment");
+                return;
+            }
+        }
+
+        auto parent = anchor.state.getParent();
+        const auto insertIndex = parent.indexOf(anchor.state) + 1;
+        if (!parent.isValid() || insertIndex <= 0)
+            return;
+
+        auto state = snapshot.state.createCopy();
+        te::EditItemID::IDMap remapped;
+        te::EditItemID::remapIDs(state, nullptr, *edit, &remapped);
+        const auto remapPluginLinks = [&](auto&& visit, ju::ValueTree node) -> void {
+            const auto master = te::EditItemID::fromProperty(node, te::IDs::masterPluginID);
+            if (const auto replacement = remapped.find(master); replacement != remapped.end())
+                node.setProperty(te::IDs::masterPluginID, replacement->second, nullptr);
+            for (auto child : node)
+                visit(visit, child);
+        };
+        remapPluginLinks(remapPluginLinks, state);
+        const auto id = te::EditItemID::fromID(state);
+        const auto baseName = state[te::IDs::name].toString() + " Copy";
+        auto name = baseName;
+        const auto tracks = te::getAllTracks(*edit);
+        for (int suffix = 2; std::any_of(tracks.begin(), tracks.end(), [&](auto* track) {
+                 return track->getName().equalsIgnoreCase(name);
+             }); ++suffix)
+            name = baseName + " " + ju::String(suffix);
+        state.setProperty(te::IDs::name, name, nullptr);
+        // Track output numbers are positional. Resolve the saved target identity after insertion.
+        auto device = state.getChildWithName(te::IDs::OUTPUTDEVICES).getChildWithName(te::IDs::DEVICE);
+        if (device.isValid())
+            device.setProperty(te::IDs::name, "", nullptr);
+
+        auto& history = edit->getUndoManager();
+        history.beginNewTransaction("Duplicate track");
+        parent.addChild(state, insertIndex, &history);
+        auto* duplicate = trackForID(id);
+        if (!duplicate)
+        {
+            history.undoCurrentTransactionOnly();
+            report("Could not duplicate the track");
+            return;
+        }
+        setTrackOutput(*duplicate, snapshot.output);
+        for (auto input : snapshot.inputs)
+        {
+            auto assignment = input.assignment.createCopy();
+            assignment.setProperty(te::IDs::targetID, id, nullptr);
+            input.device.addChild(assignment, -1, &history);
+        }
+        selectTrack(te::getAudioTracks(*edit).indexOf(duplicate));
+        revealTrack(selection);
+        edit->restartPlayback();
+    }
+
+    void copyInspectorSettings(te::AudioTrack& track)
+    {
+        TrackSettings settings { {}, trackOutput(track) };
+        for (auto* plugin : track.pluginList)
+        {
+            plugin->flushPluginStateToValueTree();
+            auto state = plugin->state.createCopy();
+            te::AutomationCurve::removeAllAutomationCurvesRecursively(state);
+            state.removeChild(state.getChildWithName(te::IDs::MODIFIERASSIGNMENTS), nullptr);
+            state.removeProperty(te::IDs::masterPluginID, nullptr);
+            settings.plugins.push_back(state);
+        }
+        inspectorClipboard = std::move(settings);
+    }
+
+    struct TrackSettingsApply
+    {
+        te::AudioTrack* track;
+        const TrackSettings* settings;
+        std::vector<te::Plugin::Ptr> plugins;
+        std::map<te::EditItemID, te::EditItemID> replacedPlugins;
+    };
+
+    bool canApplyInspectorSettings(te::AudioTrack& destination) const
+    {
+        if (!inspectorClipboard || !outputAvailable(inspectorClipboard->output)
+            || destination.isFrozen(te::Track::anyFreeze))
+            return false;
+        auto* output = trackForID(inspectorClipboard->output.track);
+        return !output || (output != &destination && !output->getOutput().feedsInto(&destination));
+    }
+
+    bool prepareTrackPlugins(TrackSettingsApply& item)
+    {
+        const auto& oldPlugins = item.track->pluginList;
+        if (item.track->isFrozen(te::Track::anyFreeze)
+            || item.settings->plugins.size() > static_cast<size_t>(engine.getEngineBehaviour().getEditLimits().maxPluginsOnTrack))
+            return false;
+
+        std::map<te::EditItemID, te::EditItemID> ids;
+        for (const auto& snapshot : item.settings->plugins)
+        {
+            auto state = snapshot.createCopy();
+            te::EditItemID::remapIDs(state, nullptr, *edit, &ids);
+            auto plugin = edit->getPluginCache().getOrCreatePluginFor(state);
+            if (!plugin || plugin->isMissing() || !item.track->canContainPlugin(plugin.get()))
+                return false;
+            const auto sidechain = plugin->getSidechainSourceID();
+            if (sidechain.isValid() && (!trackForID(sidechain) || sidechain == item.track->itemID))
+                return false;
+            item.plugins.push_back(plugin);
+        }
+
+        for (int index = 0; index < oldPlugins.size(); ++index)
+        {
+            auto* old = oldPlugins[index];
+            const auto matches = [old](te::Plugin* candidate) {
+                return old->getPluginType() == candidate->getPluginType()
+                    && old->getIdentifierString() == candidate->getIdentifierString();
+            };
+            const auto before = std::count_if(oldPlugins.begin(), oldPlugins.begin() + index, matches);
+            const auto count = std::count_if(oldPlugins.begin(), oldPlugins.end(), matches);
+            std::vector<te::Plugin*> candidates;
+            for (const auto& plugin : item.plugins)
+                if (matches(plugin.get()))
+                    candidates.push_back(plugin.get());
+            // Repeated effects are paired by occurrence only when the pairing is unambiguous.
+            auto* replacement = candidates.size() == static_cast<size_t>(count) ? candidates[size_t(before)] : nullptr;
+            auto state = replacement ? replacement->state : ju::ValueTree{};
+
+            // Parameter IDs and ranges must agree before carrying automation into a new effect.
+            for (auto child : old->state)
+            {
+                if (child.hasType(te::IDs::AUTOMATIONCURVE))
+                {
+                    const auto parameters = old->getAutomatableParameters();
+                    const auto previous = std::find_if(parameters.begin(), parameters.end(),
+                        [&child](const auto* parameter) { return parameter->getCurve().state == child; });
+                    if (previous == parameters.end() || !replacement)
+                        return false;
+                    auto next = replacement->getAutomatableParameterByID((*previous)->paramID);
+                    if (!next || (*previous)->getValueRange() != next->getValueRange())
+                        return false;
+                    auto curve = child.createCopy();
+                    // Tracktion's child-added listener uses the name to bind a replacement curve.
+                    curve.setProperty(te::IDs::name, next->paramID, nullptr);
+                    state.addChild(curve, -1, nullptr);
+                    next->curveHasChanged();
+                }
+                if (child.hasType(te::IDs::MODIFIERASSIGNMENTS) && child.getNumChildren() > 0)
+                {
+                    for (auto assignment : child)
+                        if (!replacement || !replacement->getAutomatableParameterByID(assignment[te::IDs::paramID].toString()))
+                            return false;
+                    state.getOrCreateChildWithName(te::IDs::MODIFIERASSIGNMENTS, nullptr)
+                        .copyPropertiesAndChildrenFrom(child, nullptr);
+                }
+            }
+            for (auto* track : te::getAllTracks(*edit))
+            {
+                if (te::EditItemID::fromProperty(track->state, te::IDs::currentAutoParamPluginID) != old->itemID)
+                    continue;
+                if (!replacement || !replacement->getAutomatableParameterByID(track->state[te::IDs::currentAutoParamTag].toString()))
+                    return false;
+                item.replacedPlugins.emplace(old->itemID, replacement->itemID);
+            }
+        }
+        return true;
+    }
+
+    bool inspectorOutputWouldFeedBack(te::AudioTrack& track) const
+    {
+        const auto target = inspectorClipboard->output.track;
+        if (!target.isValid())
+            return false;
+
+        std::map<te::EditItemID, std::vector<te::EditItemID>> inputEdges;
+        for (auto device : edit->state.getChildWithName(te::IDs::INPUTDEVICES))
+        {
+            const auto source = te::EditItemID::fromProperty(device, te::IDs::sourceTrack);
+            if (source.isValid())
+                for (auto assignment : device)
+                    if (assignment.hasType(te::IDs::INPUTDEVICEDESTINATION))
+                        inputEdges[source].push_back(te::EditItemID::fromProperty(assignment, te::IDs::targetID));
+        }
+
+        std::vector<te::EditItemID> remaining { target };
+        std::set<te::EditItemID> seen;
+        while (!remaining.empty())
+        {
+            const auto id = remaining.back();
+            remaining.pop_back();
+            if (id == track.itemID)
+                return true;
+            if (!seen.insert(id).second)
+                continue;
+            if (auto* downstream = trackForID(id))
+                if (auto* output = downstream->getOutput().getDestinationTrack())
+                    remaining.push_back(output->itemID);
+            if (const auto edges = inputEdges.find(id); edges != inputEdges.end())
+                remaining.insert(remaining.end(), edges->second.begin(), edges->second.end());
+        }
+        return false;
+    }
+
+    void applyInspectorSettings(te::AudioTrack& track)
+    {
+        TrackSettingsApply item { &track, &*inspectorClipboard, {}, {} };
+        if (inspectorOutputWouldFeedBack(track) || !prepareTrackPlugins(item))
+        {
+            report("Track settings are incompatible with the selected track");
+            return;
+        }
+        auto& history = edit->getUndoManager();
+        history.beginNewTransaction("Apply track settings");
+        auto& list = track.pluginList;
+        for (auto plugin : list.getPlugins())
+            plugin->removeFromParent();
+        for (const auto& plugin : item.plugins)
+            if (!list.insertPlugin(plugin->state, -1))
+            {
+                history.undoCurrentTransactionOnly();
+                edit->restartPlayback();
+                report("Could not apply track settings");
+                return;
+            }
+        for (auto* lane : te::getAllTracks(*edit))
+        {
+            auto state = lane->state;
+            const auto id = te::EditItemID::fromProperty(state, te::IDs::currentAutoParamPluginID);
+            if (const auto replacement = item.replacedPlugins.find(id); replacement != item.replacedPlugins.end())
+                state.setProperty(te::IDs::currentAutoParamPluginID, replacement->second, &history);
+        }
+        setTrackOutput(track, item.settings->output);
+        edit->restartPlayback();
+    }
+
+    void useInspectorSettings(bool apply)
+    {
+        auto* track = actionTrack();
+        if (!editingStopped() || !panels.inspectorOpen || inspectorContext != EditingArea::tracks || !track)
+            return;
+        actionSelection.requestedArea = EditingArea::inspector;
+        if (!apply)
+            copyInspectorSettings(*track);
+        else if (canApplyInspectorSettings(*track))
+            applyInspectorSettings(*track);
+        updateControls();
+    }
+
+    bool canDispatch(UniversalAction action) const
+    {
+        using Action = UniversalAction;
+        if (!editingStopped())
+            return false;
+        if (activeEditingArea() == EditingArea::tracks)
+        {
+            if (action == Action::copy || action == Action::remove)
+                return actionTrack() != nullptr;
+            if (action == Action::paste)
+                return canPasteTrack();
+            return (action == Action::up || action == Action::down) && trackMoveNeighbor(action);
+        }
+        if (!canEditTimeline())
+            return false;
+        if (action == Action::paste)
+            return !pastePlan().empty();
+        if (action == Action::split || action == Action::trim || action == Action::reserved)
+            return false;
+        const auto clips = selectedClips();
+        if (action == Action::remove)
+            return !clips.empty();
+        if (action == Action::copy || action == Action::cut)
+            return !clips.empty() && std::all_of(clips.begin(), clips.end(), [](auto* clip) { return ordinaryClip(*clip); });
+        if (action == Action::startMinus || action == Action::startPlus
+            || action == Action::endMinus || action == Action::endPlus)
+            return clips.size() == 1 && !clipChanges(action, clips).empty();
+        return !clipChanges(action, clips).empty();
+    }
+
+    void deleteSelection(bool tracks, bool cutting)
+    {
+        auto* project = edit.get();
+        const auto area = tracks ? EditingArea::tracks : EditingArea::timeline;
+        const auto id = actionSelection.track;
+        const auto ids = actionSelection.clips;
+        const auto clips = tracks ? std::vector<te::Clip*>{} : selectedClips();
+        const bool missing = std::any_of(clips.begin(), clips.end(), [](auto* clip) { return missingWave(clip); });
+        if ((tracks || missing) && !ju::AlertWindow::showOkCancelBox(ju::MessageBoxIconType::WarningIcon,
+                tracks ? "Delete track?" : "Remove missing audio?",
+                tracks ? "Remove the selected track and its contents from the project?"
+                       : "The selection includes missing audio. Remove the selected clips from the project?",
+                cutting ? "Cut Clips" : "Delete", "Cancel", this))
+            return;
+        const auto action = cutting ? UniversalAction::cut : UniversalAction::remove;
+        if (edit.get() != project || activeEditingArea() != area
+            || (tracks ? actionSelection.track != id : actionSelection.clips != ids) || !canDispatch(action))
+            return;
+        if (cutting && !snapshotClips(selectedClips()))
+            return;
+
+        edit->getUndoManager().beginNewTransaction(tracks ? "Delete track" : cutting ? "Cut clips" : "Delete clips");
+        if (tracks)
+        {
+            const auto* primary = trackAt(selection);
+            const auto primaryID = primary ? primary->itemID : te::EditItemID{};
+            edit->deleteTrack(actionTrack());
+            selection = te::getAudioTracks(*edit).indexOf(trackForID(primaryID));
+            actionSelection.track = {};
+        }
+        else
+        {
+            for (auto clipID : ids)
+                te::findClipForID(*edit, clipID)->removeFromParent();
+            actionSelection.clips.clear();
+        }
+        edit->restartPlayback();
+    }
+
+    ju::String incompatiblePlacement(UniversalAction action) const
+    {
+        using Action = UniversalAction;
+        ju::String reason;
+        if (canEditTimeline())
+        {
+            if (action == Action::paste)
+                pastePlan(&reason);
+            if (action == Action::up || action == Action::down)
+                clipChanges(action, selectedClips(), &reason);
+        }
+        return reason;
     }
 
     void dispatchAction(UniversalAction action)
     {
+        using Action = UniversalAction;
         if (!canDispatch(action))
-            return;
-
-        switch (action)
         {
-            case UniversalAction::copy:
-            {
-                auto snapshot = std::make_unique<te::Clipboard::Clips>();
-                te::SelectableList items;
-                items.add(selectedClip());
-                snapshot->addSelectedClips(items, {}, te::Clipboard::Clips::AutomationLocked::no);
-                if (!snapshot->clips.empty())
-                    clipClipboard = std::move(snapshot);
-                break;
-            }
-            case UniversalAction::paste:
-            {
-                te::EditInsertPoint insertPoint(*edit);
-                te::SelectionManager pasted(engine);
-                te::Clipboard::ContentType::EditPastingOptions options(*edit, insertPoint, &pasted);
-                options.startTrack = trackAt(selection);
-                options.startTime = pasteStart();
-
-                edit->getUndoManager().beginNewTransaction("Paste item");
-                if (clipClipboard->pasteIntoEdit(options))
-                    if (auto* clip = dynamic_cast<te::Clip*>(pasted.getSelectedObject(0)))
-                        actionSelection.clips = { clip->itemID };
-                break;
-            }
-            case UniversalAction::remove:
-                deleteSelectedClip();
-                break;
-            default:
-                break;
+            if (auto reason = incompatiblePlacement(action); reason.isNotEmpty())
+                warnPlacement(reason);
+            return;
+        }
+        const bool tracks = activeEditingArea() == EditingArea::tracks;
+        auto& history = edit->getUndoManager();
+        if (action == Action::remove || action == Action::cut)
+            deleteSelection(tracks, action == Action::cut);
+        else if (action == Action::copy)
+        {
+            if (tracks)
+                copyTrack(*actionTrack());
+            else
+                snapshotClips(selectedClips());
+        }
+        else if (action == Action::paste)
+        {
+            if (tracks)
+                pasteTrack(*actionTrack());
+            else
+                pasteClips(pastePlan());
+        }
+        else if (tracks)
+        {
+            auto* track = actionTrack();
+            auto* neighbor = trackMoveNeighbor(action);
+            auto parent = track->state.getParent();
+            history.beginNewTransaction("Move track");
+            parent.moveChild(parent.indexOf(track->state), parent.indexOf(neighbor->state), &history);
+            selection = te::getAudioTracks(*edit).indexOf(track);
+        }
+        else
+        {
+            const auto changes = clipChanges(action, selectedClips());
+            const bool moving = action == Action::up || action == Action::down || action == Action::left || action == Action::right;
+            applyClipChanges(changes, moving ? "Move clips" : "Resize clips");
         }
         updateControls();
-    }
-
-    void deleteSelectedClip()
-    {
-        auto* clip = selectedClip();
-        const auto id = clip->itemID;
-        auto* project = edit.get();
-        if (missingWave(clip) && !ju::AlertWindow::showOkCancelBox(ju::MessageBoxIconType::WarningIcon,
-                "Delete missing audio item?", "Remove " + clip->getName() + " from the project?",
-                "Delete Item", "Cancel", this))
-            return;
-        if (edit.get() != project || !canDispatch(UniversalAction::remove) || selectedClip()->itemID != id)
-            return;
-        edit->getUndoManager().beginNewTransaction("Delete item");
-        selectedClip()->removeFromParent();
-        actionSelection.clips.clear();
     }
 
     bool canClearTimeSelection() const
@@ -1382,16 +2604,28 @@ private:
         arrangement.waves.clear();
         edit = std::move(next);
         edit->playInStopEnabled = true;
+        ju::StringArray mixedTracks;
+        for (auto* track : te::getAudioTracks(*edit))
+        {
+            const auto type = trackType(*track);
+            track->state.setProperty(trackTypeProperty, trackTypeName(type), nullptr);
+            if (type == TrackType::mixed)
+                mixedTracks.add(track->getName());
+        }
         projectFile = file;
         selection = trackCount() == 0 ? -1 : 0;
         actionSelection = {};
         if (auto* track = trackAt(selection))
-            actionSelection.tracks.insert(track->itemID);
+            actionSelection.track = track->itemID;
         clipClipboard.reset();
+        trackClipboard.reset();
+        inspectorClipboard.reset();
         boxAnchor.reset();
         selectionBox = {};
         dragItem = {};
         dragPreview.reset();
+        dragError.clear();
+        dragRowDelta = 0;
         rangePreview.reset();
         draggingRange = false;
         editCursor = edit->getTransport().getPosition();
@@ -1407,6 +2641,9 @@ private:
         if (arrangement.isShowing())
             arrangement.grabKeyboardFocus();
         updateControls();
+        if (!mixedTracks.isEmpty())
+            warnPlacement("Mixed legacy tracks contain both Audio and MIDI clips. Existing clips are unchanged. "
+                          "New placement is disabled on: " + mixedTracks.joinIntoString(", "));
     }
 
     void saveAs()
@@ -1445,18 +2682,19 @@ private:
         if (!ready())
             return;
         const auto count = trackCount();
-        if (count >= maxTracks)
+        if (!canAddTrack())
             return report("Track limit reached");
         edit->getUndoManager().beginNewTransaction(midi ? "Add MIDI track" : "Add audio track");
         edit->ensureNumberOfAudioTracks(count + 1);
         if (auto* track = trackAt(count))
         {
+            track->state.setProperty(trackTypeProperty, trackTypeName(midi ? TrackType::midi : TrackType::audio),
+                                     &edit->getUndoManager());
             track->setName(ju::String(midi ? "MIDI " : "Audio ") + ju::String(count + 1));
             track->setColour(palette(count));
             edit->markAsChanged();
             selectTrack(count);
-            if (count >= firstRow + rowsOnScreen())
-                scrollRows(count - firstRow - rowsOnScreen() + 1);
+            revealTrack(count);
         }
     }
 
@@ -1464,7 +2702,7 @@ private:
     {
         selection = index;
         auto* track = trackAt(index);
-        ActionSelection::click(actionSelection.tracks, track ? track->itemID : te::EditItemID{}, false);
+        actionSelection.track = track ? track->itemID : te::EditItemID{};
         actionSelection.requestedArea = EditingArea::tracks;
         updateControls();
     }
@@ -1478,6 +2716,8 @@ private:
     {
         if (auto* track = selectedTrack())
         {
+            if (const auto error = placementError(TrackType::midi, *track); error.isNotEmpty())
+                return warnPlacement(error);
             const auto nextBar = barTime(edit->tempoSequence.toBarsAndBeats(editCursor).bars + 1);
             edit->getUndoManager().beginNewTransaction("Insert MIDI item");
             if (auto clip = te::insertMIDIClip(*track, "MIDI item", { editCursor, nextBar }))
@@ -1610,6 +2850,14 @@ private:
         arrangement.repaint();
     }
 
+    void revealTrack(int row)
+    {
+        if (row < firstRow)
+            scrollRows(row - firstRow);
+        else if (row >= firstRow + rowsOnScreen())
+            scrollRows(row - firstRow - rowsOnScreen() + 1);
+    }
+
     void setViewStart(double seconds)
     {
         viewStart = ju::jlimit(0.0, ju::jmax(0.0, totalSeconds() - visibleSeconds()), seconds);
@@ -1733,16 +2981,27 @@ private:
             }
     }
 
+    bool trackIsHighlighted(const te::AudioTrack& track) const
+    {
+        const auto active = activeEditingArea();
+        if (active == EditingArea::tracks)
+            return actionSelection.track == track.itemID;
+        if (active == EditingArea::timeline)
+            for (auto* clip : track.getClips())
+                if (actionSelection.clips.contains(clip->itemID))
+                    return true;
+        return false;
+    }
+
     void paintTrack(ju::Graphics& g, te::AudioTrack& track, int row, int y, ju::Colour colour)
     {
-        const auto selected = actionSelection.tracks.contains(track.itemID);
-        const auto primaryTrack = selection == row;
+        const auto selected = trackIsHighlighted(track);
         auto bounds = trackBounds(y);
-        g.setColour(ju::Colour(0xff242424).interpolatedWith(colour, (selected || primaryTrack) ? 0.25f : 0.12f));
+        g.setColour(ju::Colour(0xff242424).interpolatedWith(colour, selected ? 0.25f : 0.12f));
         g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
-        if (selected || primaryTrack)
+        if (selected)
         {
-            g.setColour(selected && activeEditingArea() == EditingArea::tracks ? ju::Colours::white : colour);
+            g.setColour(ju::Colours::white);
             g.drawRoundedRectangle(bounds.toFloat(), 4.0f, 2.0f);
         }
         auto indicators = bounds.removeFromRight(24).reduced(3, 2);
@@ -1783,7 +3042,8 @@ private:
         g.fillRect(body.removeFromLeft(7));
         g.setColour(ju::Colours::white);
         g.setFont(ju::FontOptions(17.0f, ju::Font::bold));
-        g.drawFittedText(ju::String(row + 1) + "   " + track.getName(), body.reduced(5, 0),
+        g.drawFittedText(ju::String(row + 1) + "  [" + trackTypeName(trackType(track)) + "] " + track.getName(),
+                         body.reduced(5, 0),
                          ju::Justification::centredLeft, 1);
     }
 
@@ -1945,7 +3205,8 @@ private:
             const auto colour = track.getColour().isTransparent() ? palette(row) : track.getColour();
             paintTrack(g, track, row, y, colour);
             for (auto* clip : track.getClips())
-                paintClip(g, *clip, y, colour);
+                paintClip(g, *clip, y + (dragPreview && actionSelection.clips.contains(clip->itemID)
+                    ? dragRowDelta * rowHeight() : 0), colour);
             if (edit->getTransport().isRecording())
                 paintRecording(g, track, y, colour);
             g.setColour(ju::Colour(0xff353535));
@@ -1998,7 +3259,10 @@ private:
     te::TimeRange displayedClipRange(const te::Clip& clip) const
     {
         const auto range = clip.getPosition().time;
-        return dragItem == clip.itemID && dragPreview ? range + (*dragPreview - range.getStart()) : range;
+        if (dragPreview && actionSelection.clips.contains(clip.itemID))
+            if (auto* anchor = te::findClipForID(*edit, dragItem))
+                return range + (*dragPreview - anchor->getPosition().getStart());
+        return range;
     }
 
     ju::Rectangle<int> clipBounds(te::TimeRange range, int y) const
@@ -2058,6 +3322,8 @@ private:
         draggingRange = false;
         rangePreview.reset();
         dragPreview.reset();
+        dragError.clear();
+        dragRowDelta = 0;
         dragItem = {};
         boxAnchor.reset();
         selectionBox = {};
@@ -2069,18 +3335,13 @@ private:
         {
             if (track && trackBounds(y).contains(event.getPosition()))
             {
-                ActionSelection::click(actionSelection.tracks, track->itemID, toggle);
-                if (actionSelection.tracks.contains(track->itemID))
-                    selection = row;
-                else if (selection == row)
-                    selectFirstSelectedTrack();
+                actionSelection.track = track->itemID;
+                selection = row;
             }
             else if (!toggle)
             {
-                actionSelection.tracks.clear();
+                actionSelection.track = {};
                 selection = -1;
-                if (event.y >= rulerHeight)
-                    boxAnchor = event.getPosition();
             }
         }
         else if (event.y < rulerHeight || event.mods.isShiftDown())
@@ -2103,8 +3364,11 @@ private:
                     if (!clipBounds(clip->getPosition().time, y).contains(event.getPosition()))
                         continue;
                     selection = row;
-                    ActionSelection::click(actionSelection.clips, clip->itemID, toggle);
-                    if (!toggle && (dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip)))
+                    // Keep an existing group until a click resolves or a drag starts.
+                    const bool draggable = dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip);
+                    if (toggle || !draggable || !actionSelection.clips.contains(clip->itemID))
+                        ActionSelection::click(actionSelection.clips, clip->itemID, toggle);
+                    if (!toggle && draggable)
                     {
                         dragItem = clip->itemID;
                         dragAnchor = timeAt(event.x);
@@ -2123,46 +3387,21 @@ private:
         updateControls();
     }
 
-    void selectFirstSelectedTrack()
-    {
-        selection = -1;
-        const auto tracks = te::getAudioTracks(*edit);
-        for (int row = 0; row < tracks.size(); ++row)
-            if (actionSelection.tracks.contains(tracks[row]->itemID))
-            {
-                selection = row;
-                break;
-            }
-    }
-
     void updateSelectionBox(ju::Point<int> position)
     {
-        const auto area = *actionSelection.requestedArea;
-        const auto bounds = arrangementAreaBounds(area).withTrimmedTop(rulerHeight);
+        const auto bounds = arrangementAreaBounds(EditingArea::timeline).withTrimmedTop(rulerHeight);
         selectionBox = ju::Rectangle<int>(std::min(boxAnchor->x, position.x), std::min(boxAnchor->y, position.y),
             std::abs(boxAnchor->x - position.x) + 1, std::abs(boxAnchor->y - position.y) + 1).getIntersection(bounds);
-        auto& items = area == EditingArea::timeline ? actionSelection.clips : actionSelection.tracks;
+        auto& items = actionSelection.clips;
         items.clear();
         const auto tracks = te::getAudioTracks(*edit);
         for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < bounds.getBottom(); ++row, y += rowHeight())
-        {
-            if (area == EditingArea::tracks)
-            {
-                if (trackBounds(y).intersects(selectionBox))
-                    items.insert(tracks[row]->itemID);
-            }
-            else
-            {
-                for (auto* clip : tracks[row]->getClips())
-                    if (clipBounds(clip->getPosition().time, y).intersects(selectionBox))
-                        items.insert(clip->itemID);
-            }
-        }
-        if (area == EditingArea::tracks)
-            selectFirstSelectedTrack();
+            for (auto* clip : tracks[row]->getClips())
+                if (clipBounds(clip->getPosition().time, y).intersects(selectionBox))
+                    items.insert(clip->itemID);
     }
 
-    void updateDragPreview(double pointerTime)
+    void updateDragPreview(double pointerTime, std::optional<int> pointerRow = std::nullopt)
     {
         if (draggingRange)
         {
@@ -2170,11 +3409,30 @@ private:
             const auto b = te::TimePosition::fromSeconds(snapSeconds(pointerTime));
             rangePreview = te::TimeRange(std::min(a, b), std::max(a, b));
         }
-        else if (auto* clip = selectedClip(); clip && clip->itemID == dragItem)
+        else if (dragItem.isValid())
         {
-            const auto destination = clip->getPosition().getStart().inSeconds() + pointerTime - dragAnchor;
-            dragPreview = te::TimePosition::fromSeconds(snapSeconds(destination));
+            dragPreview.reset();
+            dragError.clear();
+            const auto tracks = te::getAudioTracks(*edit);
+            auto* anchor = te::findClipForID(*edit, dragItem);
+            if (!anchor || (pointerRow && !tracks[*pointerRow]))
+                return;
+            auto* source = dynamic_cast<te::AudioTrack*>(anchor->getTrack());
+            if (!source)
+                return;
+            dragRowDelta = pointerRow ? *pointerRow - tracks.indexOf(source) : 0;
+            const auto start = anchor->getPosition().getStart();
+            const auto target = te::TimePosition::fromSeconds(snapSeconds(start.inSeconds() + pointerTime - dragAnchor));
+            if (!movePlan(selectedClips(), dragRowDelta, target - start, &dragError).empty())
+                dragPreview = target;
         }
+    }
+
+    int dragTargetRow(const ju::MouseEvent& event) const
+    {
+        if (event.x < headerWidth || event.y < rulerHeight || !arrangement.getLocalBounds().contains(event.getPosition()))
+            return -1;
+        return firstRow + (event.y - rulerHeight) / rowHeight();
     }
 
     void arrangementDrag(const ju::MouseEvent& event)
@@ -2186,9 +3444,10 @@ private:
             updateSelectionBox(event.getPosition());
             updateControls();
         }
-        else if (!edit->getTransport().isPlaying() && std::abs(event.getDistanceFromDragStartX()) >= 5)
+        else if (editingStopped() && (dragItem.isValid() ? event.getDistanceFromDragStart() >= 5
+                                                       : std::abs(event.getDistanceFromDragStartX()) >= 5))
         {
-            updateDragPreview(timeAt(event.x));
+            updateDragPreview(timeAt(event.x), dragItem.isValid() ? std::optional{ dragTargetRow(event) } : std::nullopt);
             arrangement.repaint();
         }
     }
@@ -2202,11 +3461,16 @@ private:
             edit->markAsChanged();
             report("Time selection set");
         }
-        else if (auto* clip = selectedClip(); clip && clip->itemID == dragItem && dragPreview
-                 && clip->getPosition().getStart() != *dragPreview)
+        else if (dragError.isNotEmpty())
+            warnPlacement(dragError);
+        else if (dragItem.isValid() && dragPreview)
         {
-            edit->getUndoManager().beginNewTransaction("Move item");
-            clip->setStart(*dragPreview, false, true);
+            if (auto* anchor = te::findClipForID(*edit, dragItem))
+            {
+                const auto delta = *dragPreview - anchor->getPosition().getStart();
+                if (dragRowDelta != 0 || delta != te::TimeDuration{})
+                    applyClipChanges(movePlan(selectedClips(), dragRowDelta, delta), "Move clips");
+            }
         }
     }
 
@@ -2219,11 +3483,14 @@ private:
             else if (*actionSelection.requestedArea == EditingArea::timeline)
                 seek(timeAt(event.x));
         }
-        else if (edit && !edit->getTransport().isPlaying() && std::abs(event.getDistanceFromDragStartX()) >= 5)
+        else if (editingStopped() && (dragItem.isValid() ? event.getDistanceFromDragStart() >= 5
+                                                        : std::abs(event.getDistanceFromDragStartX()) >= 5))
         {
-            updateDragPreview(timeAt(event.x));
+            updateDragPreview(timeAt(event.x), dragItem.isValid() ? std::optional{ dragTargetRow(event) } : std::nullopt);
             finishDrag();
         }
+        else if (dragItem.isValid() && event.getDistanceFromDragStart() < 5)
+            actionSelection.clips = { dragItem };
         boxAnchor.reset();
         selectionBox = {};
         dragItem = {};
@@ -2247,24 +3514,43 @@ private:
         workspace.setText(activeTab == 1 ? selectedEffects()
             : static_cast<ju::TextButton*>(tabs[activeTab])->getButtonText() + " - coming in a later release",
             ju::dontSendNotification);
-        inspector.setText(trackAt(selection) ? "INSPECTOR\n\n" + trackAt(selection)->getName()
-            + "\n\nTrack and item controls\ncoming in v0.22" : "INSPECTOR\n\nSelect a track", ju::dontSendNotification);
         if (edit)
         {
             std::erase_if(actionSelection.clips, [this](auto id) { return !te::findClipForID(*edit, id); });
-            std::erase_if(actionSelection.tracks, [this](auto id) { return !te::findTrackForID(*edit, id); });
+            if (!actionTrack())
+                actionSelection.track = {};
         }
         const auto active = activeEditingArea();
         if (actionSelection.requestedArea && actionSelection.requestedArea != active)
             actionSelection.requestedArea = active;
+        if (active != EditingArea::inspector)
+            inspectorContext = active;
+
+        ju::String description;
+        auto* inspectorTrack = inspectorContext == EditingArea::tracks ? actionTrack() : nullptr;
+        if (inspectorTrack)
+            description = inspectorTrack->getName();
+        else if (inspectorContext == EditingArea::timeline)
+        {
+            if (auto* clip = selectedClip())
+                description = clip->getName();
+            else if (!actionSelection.clips.empty())
+                description = ju::String(static_cast<int>(actionSelection.clips.size())) + " clips selected";
+        }
+        inspector.setText(description.isEmpty() ? "INSPECTOR" : "INSPECTOR\n\n" + description, ju::dontSendNotification);
+        inspectorButtons[0]->setEnabled(editingStopped() && inspectorTrack);
+        inspectorButtons[1]->setEnabled(editingStopped() && inspectorTrack && canApplyInspectorSettings(*inspectorTrack));
         inspector.setActive(edit && active == EditingArea::inspector);
         workspace.setActive(edit && active == EditingArea::window);
         for (const auto& slot : actionButtons)
         {
-            const bool enabled = canDispatch(slot.action);
+            const bool enabled = canDispatch(slot.action) || incompatiblePlacement(slot.action).isNotEmpty();
             slot.button->setColour(ju::TextButton::buttonColourId, enabled ? slot.colour : ju::Colour(0xff444444));
             slot.button->setEnabled(enabled);
         }
+
+        undoButton->setEnabled(canUseHistory(false));
+        redoButton->setEnabled(canUseHistory(true));
 
         const bool canChangePlaybackSettings = edit && !edit->getTransport().isPlaying();
         signature.setEnabled(canChangePlaybackSettings);
@@ -2329,11 +3615,15 @@ private:
     ju::OwnedArray<ju::TextButton> buttons;
     ju::TextButton *playButton = nullptr, *pauseButton = nullptr, *loopButton = nullptr,
         *clickButton = nullptr, *countButton = nullptr, *heightButton = nullptr, *followButton = nullptr;
-    std::vector<ju::Component*> first, second, panelButtons, navigation, tabs;
+    ju::TextButton *undoButton = nullptr, *redoButton = nullptr;
+    std::vector<ju::Component*> first, second, panelButtons, historyButtons, inspectorButtons, navigation, tabs;
     std::array<ActionGroup, 4> actionGroups;
     std::vector<ActionButton> actionButtons;
     ActionSelection actionSelection;
+    EditingArea inspectorContext = EditingArea::timeline;
     std::unique_ptr<te::Clipboard::Clips> clipClipboard;
+    std::optional<TrackSnapshot> trackClipboard;
+    std::optional<TrackSettings> inspectorClipboard;
     std::map<te::EditItemID, std::unique_ptr<Meter>> meters;
     te::EditItemID dragItem;
     std::optional<ju::Point<int>> boxAnchor;
@@ -2342,6 +3632,8 @@ private:
     std::optional<te::TimeRange> timeSelection, rangePreview;
     std::optional<te::TimePosition> dragPreview;
     double dragAnchor = 0.0;
+    int dragRowDelta = 0;
+    ju::String dragError;
     int selection = -1, firstRow = 0;
     size_t activeTab = 0;
     double viewStart = 0.0, pixelsPerSecond = 100.0;
