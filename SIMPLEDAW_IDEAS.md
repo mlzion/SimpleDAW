@@ -22,6 +22,7 @@ Branch: `design-sandbox`
 | --- | --- | --- | --- | --- |
 | IDEA-001 | Clip locking | Timeline / Clip Inspector; post-v0.23.1 timeline/clip-editing polish | APPROVED | Total editing lockdown; Inspector-only unlock; gray clip presentation. Specification promotion and implementation not yet authorized. |
 | IDEA-002 | Audio Quantization Editor | Advanced Audio Editing; late-stage, post core-feature completion | APPROVED | Guitar, piano, vocals; automatic/manual timing correction, pitch preservation, non-destructive; technical feasibility investigation required. |
+| IDEA-003 | Shapeable Automation Clips for Tremolo / Vibrato | Automation Editor / audio and MIDI modulation; after core DAW operational | PROPOSED | Place movable, resizable modulation clips on automation lane; shape rate and depth over time; design details pending. |
 
 ## Implementation phase index
 
@@ -39,6 +40,12 @@ This index groups sandbox-approved ideas by **recommended** phase for future pla
 | --- | --- | --- | --- |
 | [IDEA-002 — Audio Quantization Editor](#idea-002--audio-quantization-editor-2026-11-22) | APPROVED | Not promoted | Not authorized; feasibility review required |
 
+### Post-core DAW — Automation Clip Enhancements
+
+| Idea | Sandbox status | Canonical spec | Implementation |
+| --- | --- | --- | --- |
+| [IDEA-003 — Shapeable Automation Clips](#idea-003--shapeable-automation-clips-for-tremolo--vibrato-2026-11-22) | PROPOSED | Not promoted | Not authorized; revisit after SimpleDAW fully operational |
+
 ### Unscheduled / awaiting phase assignment
 
 No ideas currently assigned.
@@ -51,6 +58,7 @@ Use the same idea ID throughout discussion, specification promotion, implementat
 | --- | --- | --- | --- | --- | --- |
 | IDEA-001 | Not promoted | Not authorized | — | — | Sandbox approved |
 | IDEA-002 | Not promoted | Not authorized | — | — | Sandbox approved; late-stage feasibility review pending |
+| IDEA-003 | Not promoted | Not authorized | — | — | Proposed; revisit after core DAW completion |
 
 When an idea progresses, record the canonical spec document and section, promotion PR/commit, explicit implementation authorization, implementation PR/commit, release version, and acceptance result. Never label an idea implemented solely because its sandbox status is APPROVED. Preserve history after delivery rather than removing completed ideas.
 
@@ -103,6 +111,33 @@ Add an entry for each idea with its ID, date, status, scope, behavior, tradeoffs
 **Delivery strategy:** If feasible, develop as a separate late-stage addendum and branch. Detailed UI, algorithms, and acceptance criteria remain for that phase.
 
 **Authority:** Sandbox concept approved only. No change to canonical specs, active development branches, or Codex implementation authorization.
+
+
+### IDEA-003 — Shapeable Automation Clips for Tremolo / Vibrato (2026-11-22)
+
+**Status:** PROPOSED (discussion captured; not approved for canonical specification or implementation)  
+**Subsystem:** Automation Editor / timeline automation lanes / audio and MIDI modulation  
+**Recommended phase:** Revisit **after SimpleDAW is fully operational**; no release number or implementation commitment.
+
+**Intent:** Add expressive, performance-like tremolo (amplitude) and vibrato (pitch) to specific musical phrases, without requiring hand-drawn repetitive automation or splitting the underlying audio/MIDI clips. The user prioritizes natural playing techniques and a small, approachable control set, not a general-purpose multi-destination modulation matrix.
+
+**Proposed workflow:**
+- Add an automation lane containing **automation clips** that can be placed at chosen timeline positions, moved, resized, copied, and duplicated using existing SimpleDAW timeline/UAT conventions.
+- Each automation clip is a configurable modulation tool. Initial tools: **Tremolo** and **Vibrato**; only one mode per clip is needed, not simultaneous dual LFOs.
+- Underlying audio or MIDI content remains intact; modulation runs only where its automation clip applies.
+- Let the oscillation **evolve during the clip**: e.g. vibrato starts shallow and gradually grows deeper, and optionally speeds up. Candidate controls: Rate Start/End, Depth Start/End, curve shape, and enable/bypass. Prefer a simple sine oscillator initially and show the resulting shape in the clip.
+- Automation clip duration may scale the rate/depth progression on resize; this is a **tentative possibility, not decided**.
+- A single automation lane per track was suggested as an initial UI option, but lane count and destination organization are **not decided**.
+
+**Audio versus MIDI:** Audio tremolo can modulate gain; audio vibrato needs pitch-modulation processing. MIDI tremolo might use expression (CC11) where supported; MIDI vibrato might use pitch bend or instrument-specific modulation CC. MIDI controller behavior varies by instrument and is channel-scoped, so overlapping clips or sustained notes need conflict and reset rules. No implementation approach is approved.
+
+**Conflict principle:** Avoid two independent modulation sources fighting over the same parameter. Define precedence, overlap handling, and restoration of parameter/controller state during detailed design.
+
+**Alternative considered:** Attach one tremolo/vibrato LFO to a split audio/MIDI clip and begin modulation at the split. The independent automation-clip lane is now the favored concept because it avoids altering the original performance clip; the alternative remains a design option, not an additional feature commitment.
+
+**Open decisions for later:** Exact lane structure; destinations and parameter ownership; overlap rules; modulation phase and clip boundaries; MIDI note continuation and CC/pitch-bend resets; audio pitch quality; curve editing and resize semantics; whether/how to reuse existing canonical track LFOs. Keep this separate from the already-documented track-level LFO feature.
+
+**Authority:** PROPOSED sandbox idea only. No canonical spec changes, Codex notification, code changes, or implementation authorization.
 
 ## Promotion log
 
