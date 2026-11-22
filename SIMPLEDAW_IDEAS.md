@@ -22,6 +22,30 @@ Branch: `design-sandbox`
 | --- | --- | --- | --- | --- |
 | IDEA-001 | Clip locking | Timeline / Clip Inspector; post-v0.23.1 timeline/clip-editing polish | APPROVED | Total editing lockdown; Inspector-only unlock; gray clip presentation. Specification promotion and implementation not yet authorized. |
 
+## Implementation phase index
+
+This index groups sandbox-approved ideas by **recommended** phase for future planning. A recommendation is not a release commitment or implementation authorization. Update this index whenever an idea changes status, phase, or promotion state.
+
+### Post-v0.23.1 — Timeline & Clip Editing Polish
+
+| Idea | Sandbox status | Canonical spec | Implementation |
+| --- | --- | --- | --- |
+| [IDEA-001 — Clip Locking](#idea-001--clip-locking-2026-11-22) | APPROVED | Not promoted | Not authorized |
+
+### Unscheduled / awaiting phase assignment
+
+No ideas currently assigned.
+
+## Lifecycle and implementation history
+
+Use the same idea ID throughout discussion, specification promotion, implementation, and release. **APPROVED** is a sandbox decision only; authorization to implement is separate.
+
+| ID | Spec promotion (document / PR / commit) | Implementation authorization | Code PR / commit | Release / acceptance | Lifecycle |
+| --- | --- | --- | --- | --- | --- |
+| IDEA-001 | Not promoted | Not authorized | — | — | Sandbox approved |
+
+When an idea progresses, record the canonical spec document and section, promotion PR/commit, explicit implementation authorization, implementation PR/commit, release version, and acceptance result. Never label an idea implemented solely because its sandbox status is APPROVED. Preserve history after delivery rather than removing completed ideas.
+
 ## Detailed discussions
 
 Add an entry for each idea with its ID, date, status, scope, behavior, tradeoffs, and open questions.
@@ -52,4 +76,4 @@ Add an entry for each idea with its ID, date, status, scope, behavior, tradeoffs
 
 ## Promotion log
 
-Record when an approved idea is transferred into canonical specifications, including PR or commit references.
+Append a dated entry when an approved idea is transferred into canonical specifications, with the idea ID, target spec and section, PR/commit, and any outstanding implementation authorization. Then update the phase index and lifecycle table above. No promotions recorded yet.
