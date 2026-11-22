@@ -18,6 +18,10 @@ These PDFs are the shared reference set for specification reviews and phased dev
 - [v0.22.2 expanded implementation task sheet](../tasks/v0.22.2-first-task-sheet.md) — approved combined EDIT/MOVE/SIZE + Undo/Redo scope; not yet implemented or tested.\n\n
 - [Clip Glue, Groups, Parent/Child Tracks and MIX/REPLACE (21 Nov 2026)](clip-glue-group-parent-overlap-2026-11-21.md) — **ACCEPTED design, not implemented**; newer supplement governing clip actions, group badges, track hierarchy, bus routing, and audible overlap/waveform precedence. Planned for later phases; does not alter v0.22.2 scope.
 
+
+- [v0.23.1 Inspector, Clone/Loop and MIDI Import decisions](v0.23.1-inspector-and-midi-import.md) — **ACCEPTED DESIGN, NOT IMPLEMENTED**; latest authority for Track, Audio Clip and MIDI Clip Inspectors, clone/loop semantics, and single-track MIDI import; supersedes conflicting older descriptions. Historical Master Spec PDF is preserved.
+- [v0.23.1 Codex first-iteration task sheet](../tasks/v0.23.1-inspector-first-iteration.md) — implementation scope, E1 integration boundaries, exclusions, acceptance tests and Windows /MD build policy. Merge documentation before starting implementation.
+
 ## How to use this set
 
 Read the repository [instructions](../../AGENTS.md) and [project status](../../PROJECT_STATUS.md) before assigning work. Accepted design does not mean implemented, merged or tested. Pending and recommended items require decisions before implementation.
