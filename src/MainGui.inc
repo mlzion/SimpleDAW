@@ -470,6 +470,21 @@ public:
         };
         inspectorFadeIn.onValueChange = [this] { setInspectorFade(true); };
         inspectorFadeOut.onValueChange = [this] { setInspectorFade(false); };
+        inspector.addChildComponent(inspectorOutput);
+        inspectorOutput.setName("Track output");
+        inspectorOutput.setTooltip("Track output");
+        inspectorOutput.addItem("Master", 1);
+        inspectorOutput.onChange = [this] {
+            if (!editingStopped() || inspectorContext != EditingArea::tracks
+                || inspectorOutput.getSelectedId() != 1)
+                return;
+            if (auto* track = actionTrack())
+            {
+                edit->getUndoManager().beginNewTransaction("Route track to Master");
+                track->getOutput().setOutputToDefaultDevice(false);
+                updateControls();
+            }
+        };
         heightButton = &button(navigation, "MIN", [this] {
             panels.tallTracks = !panels.tallTracks;
             saveLayout();
@@ -563,6 +578,7 @@ public:
             inspectorPan.setBounds(trackControls.removeFromTop(36));
             for (auto* control : inspectorButtons)
                 control->setBounds(trackControls.removeFromTop(36).reduced(2));
+            inspectorOutput.setBounds(trackControls.removeFromTop(36).reduced(2));
             inspectorGain.setBounds(controls.removeFromTop(36));
             inspectorFadeIn.setBounds(controls.removeFromTop(36));
             inspectorFadeOut.setBounds(controls.removeFromTop(36));
@@ -3849,6 +3865,19 @@ private:
             static_cast<ju::Button*>(trackInspectorToggles[0])->setToggleState(inspectorTrack->isMuted(false), ju::dontSendNotification);
             static_cast<ju::Button*>(trackInspectorToggles[1])->setToggleState(inspectorTrack->isSolo(false), ju::dontSendNotification);
         }
+        inspectorOutput.setVisible(inspectorTrack != nullptr);
+        inspectorOutput.setEnabled(canEditInspector);
+        if (inspectorTrack)
+        {
+            const auto route = trackOutput(*inspectorTrack);
+            if (!route.track.isValid() && (route.device.isEmpty()
+                || route.device == te::DeviceManager::getDefaultAudioOutDeviceName(false)))
+                inspectorOutput.setSelectedId(1, ju::dontSendNotification);
+            else if (auto* destination = trackForID(route.track))
+                inspectorOutput.setText(destination->getName(), ju::dontSendNotification);
+            else
+                inspectorOutput.setText(route.device, ju::dontSendNotification);
+        }
         auto* audio = inspectedAudioClip();
         for (auto* slider : { &inspectorGain, &inspectorFadeIn, &inspectorFadeOut })
             slider->setVisible(audio != nullptr);
@@ -3941,6 +3970,7 @@ private:
     ju::Label position, status;
     AreaLabel inspector, workspace;
     ju::Label inspectorName;
+    ju::ComboBox inspectorOutput;
     std::vector<ju::Component*> clipInspectorButtons, trackInspectorToggles;
     ju::Slider inspectorVolume, inspectorPan, inspectorGain, inspectorFadeIn, inspectorFadeOut;
     ju::TooltipWindow tooltips { this };

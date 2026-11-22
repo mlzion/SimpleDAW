@@ -2,7 +2,7 @@
 
 ## v0.23.1 Inspector implementation in progress
 
-The feature branch records the approved E1 handoff, output and insert policies, record-arm behavior, beat-based MIDI import and automation limits. It adds the File MIDI import path, removes the obsolete Insert Audio command, and starts the selection-aware Inspector with editable names, track mute/solo and mixer settings, audio gain and fades, and independent clip duplication. [Design and clarifications](docs/specifications/v0.23.1-inspector-and-midi-import.md)
+The feature branch records the approved E1 handoff, output and insert policies, record-arm behavior, beat-based MIDI import and automation limits. It adds the File MIDI import path, removes the obsolete Insert Audio command, and starts the selection-aware Inspector with editable names, track mute/solo, mixer settings and a Master output selector, audio gain and fades, and independent clip duplication. [Design and clarifications](docs/specifications/v0.23.1-inspector-and-midi-import.md)
 
 Remaining implementation includes clone families and loop controls, MIDI playback modifiers, audio overlap and visual indicators, and the rest of the track controls and E1 integration. Bus 1 and Bus 2 are deferred. Linux CTests, including the new MIDI import suite, are **NOT RUN**. The current environment lacks CMake/CTest, Xvfb and Linux development packages and denied system package installation. Windows CI and live acceptance remain pending. [Windows live acceptance checklist](docs/testing/v0.23.1-live-test.md)
 
