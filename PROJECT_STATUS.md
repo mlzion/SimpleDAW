@@ -2,9 +2,9 @@
 
 ## v0.23.1 Inspector implementation in progress
 
-The feature branch records the approved E1 handoff, output and insert policies, record-arm behavior, beat-based MIDI import and automation limits. It adds the File MIDI import path, removes the obsolete Insert Audio command, and starts the selection-aware Inspector with editable names, track mute/solo, mixer settings and a Master output selector, audio gain and fades, and independent clip duplication. [Design and clarifications](docs/specifications/v0.23.1-inspector-and-midi-import.md)
+Draft PR #20 contains File MIDI import, the initial Track and Clip Inspectors, and independent Duplicate. MIDI velocity and transpose use Tracktion's playback sequence hook and leave source notes intact. Native audio and MIDI loops support enable, count and undo, with audio fades stored while looping. Clone-family metadata persists shared edits and determines parent promotion from member order. The Track Inspector adds an independent meter and effect-chain selection and management with stable Tracktion IDs. [Design and clarifications](docs/specifications/v0.23.1-inspector-and-midi-import.md)
 
-Remaining implementation includes clone families and loop controls, MIDI playback modifiers, audio overlap and visual indicators, and the rest of the track controls and E1 integration. Bus 1 and Bus 2 are deferred. Linux CTests, including the new MIDI import suite, are **NOT RUN**. The current environment lacks CMake/CTest, Xvfb and Linux development packages and denied system package installation. Windows CI and live acceptance remain pending. [Windows live acceptance checklist](docs/testing/v0.23.1-live-test.md)
+Remaining work includes audio MIX/REPLACE graph processing, loop-pattern UAT SIZE, visual repetition of loop content, complete clone source/color synchronization, track input and separate arm, EQ, automation, per-track height and the E1 editor handoff. Bus 1 and Bus 2 are deferred. Linux CTests are **NOT RUN** because CMake/CTest, Xvfb and development dependencies are unavailable and system package installation requires privileges. Windows CI and live acceptance remain pending. [Requirements checklist](docs/testing/v0.23.1-live-test.md#requirements-status) · [Draft PR #20](https://github.com/mlzion/SimpleDAW/pull/20)
 
 ## Windows build policy
 

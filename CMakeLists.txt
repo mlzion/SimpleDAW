@@ -77,6 +77,10 @@ if(BUILD_TESTING)
     add_test(NAME universal_actions COMMAND SimpleDAW --uat-test)
     add_test(NAME effects_foundation COMMAND SimpleDAW --effects-foundation-test)
     add_test(NAME midi_import COMMAND SimpleDAW --midi-import-test)
-    set_tests_properties(project_round_trip main_gui gui_corrections universal_actions effects_foundation midi_import
+    add_test(NAME midi_inspector COMMAND SimpleDAW --midi-inspector-test)
+    add_test(NAME inspector_loop COMMAND SimpleDAW --inspector-loop-test)
+    add_test(NAME inspector_clone COMMAND SimpleDAW --inspector-clone-test)
+    add_test(NAME inspector_effects COMMAND SimpleDAW --inspector-effects-test)
+    set_tests_properties(project_round_trip main_gui gui_corrections universal_actions effects_foundation midi_import midi_inspector inspector_loop inspector_clone inspector_effects
         PROPERTIES TIMEOUT 60)
 endif()

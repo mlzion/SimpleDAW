@@ -29,10 +29,61 @@ public:
     }
 };
 
-class SmokeTestEngineBehaviour final : public te::EngineBehaviour
+const ju::Identifier midiVelocityProperty("simpleDawMidiVelocity");
+const ju::Identifier midiTransposeProperty("simpleDawMidiTranspose");
+
+class SimpleDawEngineBehaviour final : public te::EngineBehaviour
 {
 public:
-    bool autoInitialiseDeviceManager() override { return false; }
+    explicit SimpleDawEngineBehaviour(bool testingIn) : testing(testingIn) {}
+    bool autoInitialiseDeviceManager() override { return !testing; }
+
+    ju::MidiMessageSequence createPlaybackMidiSequence(const te::MidiList& list, te::MidiClip& clip,
+        te::MidiList::TimeBase timeBase, bool generateMPE) override
+    {
+        auto source = te::MidiList::createDefaultPlaybackMidiSequence(list, clip, timeBase, generateMPE);
+        const int velocity = ju::jlimit(0, 200, static_cast<int>(clip.state.getProperty(midiVelocityProperty, 100)));
+        const int transpose = ju::jlimit(-24, 24, static_cast<int>(clip.state.getProperty(midiTransposeProperty, 0)));
+        if (velocity == 100 && transpose == 0)
+            return source;
+
+        ju::MidiMessageSequence playback;
+        // At the pitch limits several source pitches can map to the same output.
+        // Release only the most recently triggered source for that channel and pitch.
+        std::array<std::array<int, 128>, 16> owner;
+        for (auto& channel : owner)
+            channel.fill(-1);
+        for (const auto* event : source)
+        {
+            auto message = event->message;
+            if (message.isNoteOn() || message.isNoteOff() || message.isAftertouch())
+            {
+                if (velocity == 0)
+                    continue;
+                const auto pitch = message.getNoteNumber();
+                const auto output = ju::jlimit(0, 127, pitch + transpose);
+                auto& active = owner[message.getChannel() - 1][output];
+                if (message.isNoteOn())
+                {
+                    active = pitch;
+                    const auto scaled = ju::jlimit(1, 127, (message.getVelocity() * velocity + 50) / 100);
+                    message.setVelocity(static_cast<float>(scaled) / 127.0f);
+                }
+                else if (message.isNoteOff())
+                {
+                    if (active != pitch)
+                        continue;
+                    active = -1;
+                }
+                message.setNoteNumber(output);
+            }
+            playback.addEvent(message);
+        }
+        return playback;
+    }
+
+private:
+    bool testing;
 };
 
 bool insertAudio(te::AudioTrack& track, const ju::File& file, te::TimePosition start = {})
@@ -598,11 +649,14 @@ private:
 
                 if (const int choice = menu.show(); choice > 0)
                 {
+                    if (!descriptions[choice - 1]->isInstrument && audioInserts(track).size() >= 8)
+                        return report("The track has eight or more audio inserts");
                     auto plugin = edit->getPluginCache().createNewPlugin(
                         te::ExternalPlugin::xmlTypeName, *descriptions[choice - 1]);
                     if (plugin == nullptr || plugin->getWrappedAudioProcessor() == nullptr)
                         return report("Could not load VST3");
 
+                    edit->getUndoManager().beginNewTransaction("Insert VST3");
                     track->pluginList.insertPlugin(plugin, 0, nullptr);
                     report("Inserted " + descriptions[choice - 1]->name);
                 }
@@ -640,12 +694,9 @@ public:
 
         const bool testing = command == "--smoke-test" || command == "--gui-test"
             || command == "--correction-test" || command == "--uat-test"
-            || command == "--effects-foundation-test" || command == "--midi-import-test";
-        std::unique_ptr<te::EngineBehaviour> engineBehaviour;
-        if (testing)
-            engineBehaviour = std::make_unique<SmokeTestEngineBehaviour>();
+            || command == "--effects-foundation-test" || command == "--midi-import-test" || command == "--midi-inspector-test" || command == "--inspector-loop-test" || command == "--inspector-clone-test" || command == "--inspector-effects-test";
         engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW",
-            std::make_unique<SimpleDawUIBehaviour>(), std::move(engineBehaviour));
+            std::make_unique<SimpleDawUIBehaviour>(), std::make_unique<SimpleDawEngineBehaviour>(testing));
         if (testing)
         {
             bool passed = false;
@@ -655,6 +706,14 @@ public:
                 passed = MainGui::testCorrections(*engine);
             else if (command == "--uat-test")
                 passed = MainGui::testUniversalActions(*engine);
+            else if (command == "--inspector-effects-test")
+                passed = MainGui::testInspectorEffects(*engine);
+            else if (command == "--inspector-clone-test")
+                passed = MainGui::testInspectorClone(*engine);
+            else if (command == "--inspector-loop-test")
+                passed = MainGui::testInspectorLoop(*engine);
+            else if (command == "--midi-inspector-test")
+                passed = MainGui::testMidiInspector(*engine);
             else if (command == "--midi-import-test")
                 passed = MainGui::testMidiImport(*engine);
             else if (command == "--effects-foundation-test")
