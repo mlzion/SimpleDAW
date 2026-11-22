@@ -21,6 +21,7 @@ Branch: `design-sandbox`
 | ID | Idea | Subsystem / phase | Status | Notes |
 | --- | --- | --- | --- | --- |
 | IDEA-001 | Clip locking | Timeline / Clip Inspector; post-v0.23.1 timeline/clip-editing polish | APPROVED | Total editing lockdown; Inspector-only unlock; gray clip presentation. Specification promotion and implementation not yet authorized. |
+| IDEA-002 | Audio Quantization Editor | Advanced Audio Editing; late-stage, post core-feature completion | APPROVED | Guitar, piano, vocals; automatic/manual timing correction, pitch preservation, non-destructive; technical feasibility investigation required. |
 
 ## Implementation phase index
 
@@ -31,6 +32,12 @@ This index groups sandbox-approved ideas by **recommended** phase for future pla
 | Idea | Sandbox status | Canonical spec | Implementation |
 | --- | --- | --- | --- |
 | [IDEA-001 — Clip Locking](#idea-001--clip-locking-2026-11-22) | APPROVED | Not promoted | Not authorized |
+
+### Late-stage — Advanced Audio Editing (after core DAW feature completion)
+
+| Idea | Sandbox status | Canonical spec | Implementation |
+| --- | --- | --- | --- |
+| [IDEA-002 — Audio Quantization Editor](#idea-002--audio-quantization-editor-2026-11-22) | APPROVED | Not promoted | Not authorized; feasibility review required |
 
 ### Unscheduled / awaiting phase assignment
 
@@ -43,6 +50,7 @@ Use the same idea ID throughout discussion, specification promotion, implementat
 | ID | Spec promotion (document / PR / commit) | Implementation authorization | Code PR / commit | Release / acceptance | Lifecycle |
 | --- | --- | --- | --- | --- | --- |
 | IDEA-001 | Not promoted | Not authorized | — | — | Sandbox approved |
+| IDEA-002 | Not promoted | Not authorized | — | — | Sandbox approved; late-stage feasibility review pending |
 
 When an idea progresses, record the canonical spec document and section, promotion PR/commit, explicit implementation authorization, implementation PR/commit, release version, and acceptance result. Never label an idea implemented solely because its sandbox status is APPROVED. Preserve history after delivery rather than removing completed ideas.
 
@@ -73,6 +81,28 @@ Add an entry for each idea with its ID, date, status, scope, behavior, tradeoffs
 
 **Authority:** Approved for the ideas sandbox only. No Codex implementation or canonical-spec change is authorized until a future promotion decision.
 
+
+### IDEA-002 — Audio Quantization Editor (2026-11-22)
+
+**Status:** APPROVED (sandbox concept; implementation DEFERRED to late stage)  
+**Subsystem:** Advanced Audio Editing / dedicated Audio Quantization Editor  
+**Recommended implementation phase:** **Late-stage enhancement, after core DAW feature completion** (Mixer, Piano Roll, Pattern Editor, Automation Editor, and Effects). No release number assigned.
+
+**Purpose:** Correct timing of recorded **guitar, acoustic piano, and vocals**. Drum performance quantization is not a primary use case because SimpleDAW's Drum Master uses MIDI-based drums.
+
+**Approved high-level concept:**
+- Provide a dedicated Audio Quantization Editor rather than crowding the Timeline or Inspector.
+- Support automatic note-attack/transient or syllable-boundary detection where practical, plus manual timing-marker placement and correction.
+- Align performance events to the musical grid with adjustable quantization strength.
+- Use localized, pitch-preserving time stretching/elastic audio to preserve sustains and note decays as well as practical.
+- Keep edits non-destructive and reversible, with preview, apply/cancel, and Undo support.
+- Recognize that detection and natural-sounding correction vary with material; vocal and overlapping-note content may require manual intervention.
+
+**Technical prerequisite:** Investigate Tracktion Engine's actual transient analysis, time-stretching, and potential localized warp-marker facilities, including licensing/dependency implications, before choosing an implementation. Do not assume the current engine directly supports the complete workflow.
+
+**Delivery strategy:** If feasible, develop as a separate late-stage addendum and branch. Detailed UI, algorithms, and acceptance criteria remain for that phase.
+
+**Authority:** Sandbox concept approved only. No change to canonical specs, active development branches, or Codex implementation authorization.
 
 ## Promotion log
 
