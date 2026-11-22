@@ -13,6 +13,7 @@ FetchContent_Declare(tracktion
     SOURCE_SUBDIR modules)
 FetchContent_MakeAvailable(juce tracktion)
 include(cmake/TracktionAudioOverlap.cmake)
+include(cmake/JuceDeviceSelector.cmake)
 
 set(SIMPLEDAW_ASIO_SDK "" CACHE PATH "Optional directory containing iasiodrv.h")
 
@@ -85,8 +86,9 @@ if(BUILD_TESTING)
     add_test(NAME inspector_effects COMMAND SimpleDAW --inspector-effects-test)
     add_test(NAME audio_overlap COMMAND SimpleDAW --audio-overlap-test)
     add_test(NAME effects_editor COMMAND SimpleDAW --effects-editor-test)
+    add_test(NAME device_setup COMMAND SimpleDAW --device-setup-test)
     set_tests_properties(project_round_trip main_gui gui_corrections universal_actions
         effects_foundation effects_editor midi_import midi_inspector inspector_loop inspector_clone
-        inspector_effects audio_overlap
+        inspector_effects audio_overlap device_setup
         PROPERTIES TIMEOUT 60)
 endif()

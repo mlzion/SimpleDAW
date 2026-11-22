@@ -1,6 +1,6 @@
 # Effects Editor E1
 
-E1 opens a fixed, slide-up panel over the timeline. The Track List, Inspector and transport stay accessible. The header names the track and effect, numbers instances of the same effect type in processing order, and displays the instance's current bypass state. The editor starts closed with every project.
+E1 opens a fixed, slide-up panel over the full-height timeline. The persistent editor workspace and launcher buttons have been removed. The Track List, Inspector and transport stay accessible. The header names the track and effect, numbers instances of the same effect type in processing order, and displays the instance's current bypass state. The editor starts closed with every project.
 
 ## Inspector integration
 

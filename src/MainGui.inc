@@ -82,24 +82,20 @@
     {
         explicit PanelState(ju::PropertiesFile& settings)
             : props(settings), inspectorWidth(ju::jlimit(200, 600, props.getIntValue("inspectorWidth", 270))),
-              workspaceHeight(ju::jlimit(100, 600, props.getIntValue("workspaceHeight", 190))),
               inspectorOpen(props.getBoolValue("inspectorOpen", true)),
-              workspaceOpen(props.getBoolValue("workspaceOpen", false)),
               tallTracks(props.getBoolValue("tallTracks", false)) {}
 
         void save() const
         {
             props.setValue("inspectorWidth", inspectorWidth);
-            props.setValue("workspaceHeight", workspaceHeight);
             props.setValue("inspectorOpen", inspectorOpen);
-            props.setValue("workspaceOpen", workspaceOpen);
             props.setValue("tallTracks", tallTracks);
             props.saveIfNeeded();
         }
 
         ju::PropertiesFile& props;
-        int inspectorWidth, workspaceHeight;
-        bool inspectorOpen, workspaceOpen, tallTracks;
+        int inspectorWidth;
+        bool inspectorOpen, tallTracks;
     };
 
     static ju::PropertiesFile::Options settingsOptions()
@@ -199,27 +195,22 @@
 
     struct Splitter final : ju::Component
     {
-        Splitter(MainGui& gui, bool vertical) : owner(gui), side(vertical)
+        explicit Splitter(MainGui& gui) : owner(gui)
         {
-            setMouseCursor(side ? ju::MouseCursor::LeftRightResizeCursor
-                                : ju::MouseCursor::UpDownResizeCursor);
+            setMouseCursor(ju::MouseCursor::LeftRightResizeCursor);
         }
         void paint(ju::Graphics& g) override { g.fillAll(ju::Colour(0xff444444)); }
         void mouseDown(const ju::MouseEvent&) override
         {
-            initial = side ? owner.inspector.getWidth() : owner.workspace.getHeight();
+            initial = owner.inspector.getWidth();
         }
         void mouseDrag(const ju::MouseEvent& event) override
         {
-            if (side)
-                owner.panels.inspectorWidth = ju::jlimit(200, owner.maxInspector(), initial - event.getDistanceFromDragStartX());
-            else
-                owner.panels.workspaceHeight = ju::jlimit(100, owner.maxWorkspace(), initial - event.getDistanceFromDragStartY());
+            owner.panels.inspectorWidth = ju::jlimit(200, owner.maxInspector(), initial - event.getDistanceFromDragStartX());
             owner.resized();
         }
         void mouseUp(const ju::MouseEvent&) override { owner.panels.save(); }
         MainGui& owner;
-        bool side;
         int initial = 0;
     };
 
@@ -244,16 +235,14 @@ public:
         addAndMakeVisible(menuBar);
         addAndMakeVisible(arrangement);
         addAndMakeVisible(inspector);
-        addAndMakeVisible(workspace);
         addAndMakeVisible(inspectorDivider);
-        addAndMakeVisible(workspaceDivider);
         addAndMakeVisible(effectsEditorArea);
         effectsEditorArea.setInterceptsMouseClicks(false, true);
         effectsEditorArea.addChildComponent(outgoingEffects);
         effectsEditorArea.addChildComponent(effectsEditor);
         outgoingEffects.setInterceptsMouseClicks(false, false);
         effectsEditor.addMouseListener(this, true);
-        for (ju::Label* label : std::array<ju::Label*, 4> { &position, &status, &inspector, &workspace })
+        for (ju::Label* label : { &position, &status, static_cast<ju::Label*>(&inspector) })
         {
             addAndMakeVisible(*label);
             label->setColour(ju::Label::textColourId, ju::Colours::white);
@@ -264,14 +253,8 @@ public:
         position.setColour(ju::Label::backgroundColourId, ju::Colour(0xff122844));
         inspector.setColour(ju::Label::backgroundColourId, ju::Colour(0xff292929));
         inspector.setJustificationType(ju::Justification::centredTop);
-        workspace.setColour(ju::Label::backgroundColourId, ju::Colour(0xff252525));
-        workspace.setJustificationType(ju::Justification::centred);
-
-        for (auto* panel : { &inspector, &workspace })
-        {
-            panel->setInterceptsMouseClicks(true, false);
-            panel->addMouseListener(this, false);
-        }
+        inspector.setInterceptsMouseClicks(true, false);
+        inspector.addMouseListener(this, false);
 
         button(first, "RECORD", [this] { record(); }, 0xffa60000);
         button(first, "STOP", [this] { stop(); });
@@ -340,15 +323,6 @@ public:
             control->setWantsKeyboardFocus(false);
         snap.onChange = [this] { updateControls(); };
         button(panelButtons, "INSPECTOR", [this] { panels.inspectorOpen = !panels.inspectorOpen; saveLayout(); });
-        button(panelButtons, "WORKSPACE", [this] {
-            if (effectsEditor.isOpen())
-                closeEffectsEditor();
-            else
-            {
-                panels.workspaceOpen = !panels.workspaceOpen;
-                saveLayout();
-            }
-        });
 
         navigationButton(Arrow::screenLeft, "Scroll left one screen", [this] { scrollTime(-visibleSeconds()); });
         navigationButton(Arrow::screenRight, "Scroll right one screen", [this] { scrollTime(visibleSeconds()); });
@@ -615,11 +589,6 @@ public:
             saveLayout();
         });
         followButton = &button(navigation, "FOLLOW", [this] { follow = !follow; });
-        for (auto label : { "MIXER", "EFFECTS", "PIANO ROLL", "DRUM EDITOR" })
-        {
-            const auto index = tabs.size();
-            button(tabs, label, [this, index] { activeTab = index; updateControls(); });
-        }
         report("Create or open a project to begin");
         setSize(1440, 850);
         updateControls();
@@ -756,20 +725,6 @@ public:
             clipInspectorButtons[1]->setBounds(copies.reduced(2));
         }
 
-        const bool showWorkspace = panels.workspaceOpen && !effectsEditor.isOpen();
-        workspace.setVisible(showWorkspace);
-        workspaceDivider.setVisible(showWorkspace);
-        for (auto* tab : tabs)
-            tab->setVisible(showWorkspace);
-        if (showWorkspace)
-        {
-            auto bottom = area.removeFromBottom(ju::jmin(panels.workspaceHeight, maxWorkspace()));
-            auto tabBar = bottom.removeFromTop(36);
-            layoutRow(tabs, tabBar.removeFromLeft(ju::jmin(600, tabBar.getWidth())));
-            workspace.setBounds(bottom);
-            workspaceDivider.setBounds(area.removeFromBottom(8));
-        }
-
         arrangement.setBounds(area);
         if (effectsEditor.isOpen())
         {
@@ -816,14 +771,14 @@ public:
             if (!gui.save())
                 return false;
             gui.panels.inspectorOpen = false;
-            gui.panels.workspaceOpen = true;
-            gui.panels.workspaceHeight = 160;
+            gui.settings.setValue("workspaceOpen", true);
+            gui.settings.setValue("workspaceHeight", 160);
             gui.saveLayout();
         }
         MainGui gui(engine, preferences);
         gui.setProject(te::loadEditFromFile(engine, project), project);
         const auto tracks = te::getAudioTracks(*gui.edit);
-        return !gui.inspector.isVisible() && gui.workspace.getHeight() == 124
+        return !gui.inspector.isVisible() && gui.arrangement.getBottom() + 2 == gui.navigation.front()->getY()
             && tracks.size() >= 2 && tracks.getLast()->getClips().size() == 1;
     }
 
@@ -852,7 +807,7 @@ public:
         gui.setProject(te::createEmptyEdit(engine, project), project);
         gui.edit->ensureNumberOfAudioTracks(2);
         gui.snap.setSelectedId(1, ju::dontSendNotification);
-        gui.panels.inspectorOpen = gui.panels.workspaceOpen = true;
+        gui.panels.inspectorOpen = true;
         gui.resized();
         auto* first = gui.trackAt(0);
         auto* second = gui.trackAt(1);
@@ -913,6 +868,12 @@ public:
         if (!check(!gui.trackIsHighlighted(*first) && gui.trackIsHighlighted(*second),
                    "Track List focus highlights only its selected track"))
             return false;
+        gui.mouseDown(mouse(gui.inspector, { 10, 10 }, ju::ModifierKeys::leftButtonModifier, { 10, 10 }));
+        if (!check(gui.inspectorPulseTarget() == second->itemID && gui.trackIsHighlighted(*second)
+                && gui.inspectorPulse(second->itemID, 500.0) == 1.0f
+                && !gui.inspectorPulse(first->itemID, 500.0) && gui.actionSelection.clips.size() == 2,
+                   "only the inspected track pulses and timeline selections are retained"))
+            return false;
         click({ gui.timeX(seconds(1.0)), 10 });
         if (!check(gui.actionSelection.track == second->itemID && gui.trackIsHighlighted(*first)
                 && gui.trackIsHighlighted(*second) && gui.inspector.getText().contains("2 clips selected")
@@ -946,19 +907,13 @@ public:
         if (!check(gui.activeEditingArea() == EditingArea::inspector && !gui.canDispatch(Action::paste),
                    "Inspector focus blocks timeline editing"))
             return false;
-        gui.activeTab = 1;
-        gui.mouseDown(mouse(gui.workspace, { 10, 10 }, ju::ModifierKeys::leftButtonModifier, { 10, 10 }));
-        if (!check(gui.activeEditingArea() == EditingArea::window && !gui.canDispatch(Action::copy),
-                   "Effects can take focus without exposing selectable items"))
+        if (!check(gui.inspectorPulseTarget() == midiID
+                && gui.inspectorPulse(midiID, 0.0) == 0.0f && gui.inspectorPulse(midiID, 500.0) == 1.0f
+                && gui.inspectorPulse(midiID, 1000.0) == 0.0f && !gui.inspectorPulse(audioID, 500.0),
+                   "only the inspected clip pulses on a one-second cycle"))
             return false;
-        gui.panels.workspaceOpen = false;
-        gui.saveLayout();
-        if (!check(gui.activeEditingArea() == EditingArea::timeline && gui.actionSelection.clips == ItemSelection { midiID },
-                   "hiding Effects falls back to Timeline before Tracks"))
-            return false;
-        gui.panels.workspaceOpen = true;
-        gui.saveLayout();
-        if (!check(gui.activeEditingArea() == EditingArea::timeline, "showing Effects preserves current focus"))
+        click(midiPoint);
+        if (!check(!gui.inspectorPulseTarget().isValid(), "Timeline focus stops the Inspector pulse"))
             return false;
 
         click({ gui.timeX(seconds(4.13)), rowY(0) });
@@ -1859,10 +1814,10 @@ public:
             return false;
         gui.addTrack(false);
         const int secondIndex = gui.selection;
-        if (!check(gui.selectedEffects().contains("No effects"), "new track effect independence"))
+        if (!check(audioInserts(gui.trackAt(gui.selection)).empty(), "new track effect independence"))
             return false;
         gui.selectTrack(firstIndex);
-        if (!check(!gui.selectedEffects().contains("No effects"), "original effect chain remains")
+        if (!check(!audioInserts(gui.trackAt(gui.selection)).empty(), "original effect chain remains")
             || !check(gui.hasProjectChanges(), "track edits mark project dirty")
             || !check(gui.save(), "save project after track edits")
             || !check(!gui.hasProjectChanges(), "saving clears dirty state"))
@@ -2242,7 +2197,6 @@ private:
     }
 
     int maxInspector() const { return ju::jlimit(200, 600, getWidth() - 740); }
-    int maxWorkspace() const { return ju::jlimit(100, 600, getHeight() - 475); }
 
     void saveLayout()
     {
@@ -2460,7 +2414,7 @@ private:
 
     EditingArea activeEditingArea() const
     {
-        return actionSelection.activeArea(effectsEditor.isOpen() || (panels.workspaceOpen && activeTab == 1),
+        return actionSelection.activeArea(effectsEditor.isOpen(),
                                           panels.inspectorOpen);
     }
 
@@ -3966,21 +3920,6 @@ private:
         updateControls();
     }
 
-    ju::String selectedEffects() const
-    {
-        const auto* track = trackAt(selection);
-        if (!track)
-            return "EFFECTS - Select a track";
-        ju::StringArray names;
-        for (auto* plugin : track->pluginList.getPlugins())
-        {
-            if (dynamic_cast<te::VolumeAndPanPlugin*>(plugin) || dynamic_cast<te::LevelMeterPlugin*>(plugin))
-                continue;
-            names.add(plugin->getName() + (plugin->isMissing() ? " (unavailable)" : ""));
-        }
-        return track->getName() + "\n" + (names.isEmpty() ? "No effects or instruments" : names.joinIntoString("\n"));
-    }
-
     ju::Image effectsSnapshot()
     {
         if (effectsEditor.isOpen() && effectsEditor.isShowing())
@@ -4548,12 +4487,33 @@ private:
             }
     }
 
+    te::EditItemID inspectorPulseTarget() const
+    {
+        if (activeEditingArea() == EditingArea::inspector)
+        {
+            if (inspectorContext == EditingArea::tracks)
+                return actionSelection.track;
+            if (auto* clip = selectedClip())
+                return clip->itemID;
+        }
+        return {};
+    }
+
+    std::optional<float> inspectorPulse(te::EditItemID item, double milliseconds) const
+    {
+        if (!item.isValid() || item != inspectorPulseTarget())
+            return {};
+        const auto phase = milliseconds * ju::MathConstants<double>::twoPi / 1000.0;
+        return static_cast<float>(0.5 - 0.5 * std::cos(phase));
+    }
+
     bool trackIsHighlighted(const te::AudioTrack& track) const
     {
         const auto active = activeEditingArea();
-        if (active == EditingArea::tracks)
-            return actionSelection.track == track.itemID;
-        if (active == EditingArea::timeline)
+        if (active == EditingArea::tracks || active == EditingArea::inspector)
+            if (actionSelection.track == track.itemID)
+                return true;
+        if (active == EditingArea::timeline || (active == EditingArea::inspector && inspectorContext == EditingArea::timeline))
             for (auto* clip : track.getClips())
                 if (actionSelection.clips.contains(clip->itemID))
                     return true;
@@ -4564,7 +4524,9 @@ private:
     {
         const auto selected = trackIsHighlighted(track);
         auto bounds = trackBounds(y, rowHeight(row));
-        g.setColour(ju::Colour(0xff242424).interpolatedWith(colour, selected ? 0.25f : 0.12f));
+        const auto pulse = inspectorPulse(track.itemID, ju::Time::getMillisecondCounterHiRes());
+        const auto fill = pulse ? ju::jmap(*pulse, 0.19f, 0.48f) : selected ? 0.25f : 0.12f;
+        g.setColour(ju::Colour(0xff242424).interpolatedWith(colour, fill));
         g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
         if (selected)
         {
@@ -4838,7 +4800,9 @@ private:
         const auto* missing = missingWave(&clip);
         if (missing)
             colour = ju::Colours::grey;
-        g.setColour(colour.withMultipliedBrightness(selected ? 0.56f : 0.27f));
+        const auto pulse = inspectorPulse(clip.itemID, ju::Time::getMillisecondCounterHiRes());
+        const auto fill = pulse ? ju::jmap(*pulse, 0.44f, 0.82f) : selected ? 0.56f : 0.27f;
+        g.setColour(colour.withMultipliedBrightness(fill));
         g.setOpacity(0.8f);
         g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
         g.setColour(colour);
@@ -5035,7 +4999,7 @@ private:
             }
         }
         const auto tracks = te::getAudioTracks(*edit);
-        for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < area.getBottom(); y += rowHeight(row), ++row)
+        for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < arrangement.getHeight(); y += rowHeight(row), ++row)
         {
             auto& track = *tracks[row];
             const auto colour = track.getColour().isTransparent() ? palette(row) : track.getColour();
@@ -5087,8 +5051,7 @@ private:
         if (event.eventComponent == &inspector || event.eventComponent == &inspectorControls
             || inspectorControls.isParentOf(event.eventComponent))
             actionSelection.requestedArea = EditingArea::inspector;
-        else if ((event.eventComponent == &workspace && activeTab == 1)
-                 || event.eventComponent == &effectsEditor || effectsEditor.isParentOf(event.eventComponent))
+        else if (event.eventComponent == &effectsEditor || effectsEditor.isParentOf(event.eventComponent))
             actionSelection.requestedArea = EditingArea::window;
         updateControls();
     }
@@ -5135,17 +5098,16 @@ private:
             g.drawRect(selectionBox);
         }
         const auto active = activeEditingArea();
-        if (active != EditingArea::timeline && active != EditingArea::tracks)
-            return;
         g.setColour(ju::Colours::white);
-        const auto area = arrangementAreaBounds(active);
-        g.drawRect(area, 2);
-        if (active != EditingArea::timeline || actionSelection.clips.empty())
+        if (active == EditingArea::timeline || active == EditingArea::tracks)
+            g.drawRect(arrangementAreaBounds(active), 2);
+        if ((active != EditingArea::timeline && active != EditingArea::inspector)
+            || actionSelection.clips.empty())
             return;
 
         // Keep selection outlines visible above the ruler range and overlapping clips.
         const auto tracks = te::getAudioTracks(*edit);
-        for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < area.getBottom(); y += rowHeight(row), ++row)
+        for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < arrangement.getHeight(); y += rowHeight(row), ++row)
             for (auto* clip : tracks[row]->getClips())
                 if (actionSelection.clips.contains(clip->itemID))
                     if (const auto bounds = clipBounds(displayedClipRange(*clip), y, rowHeight(row)); !bounds.isEmpty())
@@ -5356,11 +5318,6 @@ private:
         countButton->setToggleState(edit && edit->getCountInMode() != te::Edit::CountIn::none, ju::dontSendNotification);
         heightButton->setButtonText(panels.tallTracks ? "MAX" : "MIN");
         followButton->setToggleState(follow, ju::dontSendNotification);
-        for (size_t i = 0; i < tabs.size(); ++i)
-            static_cast<ju::TextButton*>(tabs[i])->setToggleState(i == activeTab, ju::dontSendNotification);
-        workspace.setText(activeTab == 1 ? selectedEffects()
-            : static_cast<ju::TextButton*>(tabs[activeTab])->getButtonText() + " - coming in a later release",
-            ju::dontSendNotification);
         if (edit)
         {
             std::erase_if(actionSelection.clips, [this](auto id) { return !te::findClipForID(*edit, id); });
@@ -5573,7 +5530,6 @@ private:
         inspectorButtons[0]->setEnabled(editingStopped() && inspectorTrack);
         inspectorButtons[1]->setEnabled(editingStopped() && inspectorTrack && canApplyInspectorSettings(*inspectorTrack));
         inspector.setActive(edit && active == EditingArea::inspector);
-        workspace.setActive(edit && active == EditingArea::window);
         effectsEditor.setActive(edit && active == EditingArea::window);
         for (const auto& slot : actionButtons)
         {
@@ -5639,9 +5595,9 @@ private:
     ju::ApplicationCommandManager commandManager;
     ju::MenuBarComponent menuBar { this };
     Arrangement arrangement { *this };
-    Splitter inspectorDivider { *this, true }, workspaceDivider { *this, false };
+    Splitter inspectorDivider { *this };
     ju::Label position, status;
-    AreaLabel inspector, workspace;
+    AreaLabel inspector;
     struct InspectorEffectsModel final : ju::ListBoxModel
     {
         explicit InspectorEffectsModel(MainGui& ownerIn) : owner(ownerIn) {}
@@ -5715,7 +5671,7 @@ private:
     ju::TextButton *playButton = nullptr, *pauseButton = nullptr, *loopButton = nullptr,
         *clickButton = nullptr, *countButton = nullptr, *heightButton = nullptr, *followButton = nullptr;
     ju::TextButton *undoButton = nullptr, *redoButton = nullptr;
-    std::vector<ju::Component*> first, second, panelButtons, historyButtons, inspectorButtons, navigation, tabs;
+    std::vector<ju::Component*> first, second, panelButtons, historyButtons, inspectorButtons, navigation;
     std::array<ActionGroup, 4> actionGroups;
     std::vector<ActionButton> actionButtons;
     ActionSelection actionSelection;
@@ -5734,6 +5690,5 @@ private:
     int dragRowDelta = 0;
     ju::String dragError;
     int selection = -1, firstRow = 0;
-    size_t activeTab = 0;
     double viewStart = 0.0, pixelsPerSecond = 100.0;
     bool follow = true, paused = false, draggingRange = false;

@@ -215,6 +215,110 @@ bool smokeTest(te::Engine& engine)
         && samples.getMagnitude(0, samples.getNumSamples()) > 0.01f;
 }
 
+class DeviceSetup final : public ju::Component
+{
+public:
+    explicit DeviceSetup(ju::AudioDeviceManager& managerIn) : manager(managerIn)
+    {
+        addAndMakeVisible(refresh);
+        refresh.onClick = [this] { refreshDevices(); };
+#if JUCE_WINDOWS && ! JUCE_ASIO
+        addAndMakeVisible(driverHelp);
+        driverHelp.setText("Windows Audio uses WASAPI. ASIO is unavailable in this build.",
+                           ju::dontSendNotification);
+#endif
+        refreshDevices();
+        setSize(540, 600);
+    }
+
+    static bool test(te::Engine& engine);
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced(12);
+        refresh.setBounds(area.removeFromTop(32).removeFromLeft(155));
+#if JUCE_WINDOWS && ! JUCE_ASIO
+        driverHelp.setBounds(area.removeFromTop(28));
+#endif
+        selector->setBounds(area);
+    }
+
+private:
+    void refreshDevices()
+    {
+        // Scan only. The manager retains its active device and saved setup.
+        for (auto* type : manager.getAvailableDeviceTypes())
+            type->scanForDevices();
+
+        selector.reset();
+        selector = std::make_unique<ju::AudioDeviceSelectorComponent>(manager,
+            0, 32, 2, 32, true, false, true, false);
+        addAndMakeVisible(*selector);
+        resized();
+    }
+
+    ju::AudioDeviceManager& manager;
+    ju::TextButton refresh { "Refresh Devices" };
+#if JUCE_WINDOWS && ! JUCE_ASIO
+    ju::Label driverHelp;
+#endif
+    std::unique_ptr<ju::AudioDeviceSelectorComponent> selector;
+};
+
+bool DeviceSetup::test(te::Engine& engine)
+{
+    auto& devices = engine.getDeviceManager();
+    devices.getHostedAudioDeviceInterface().initialise({});
+    devices.dispatchPendingUpdates();
+    auto& manager = devices.deviceManager;
+    auto* activeDevice = manager.getCurrentAudioDevice();
+    if (activeDevice == nullptr || manager.getCurrentAudioDeviceType() != "Hosted Device")
+        return false;
+
+    const auto findDeviceBox = [](ju::Component& component, const auto& find) -> ju::ComboBox* {
+        for (auto* child : component.getChildren())
+        {
+            if (auto* box = dynamic_cast<ju::ComboBox*>(child); box && box->getItemText(0) == "Hosted Device"
+                && box->indexOfItemId(-1) >= 0)
+                return box;
+            if (auto* box = find(*child, find))
+                return box;
+        }
+        return nullptr;
+    };
+
+    DeviceSetup setup(manager);
+    auto* audioChoice = findDeviceBox(*setup.selector, findDeviceBox);
+    const auto original = manager.getAudioDeviceSetup();
+    if (audioChoice == nullptr || audioChoice->getText() != original.outputDeviceName)
+        return false;
+
+    // Drive the real audio ComboBox handler, then check the active choice without reopening Setup.
+    audioChoice->setSelectedId(-1, ju::dontSendNotification);
+    audioChoice->onChange();
+    if (manager.getCurrentAudioDevice() != nullptr || audioChoice->getSelectedId() != -1)
+        return false;
+    audioChoice->setSelectedId(1, ju::dontSendNotification);
+    audioChoice->onChange();
+    if (manager.getCurrentAudioDevice() == nullptr
+        || audioChoice->getText() != manager.getAudioDeviceSetup().outputDeviceName)
+        return false;
+
+    activeDevice = manager.getCurrentAudioDevice();
+    const auto beforeRefresh = manager.getAudioDeviceSetup();
+    const auto saved = manager.createStateXml();
+    setup.refresh.onClick();
+    const auto restored = manager.createStateXml();
+    if (manager.getCurrentAudioDevice() != activeDevice || manager.getAudioDeviceSetup() != beforeRefresh
+        || !saved || !restored || !saved->isEquivalentTo(restored.get(), true))
+        return false;
+
+    // MIDI inventory is refreshed independently of the selected audio endpoint.
+    auto* midiInputs = setup.selector->getMidiInputSelectorListBox();
+    const auto availableMidi = ju::MidiInput::getAvailableDevices();
+    return midiInputs && midiInputs->getListBoxModel()->getNumRows() == availableMidi.size();
+}
+
 #include "EffectsEditor.h"
 
 class MainGui final : public ju::Component, private ju::Timer, private ju::MenuBarModel,
@@ -329,9 +433,8 @@ private:
         ju::DialogWindow::LaunchOptions dialog;
         dialog.dialogTitle = "Audio and MIDI devices";
         dialog.dialogBackgroundColour = ju::Colours::darkgrey;
-        dialog.content.setOwned(new ju::AudioDeviceSelectorComponent(engine.getDeviceManager().deviceManager,
-            0, 32, 2, 32, true, false, true, false));
-        dialog.content->setSize(480, 560);
+        dialog.componentToCentreAround = this;
+        dialog.content.setOwned(new DeviceSetup(engine.getDeviceManager().deviceManager));
         dialog.runModal();
     }
 
@@ -724,7 +827,8 @@ public:
             || command == "--effects-foundation-test" || command == "--effects-editor-test"
             || command == "--midi-import-test" || command == "--midi-inspector-test"
             || command == "--inspector-loop-test" || command == "--inspector-clone-test"
-            || command == "--inspector-effects-test" || command == "--audio-overlap-test";
+            || command == "--inspector-effects-test" || command == "--audio-overlap-test"
+            || command == "--device-setup-test";
         engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW",
             std::make_unique<SimpleDawUIBehaviour>(), std::make_unique<SimpleDawEngineBehaviour>(testing));
         if (testing)
@@ -736,6 +840,8 @@ public:
                 passed = MainGui::testCorrections(*engine);
             else if (command == "--uat-test")
                 passed = MainGui::testUniversalActions(*engine);
+            else if (command == "--device-setup-test")
+                passed = DeviceSetup::test(*engine);
             else if (command == "--audio-overlap-test")
                 passed = MainGui::testAudioOverlap(*engine);
             else if (command == "--inspector-effects-test")

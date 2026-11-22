@@ -8,6 +8,14 @@ The Track Inspector provides input assignment and separate arm, automatic monito
 
 The integrated Debian 13 x64 Release build with Clang 19 and Xvfb passed all 12 CTests, including Effects Foundation E0, Effects Editor E1 and the Inspector row handoff. The handoff regression edits the selected Reverb after reorder and verifies instance isolation, bypass, save/reopen and safe deletion. The full suite also covers rendered audio overlap, MIDI import and playback modifiers, loops, clones, UAT and recording. Windows CI awaits separate authorization.
 
+## Integrated acceptance corrections
+
+The first integrated Windows x64 /MD build passed all 12 CTests and isolated startup. Live testing reported a missing interface and stale Setup indicators. The standard package uses Windows audio endpoints and has no ASIO backend. Setup now refreshes backend inventories before selection and on demand without changing the saved setup. Audio controls reread the active settings after changes and MIDI input rows repaint their enabled state immediately. The user's interface and physical MIDI input need a Windows retest to confirm discovery and live behavior. [Original Windows run](https://github.com/mlzion/SimpleDAW/actions/runs/45037100443) · [Correction checklist](docs/testing/v0.23.1-live-test.md)
+
+The Inspector pulses only the active target background while focused. The persistent workspace and launcher buttons were removed. The full-height timeline hosts E1 as an overlay opened by effect-row double-click.
+
+Debian 13 x64 Release with Clang 19 and Xvfb passed all 13 CTests. The new Setup test drives hosted audio selection in the same dialog, verifies a rescan preserves active and saved configuration, and checks the MIDI list against the enumerated inventory. The Linux runner had no physical MIDI input. The layout and focus regressions cover legacy workspace preferences, the single-target pulse and E1 on the full-height timeline. Windows CI for the corrections awaits separate authorization.
+
 ## Windows build policy
 
 Windows x64 development, acceptance and distribution use `/MD`. The acceptance workflow contains one `/MD` job and runs only by explicit, authorized manual dispatch. `/MT` remains available for requested local diagnostics. The source package, notices and separately installed Microsoft runtime requirements continue to apply. The policy branch passed all five CTests on local Linux, including Effects Foundation E0, and static checks of workflow triggers and package contents. Windows CI was not run for this update. [Build policy](docs/build/windows-build-policy.md) · [Diagnostic commands](docs/msvc-dynamic-runtime.md#requested-mt-diagnostics)

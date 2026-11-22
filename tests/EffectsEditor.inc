@@ -227,13 +227,11 @@ bool MainGui::testEffectsEditor(te::Engine& engine)
     processing.request_stop();
     processing.join();
 
-    gui.panels.workspaceOpen = true;
     ju::DocumentWindow window("Effects Editor Test", ju::Colours::black, 0);
     window.setContentNonOwned(&gui, false);
     window.centreWithSize(1060, 580);
     window.setVisible(true);
-    if (!check(gui.workspace.isVisible() && gui.openEffectsEditor(firstID, siblingID)
-            && !gui.workspace.isVisible(), "open the editor over the visible workspace"))
+    if (!check(gui.openEffectsEditor(firstID, siblingID), "open the editor over the timeline"))
         return false;
     auto* messages = ju::MessageManager::getInstance();
     messages->runDispatchLoopUntil(300);
@@ -243,6 +241,7 @@ bool MainGui::testEffectsEditor(te::Engine& engine)
         return false;
     gui.closeEffectsEditor();
     messages->runDispatchLoopUntil(300);
-    return check(!editor.isVisible() && gui.outgoingEffects.getAlpha() == 0.0f && gui.workspace.isVisible(),
-                 "close animation restores the shared workspace");
+    return check(!editor.isVisible() && gui.outgoingEffects.getAlpha() == 0.0f
+                     && gui.arrangement.getBottom() + 2 == gui.navigation.front()->getY(),
+                 "close animation leaves the full-height timeline");
 }
