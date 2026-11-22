@@ -4,9 +4,9 @@
 
 Draft PR #20 contains the Track and Clip Inspectors, File MIDI import, loop controls and source-linked Clone/Unclone. Tracktion's MIDI playback hook applies velocity and transpose while retaining source notes. The pinned Tracktion graph gates audio REPLACE overlaps before summing. The timeline uses the same precedence and draws a combined thumbnail envelope for overlapping MIX clips.
 
-The Track Inspector provides input assignment and separate arm, automatic monitoring, independent metering, native three-band EQ, Volume/Pan automation selection, per-track MIN/MAX, and effect rows addressed by stable Tracktion IDs. Double-click targets the existing E1 `MainGui::openEffectsEditor(trackID, pluginID)` contract from PR #21. E1 integration and Windows x64 /MD live acceptance remain pending. Bus 1 and Bus 2 are deferred. [Requirements and acceptance checklist](docs/testing/v0.23.1-live-test.md) · [Draft PR #20](https://github.com/mlzion/SimpleDAW/pull/20) · [Effects Editor PR #21](https://github.com/mlzion/SimpleDAW/pull/21)
+The Track Inspector provides input assignment and separate arm, automatic monitoring, independent metering, native three-band EQ, Volume/Pan automation selection, per-track MIN/MAX, and effect rows addressed by stable Tracktion IDs. PR #20 integrates the E1 branch from PR #21. Effect-row double-click opens the slide-up editor with the owning track and plugin `EditItemID` values. Inspector owns chain actions. E1 owns the native parameter controls and keeps its binding through selection changes and reorder. Windows x64 /MD live acceptance remains pending. Bus 1 and Bus 2 are deferred. [Requirements and acceptance checklist](docs/testing/v0.23.1-live-test.md) · [Draft PR #20](https://github.com/mlzion/SimpleDAW/pull/20) · [Effects Editor PR #21](https://github.com/mlzion/SimpleDAW/pull/21)
 
-The Linux x64 Release build with GCC 14 and Xvfb passed all 11 CTests. Coverage includes rendered overlap audio, clip import and playback modifiers, loop and clone undo/reopen, effect ID handoff and the existing UAT and recording regressions. Windows CI was not dispatched.
+The integrated Debian 13 x64 Release build with Clang 19 and Xvfb passed all 12 CTests, including Effects Foundation E0, Effects Editor E1 and the Inspector row handoff. The handoff regression edits the selected Reverb after reorder and verifies instance isolation, bypass, save/reopen and safe deletion. The full suite also covers rendered audio overlap, MIDI import and playback modifiers, loops, clones, UAT and recording. Windows CI awaits separate authorization.
 
 ## Windows build policy
 
@@ -79,3 +79,9 @@ User-reported Windows 11 live acceptance completed on 2026-11-20: 43 functional 
 The isolated effects branch adds a windowless CTest path for the pinned Tracktion Reverb and Compressor. Native plugin lists, parameters, bypass and Edit serialization supply the foundation. The Compressor serves as a second insert for chain verification. The proposed Inspector/Effects Editor contract retains eight user audio-effect slots per track and records the remaining decisions for E1. [E0 tests and integration contract](docs/testing/effects-foundation-e0.md)
 
 Local Debian 13 x64 Release build with Clang 19 and Xvfb passed all five CTests: `project_round_trip`, `main_gui`, `gui_corrections`, `universal_actions` and `effects_foundation`. Windows CI has not been dispatched and live device acceptance is pending.
+
+## Effects Editor E1
+
+The E1 feature branch adds a reusable slide-up editor for native Tracktion Reverb and Compressor. It binds to track and plugin IDs in the active Edit, edits native parameter state during playback, displays bypass, and closes on target deletion or project replacement. Reverb uses independent Wet and Dry levels. Inspector owns chain actions and will call the editor on an effect-row double-click. [Integration contract and acceptance checklist](docs/testing/effects-editor-e1.md)
+
+The isolated E1 branch passed all six CTests on Debian 13 x64 Release with Clang 19 and Xvfb, including E0 and the new `effects_editor` suite. Five additional consecutive E1 runs passed. **PENDING** — Separately authorized integrated Windows x64 /MD build and live acceptance.

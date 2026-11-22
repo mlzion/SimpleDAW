@@ -84,6 +84,9 @@ if(BUILD_TESTING)
     add_test(NAME inspector_clone COMMAND SimpleDAW --inspector-clone-test)
     add_test(NAME inspector_effects COMMAND SimpleDAW --inspector-effects-test)
     add_test(NAME audio_overlap COMMAND SimpleDAW --audio-overlap-test)
-    set_tests_properties(project_round_trip main_gui gui_corrections universal_actions effects_foundation midi_import midi_inspector inspector_loop inspector_clone inspector_effects audio_overlap
+    add_test(NAME effects_editor COMMAND SimpleDAW --effects-editor-test)
+    set_tests_properties(project_round_trip main_gui gui_corrections universal_actions
+        effects_foundation effects_editor midi_import midi_inspector inspector_loop inspector_clone
+        inspector_effects audio_overlap
         PROPERTIES TIMEOUT 60)
 endif()
