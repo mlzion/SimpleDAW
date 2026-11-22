@@ -10,6 +10,12 @@ Export stops playback, renders the Edit offline through Tracktion, and moves the
 
 The Windows CTest runs the executable in smoke-test mode. It generates a short input WAV, imports it onto two tracks, inserts a native effect, saves and reloads the Edit, and checks the channel count, length, and signal level of an offline render. This test uses synthetic audio and does not depend on an attached interface.
 
+## MIDI routing and Setup
+
+The approved [MIDI track routing amendment](specifications/midi-track-routing.md) puts device selection and input/output channels on the track. The Clip Inspector edits clip properties, and the Piano Roll uses track routing for audition.
+
+Setup uses JUCE’s device selector and lists OS-visible MIDI inputs. The selector enumerates on open and re-enumerates on AudioDeviceManager change notifications. Tracktion maintains its own hardware MIDI list, polling every four seconds by default and disabling automatic scans if an input or output enumeration exceeds 200 ms. Reopening Setup refreshes its list independently of Tracktion’s list. See the [branch and Setup inspection](research/midi-track-routing-review.md) for implementation findings.
+
 ## Universal Actions Toolbar
 
 The four fixed 2×2 action groups use the same dispatcher as the Edit menu. The global UNDO and REDO buttons use the project's Tracktion UndoManager through the same history handler as the menu. Both are available independently of editing area while transport is stopped. The Delete shortcut also clears the ruler range when the Timeline has focus and its clip selection is empty.

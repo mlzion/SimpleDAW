@@ -1,5 +1,9 @@
 # SimpleDAW project status
 
+## MIDI track routing amendment
+
+The approved design moves MIDI channel selection to tracks, retains Arm and Monitor, and specifies lossless import and saved-project compatibility. Inspector and Piano Roll branch conflicts and the Setup enumeration path were reviewed by static inspection. Windows builds, live USB controller discovery and hot-plug behavior remain unverified for this amendment. [Master Specification amendment](docs/specifications/midi-track-routing.md) · [Code inspection](docs/research/midi-track-routing-review.md)
+
 ## Windows build policy
 
 Windows x64 development, acceptance and distribution use `/MD`. The acceptance workflow contains one `/MD` job and runs only by explicit, authorized manual dispatch. `/MT` remains available for requested local diagnostics. The source package, notices and separately installed Microsoft runtime requirements continue to apply. The policy branch passed all five CTests on local Linux, including Effects Foundation E0, and static checks of workflow triggers and package contents. Windows CI was not run for this update. [Build policy](docs/build/windows-build-policy.md) · [Diagnostic commands](docs/msvc-dynamic-runtime.md#requested-mt-diagnostics)
