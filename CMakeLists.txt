@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(SimpleDAW VERSION 0.22.2 LANGUAGES C CXX)
+project(SimpleDAW VERSION 0.23.1 LANGUAGES C CXX)
 
 include(FetchContent)
 # Use the JUCE revision recorded by Tracktion Engine v3.2.0.
@@ -12,6 +12,7 @@ FetchContent_Declare(tracktion
     GIT_SUBMODULES ""
     SOURCE_SUBDIR modules)
 FetchContent_MakeAvailable(juce tracktion)
+include(cmake/TracktionAudioOverlap.cmake)
 
 set(SIMPLEDAW_ASIO_SDK "" CACHE PATH "Optional directory containing iasiodrv.h")
 
@@ -50,6 +51,7 @@ endif()
 juce_generate_juce_header(SimpleDAW)
 target_sources(SimpleDAW PRIVATE src/Main.cpp tests/EffectsFoundation.cpp)
 target_compile_features(SimpleDAW PRIVATE cxx_std_20)
+target_include_directories(SimpleDAW PRIVATE src)
 target_compile_definitions(SimpleDAW PRIVATE
     SIMPLEDAW_RELEASE_VERSION="${SIMPLEDAW_RELEASE_VERSION}"
     JUCE_PLUGINHOST_VST3=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0
@@ -81,6 +83,7 @@ if(BUILD_TESTING)
     add_test(NAME inspector_loop COMMAND SimpleDAW --inspector-loop-test)
     add_test(NAME inspector_clone COMMAND SimpleDAW --inspector-clone-test)
     add_test(NAME inspector_effects COMMAND SimpleDAW --inspector-effects-test)
-    set_tests_properties(project_round_trip main_gui gui_corrections universal_actions effects_foundation midi_import midi_inspector inspector_loop inspector_clone inspector_effects
+    add_test(NAME audio_overlap COMMAND SimpleDAW --audio-overlap-test)
+    set_tests_properties(project_round_trip main_gui gui_corrections universal_actions effects_foundation midi_import midi_inspector inspector_loop inspector_clone inspector_effects audio_overlap
         PROPERTIES TIMEOUT 60)
 endif()

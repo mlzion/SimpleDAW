@@ -7,6 +7,7 @@
 #include <numeric>
 #include <set>
 #include <thread>
+#include "AudioOverlap.h"
 
 namespace te = tracktion;
 namespace ju = juce;
@@ -694,7 +695,8 @@ public:
 
         const bool testing = command == "--smoke-test" || command == "--gui-test"
             || command == "--correction-test" || command == "--uat-test"
-            || command == "--effects-foundation-test" || command == "--midi-import-test" || command == "--midi-inspector-test" || command == "--inspector-loop-test" || command == "--inspector-clone-test" || command == "--inspector-effects-test";
+            || command == "--effects-foundation-test" || command == "--midi-import-test" || command == "--midi-inspector-test" || command == "--inspector-loop-test" || command == "--inspector-clone-test" || command == "--inspector-effects-test"
+            || command == "--audio-overlap-test";
         engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW",
             std::make_unique<SimpleDawUIBehaviour>(), std::make_unique<SimpleDawEngineBehaviour>(testing));
         if (testing)
@@ -706,6 +708,8 @@ public:
                 passed = MainGui::testCorrections(*engine);
             else if (command == "--uat-test")
                 passed = MainGui::testUniversalActions(*engine);
+            else if (command == "--audio-overlap-test")
+                passed = MainGui::testAudioOverlap(*engine);
             else if (command == "--inspector-effects-test")
                 passed = MainGui::testInspectorEffects(*engine);
             else if (command == "--inspector-clone-test")
