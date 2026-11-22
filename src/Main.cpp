@@ -15,6 +15,8 @@ bool runEffectsFoundationTest(te::Engine&);
 
 namespace
 {
+#include "PianoRoll.h"
+
 constexpr int maxTracks = 24;
 constexpr const char* applicationTitle = "SimpleDAW v" SIMPLEDAW_RELEASE_VERSION;
 
@@ -548,7 +550,7 @@ public:
 
         const bool testing = command == "--smoke-test" || command == "--gui-test"
             || command == "--correction-test" || command == "--uat-test"
-            || command == "--effects-foundation-test";
+            || command == "--effects-foundation-test" || command == "--piano-roll-test";
         std::unique_ptr<te::EngineBehaviour> engineBehaviour;
         if (testing)
             engineBehaviour = std::make_unique<SmokeTestEngineBehaviour>();
@@ -563,6 +565,8 @@ public:
                 passed = MainGui::testCorrections(*engine);
             else if (command == "--uat-test")
                 passed = MainGui::testUniversalActions(*engine);
+            else if (command == "--piano-roll-test")
+                passed = MainGui::testPianoRoll(*engine);
             else if (command == "--effects-foundation-test")
                 passed = runEffectsFoundationTest(*engine);
             else

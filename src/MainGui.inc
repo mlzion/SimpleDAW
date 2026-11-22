@@ -140,6 +140,7 @@
         void changeListenerCallback(ju::ChangeBroadcaster*) override { repaint(); }
         void mouseDown(const ju::MouseEvent& event) override { owner.arrangementDown(event); }
         void mouseDrag(const ju::MouseEvent& event) override { owner.arrangementDrag(event); }
+        void mouseDoubleClick(const ju::MouseEvent& event) override { owner.openPianoRoll(event); }
         void mouseUp(const ju::MouseEvent& event) override { owner.arrangementUp(event); }
         void mouseWheelMove(const ju::MouseEvent&, const ju::MouseWheelDetails& wheel) override
         {
@@ -214,7 +215,7 @@
             if (side)
                 owner.panels.inspectorWidth = ju::jlimit(200, owner.maxInspector(), initial - event.getDistanceFromDragStartX());
             else
-                owner.panels.workspaceHeight = ju::jlimit(100, owner.maxWorkspace(), initial - event.getDistanceFromDragStartY());
+                owner.panels.workspaceHeight = ju::jlimit(owner.minWorkspace(), owner.maxWorkspace(), initial - event.getDistanceFromDragStartY());
             owner.resized();
         }
         void mouseUp(const ju::MouseEvent&) override { owner.panels.save(); }
@@ -247,6 +248,10 @@ public:
         addAndMakeVisible(workspace);
         addAndMakeVisible(inspectorDivider);
         addAndMakeVisible(workspaceDivider);
+        addChildComponent(pianoRoll);
+        pianoRoll.onFocus = [this] { actionSelection.requestedArea = EditingArea::window; updateControls(); };
+        pianoRoll.onChange = [this] { updateControls(); };
+        pianoRoll.addMouseListener(this, true);
         for (ju::Label* label : std::array<ju::Label*, 4> { &position, &status, &inspector, &workspace })
         {
             addAndMakeVisible(*label);
@@ -361,7 +366,18 @@ public:
         for (auto label : { "MIXER", "EFFECTS", "PIANO ROLL", "DRUM EDITOR" })
         {
             const auto index = tabs.size();
-            button(tabs, label, [this, index] { activeTab = index; updateControls(); });
+            button(tabs, label, [this, index] {
+                activeTab = index;
+                if (index == pianoRollTab)
+                {
+                    if (auto* midi = dynamic_cast<te::MidiClip*>(selectedClip()))
+                        pianoRollClip = midi->itemID;
+                    actionSelection.requestedArea = EditingArea::window;
+                    panels.workspaceHeight = ju::jmax(defaultPianoRollHeight, panels.workspaceHeight);
+                }
+                resized();
+                updateControls();
+            });
         }
         report("Create or open a project to begin");
         setSize(1440, 850);
@@ -443,7 +459,8 @@ public:
             }
         }
 
-        workspace.setVisible(panels.workspaceOpen);
+        workspace.setVisible(panels.workspaceOpen && activeTab != pianoRollTab);
+        pianoRoll.setVisible(panels.workspaceOpen && activeTab == pianoRollTab);
         workspaceDivider.setVisible(panels.workspaceOpen);
         for (auto* tab : tabs)
             tab->setVisible(panels.workspaceOpen);
@@ -453,12 +470,15 @@ public:
             auto tabBar = bottom.removeFromTop(36);
             layoutRow(tabs, tabBar.removeFromLeft(ju::jmin(600, tabBar.getWidth())));
             workspace.setBounds(bottom);
+            pianoRoll.setBounds(bottom);
             workspaceDivider.setBounds(area.removeFromBottom(8));
         }
 
         arrangement.setBounds(area);
         scrollRows(0);
     }
+
+    #include "PianoRollTest.inc"
 
     static bool test(te::Engine& engine)
     {
@@ -1487,7 +1507,11 @@ private:
     }
 
     int maxInspector() const { return ju::jlimit(200, 600, getWidth() - 740); }
-    int maxWorkspace() const { return ju::jlimit(100, 600, getHeight() - 475); }
+    int minWorkspace() const { return activeTab == pianoRollTab ? 215 : 100; }
+    int maxWorkspace() const
+    {
+        return ju::jlimit(minWorkspace(), 600, getHeight() - (activeTab == pianoRollTab ? 350 : 475));
+    }
 
     void saveLayout()
     {
@@ -1688,8 +1712,8 @@ private:
 
     EditingArea activeEditingArea() const
     {
-        // Effects exposes the existing chain read-only. The other workspace tabs are placeholders.
-        return actionSelection.activeArea(panels.workspaceOpen && activeTab == 1, panels.inspectorOpen);
+        return actionSelection.activeArea(panels.workspaceOpen && (activeTab == 1 || activeTab == pianoRollTab),
+                                          panels.inspectorOpen);
     }
 
     bool editingStopped() const
@@ -2417,11 +2441,37 @@ private:
         updateControls();
     }
 
+    static std::optional<PianoRoll::Action> noteAction(UniversalAction action)
+    {
+        using Note = PianoRoll::Action;
+        switch (action)
+        {
+            case UniversalAction::cut: return Note::cut;
+            case UniversalAction::remove: return Note::remove;
+            case UniversalAction::copy: return Note::copy;
+            case UniversalAction::paste: return Note::paste;
+            case UniversalAction::up: return Note::up;
+            case UniversalAction::down: return Note::down;
+            case UniversalAction::left: return Note::left;
+            case UniversalAction::right: return Note::right;
+            case UniversalAction::startMinus: return Note::startMinus;
+            case UniversalAction::startPlus: return Note::startPlus;
+            case UniversalAction::endMinus: return Note::endMinus;
+            case UniversalAction::endPlus: return Note::endPlus;
+            default: return {};
+        }
+    }
+
     bool canDispatch(UniversalAction action) const
     {
         using Action = UniversalAction;
         if (!editingStopped())
             return false;
+        if (activeEditingArea() == EditingArea::window && activeTab == pianoRollTab)
+        {
+            const auto note = noteAction(action);
+            return note && pianoRoll.canApply(*note);
+        }
         if (activeEditingArea() == EditingArea::tracks)
         {
             if (action == Action::copy || action == Action::remove)
@@ -2507,6 +2557,11 @@ private:
         {
             if (auto reason = incompatiblePlacement(action); reason.isNotEmpty())
                 warnPlacement(reason);
+            return;
+        }
+        if (activeEditingArea() == EditingArea::window && activeTab == pianoRollTab)
+        {
+            pianoRoll.apply(*noteAction(action));
             return;
         }
         const bool tracks = activeEditingArea() == EditingArea::tracks;
@@ -2600,6 +2655,8 @@ private:
 
     void setProject(std::unique_ptr<te::Edit> next, const ju::File& file)
     {
+        pianoRoll.clearProject();
+        pianoRollClip = {};
         meters.clear();
         arrangement.waves.clear();
         edit = std::move(next);
@@ -3246,6 +3303,8 @@ private:
             return;
         if (event.eventComponent == &inspector)
             actionSelection.requestedArea = EditingArea::inspector;
+        else if (pianoRoll.isParentOf(event.eventComponent))
+            actionSelection.requestedArea = EditingArea::window;
         else if (event.eventComponent == &workspace && activeTab == 1)
             actionSelection.requestedArea = EditingArea::window;
         updateControls();
@@ -3308,6 +3367,34 @@ private:
                 if (actionSelection.clips.contains(clip->itemID))
                     if (const auto bounds = clipBounds(displayedClipRange(*clip), y); !bounds.isEmpty())
                         g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 4.0f, 2.0f);
+    }
+
+    void openPianoRoll(const ju::MouseEvent& event)
+    {
+        if (!edit || !event.mods.isLeftButtonDown() || event.x < headerWidth || event.y < rulerHeight)
+            return;
+        const auto row = firstRow + (event.y - rulerHeight) / rowHeight();
+        auto* track = trackAt(row);
+        if (!track)
+            return;
+        const auto clips = track->getClips();
+        const auto y = rulerHeight + (row - firstRow) * rowHeight();
+        for (int index = clips.size(); --index >= 0;)
+        {
+            auto* clip = clips[index];
+            if (!clipBounds(clip->getPosition().time, y).contains(event.getPosition()))
+                continue;
+            if (auto* midi = dynamic_cast<te::MidiClip*>(clip))
+            {
+                pianoRollClip = midi->itemID;
+                activeTab = pianoRollTab;
+                panels.workspaceOpen = true;
+                panels.workspaceHeight = ju::jmax(defaultPianoRollHeight, panels.workspaceHeight);
+                actionSelection.requestedArea = EditingArea::window;
+                saveLayout();
+            }
+            return;
+        }
     }
 
     void arrangementDown(const ju::MouseEvent& event)
@@ -3525,6 +3612,9 @@ private:
             actionSelection.requestedArea = active;
         if (active != EditingArea::inspector)
             inspectorContext = active;
+        pianoRoll.refresh(edit && pianoRollClip.isValid()
+            ? dynamic_cast<te::MidiClip*>(te::findClipForID(*edit, pianoRollClip)) : nullptr,
+            pianoRoll.isVisible() && editingStopped(), active == EditingArea::window);
 
         ju::String description;
         auto* inspectorTrack = inspectorContext == EditingArea::tracks ? actionTrack() : nullptr;
@@ -3609,6 +3699,10 @@ private:
     Splitter inspectorDivider { *this, true }, workspaceDivider { *this, false };
     ju::Label position, status;
     AreaLabel inspector, workspace;
+    static constexpr size_t pianoRollTab = 2;
+    static constexpr int defaultPianoRollHeight = 360;
+    PianoRoll pianoRoll;
+    te::EditItemID pianoRollClip;
     ju::TooltipWindow tooltips { this };
     ju::TextEditor tempo;
     ju::ComboBox signature, recordMode, snap;

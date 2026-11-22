@@ -1,5 +1,9 @@
 # SimpleDAW project status
 
+## Piano Roll P0
+
+The `feature/piano-roll-p0` branch adds a shared bottom-workspace editor for MIDI clips. It supports note drawing, marquee selection, movement, resizing, velocity and audition, plus UAT clipboard and editing actions. Tracktion's MIDI sequence and Edit history supply project persistence and Undo/Redo. The beat/pitch grid and note adapter form a starting point for a future drum grid. All six CTests passed on Debian 13 x64 with Clang 19, pinned JUCE and Tracktion, and Xvfb. Windows live acceptance remains pending. [Design and Windows checklist](docs/research/piano-roll-p0.md)
+
 ## Windows build policy
 
 Windows x64 development, acceptance and distribution use `/MD`. The acceptance workflow contains one `/MD` job and runs only by explicit, authorized manual dispatch. `/MT` remains available for requested local diagnostics. The source package, notices and separately installed Microsoft runtime requirements continue to apply. The policy branch passed all five CTests on local Linux, including Effects Foundation E0, and static checks of workflow triggers and package contents. Windows CI was not run for this update. [Build policy](docs/build/windows-build-policy.md) · [Diagnostic commands](docs/msvc-dynamic-runtime.md#requested-mt-diagnostics)
@@ -60,7 +64,7 @@ User-reported Windows 11 live acceptance completed on 2026-11-20: 43 functional 
 
 ## Known limitations
 
-- Inspector content and Mixer, Piano Roll and Drum Editor content are placeholders. Effects shows the chain read-only. The read-only 1 and 2 input badges are temporary until Inspector routing is available. Drum Master processing is planned for v0.26.
+- The Inspector, Mixer and Drum Editor still use placeholder content. Effects shows the chain read-only. The read-only 1 and 2 input badges are temporary until Inspector routing is available. Drum Master processing is planned for v0.26.
 - Duplicate remains disabled. Single-clip mouse dragging works within a lane while stopped. Complex looping, stretched media and overlapping takes can have simplified previews. Locating audio updates the selected clip source and matching take references.
 - Save As creates a copy in the current folder so relative media paths still resolve. Source media remain in their original locations.
 - Count-in is off or one bar. Punch and Loop share the ruler selection. If a range has not been selected or set in the project, Loop uses the arrangement length or at least one bar.
