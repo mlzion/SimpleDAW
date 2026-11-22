@@ -1318,6 +1318,12 @@ public:
         if (midi->getPosition().getLength() != pattern)
             return false;
         gui.useHistory(true);
+        gui.snap.setSelectedId(1, ju::dontSendNotification);
+        auto size = gui.clipChanges(UniversalAction::endPlus, { midi.get() });
+        if (!gui.applyClipChanges(size, "Resize loop")
+            || std::abs(midi->getPosition().getLength().inSeconds() - 3.03) > 1.0e-6)
+            return false;
+        gui.useHistory(false);
         if (!gui.setClipLoop(*midi, false, 3) || midi->isLooping()
             || midi->getPosition().getLength() != pattern || !gui.setClipLoop(*midi, true, 3))
             return false;
@@ -2699,6 +2705,8 @@ private:
         te::Clip* clip;
         te::AudioTrack* destination;
         te::ClipPosition position;
+        std::optional<te::TimeRange> loopTime;
+        std::optional<te::BeatRange> loopBeats;
     };
 
     std::vector<ClipChange> movePlan(const std::vector<te::Clip*>& clips, int rowDelta,
@@ -2761,6 +2769,10 @@ private:
                 report("Could not move clips");
                 return false;
             }
+            if (change.loopTime)
+                change.clip->setLoopRange(*change.loopTime);
+            if (change.loopBeats)
+                change.clip->setLoopRangeBeats(*change.loopBeats);
             if (change.clip->getPosition() != change.position)
                 change.clip->setPosition(change.position);
         }
@@ -2784,7 +2796,12 @@ private:
         {
             auto anchor = te::Edit::getMaximumEditEnd();
             for (auto* clip : clips)
-                anchor = std::min(anchor, (move || start) ? clip->getPosition().getStart() : clip->getPosition().getEnd());
+            {
+                auto pos = clip->getPosition();
+                if (!move && clip->isLooping() && canControlLoop(*clip))
+                    pos = singleLoopPattern(*clip);
+                anchor = std::min(anchor, (move || start) ? pos.getStart() : pos.getEnd());
+            }
             const auto& sequence = edit->tempoSequence;
             const auto step = sequence.getTimeSigAt(anchor).denominator.get() / (4.0 * (1 << (grid - 2)));
             const auto targetBeat = sequence.toBeats(anchor) + te::BeatDuration::fromBeats(earlier ? -step : step);
@@ -2799,10 +2816,10 @@ private:
         auto* clip = clips.front();
         auto* source = dynamic_cast<te::AudioTrack*>(clip->getTrack());
         if (clips.size() != 1 || !ordinaryClip(*clip) || !source || source->isFrozen(te::Track::anyFreeze)
-            || clip->isLooping() || clip->getNumTakes(true) > 1)
+            || (clip->isLooping() && !canControlLoop(*clip)) || clip->getNumTakes(true) > 1)
             return {};
 
-        auto position = clip->getPosition();
+        auto position = clip->isLooping() ? singleLoopPattern(*clip) : clip->getPosition();
         const auto original = position.time;
         if (start)
         {
@@ -2830,6 +2847,9 @@ private:
                     > sourceFile.getLength() + 1.0e-9)
                 return {};
         }
+        if (clip->isLooping())
+            return resizeLoopFamily(*clip, position);
+
         std::vector<ClipChange> changes { { clip, nullptr, position } };
         for (auto* member : cloneMembers(*clip))
         {
@@ -2852,6 +2872,55 @@ private:
             if (end <= memberStart || end > te::Edit::getMaximumEditEnd())
                 return {};
             changes.push_back({ member, nullptr, { { memberStart, end }, offset } });
+        }
+        return changes;
+    }
+
+    te::ClipPosition singleLoopPattern(te::Clip& clip) const
+    {
+        const auto start = clip.getPosition().getStart();
+        if (dynamic_cast<te::MidiClip*>(&clip))
+        {
+            auto& tempo = edit->tempoSequence;
+            const auto beat = tempo.toBeats(start);
+            return { { start, tempo.toTime(beat + clip.getLoopLengthBeats()) },
+                start - tempo.toTime(beat - (clip.getLoopStartBeats() - te::BeatPosition{})) };
+        }
+        return { { start, start + clip.getLoopLength() }, clip.getLoopStart() - te::TimePosition{} };
+    }
+
+    std::vector<ClipChange> resizeLoopFamily(te::Clip& clip, const te::ClipPosition& pattern) const
+    {
+        const int count = static_cast<int>(clip.state.getProperty(loopCountProperty, 1));
+        auto& tempo = edit->tempoSequence;
+        const auto patternBeat = tempo.toBeats(pattern.getStart());
+        const auto beatLength = tempo.toBeats(pattern.getEnd()) - patternBeat;
+        const auto beatOffset = patternBeat - tempo.toBeats(pattern.getStartOfSource());
+        const auto timeLength = pattern.getLength();
+        const auto timeOffset = pattern.getOffset();
+        const bool midi = dynamic_cast<te::MidiClip*>(&clip) != nullptr;
+        std::vector<ClipChange> changes;
+        for (auto* member : cloneMembers(clip))
+        {
+            if (!member->isLooping() || !canControlLoop(*member))
+                return {};
+            const auto start = member == &clip ? pattern.getStart() : member->getPosition().getStart();
+            const auto end = midi ? tempo.toTime(tempo.toBeats(start) + beatLength * count)
+                                  : start + timeLength * count;
+            if (end <= start || end > te::Edit::getMaximumEditEnd())
+                return {};
+            ClipChange change { member, nullptr, { { start, end }, {} } };
+            if (midi)
+            {
+                const auto source = te::BeatPosition{} + beatOffset;
+                change.loopBeats = te::BeatRange { source, source + beatLength };
+            }
+            else
+            {
+                const auto source = te::TimePosition{} + timeOffset;
+                change.loopTime = te::TimeRange { source, source + timeLength };
+            }
+            changes.push_back(change);
         }
         return changes;
     }
