@@ -96,3 +96,7 @@ The isolated E1 branch passed all six CTests on Debian 13 x64 Release with Clang
 ## MD0 Master Drum Track — DESIGN ACCEPTED (2026-11-23)
 
 The protected singleton MDT, five-lane starter kit, expandable 16-lane GM channel-10 pattern editing, packaged and user-expandable WAV sample library, per-lane one-shot samplers, Inspector/bus routing, Settings-only enable/disable with processing bypass, and inline 16th-step editing (maximum 32 visible steps in 4/4) are approved **design**, not implemented. Shared ordinary-MIDI UAT Insert clip length (1–4 bars) is also approved. Dedicated Drum Mixer follows the normal Mixer; MDT live monitoring and recording are deferred to MD1. [MD0 design specification](docs/specifications/md0-master-drum-track-2026-11-23.md) · [Codex task sheet](docs/tasks/md0-master-drum-track-task-sheet.md). Implementation, Windows CI and merges require separate authorization. Piano Roll P0 integration PR #24 remains independent and awaits Windows acceptance.
+
+## MD0 foundation draft
+
+The MD0 feature branch adds the protected Master, five starter lanes, native lane and bus processing, an expandable WAV library, and project-owned channel-10 patterns. The Master and up to sixteen lanes are exempt from the ordinary track limit. The Master Inspector uses named Tracktion FX1/FX2 returns where an edit already defines them. Debian 13 x64 Release passed all 15 CTests, with five consecutive passes for each MD0 test. [MD0 foundation notes](docs/testing/md0-drum-master.md)

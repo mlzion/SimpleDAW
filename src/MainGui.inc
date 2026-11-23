@@ -336,6 +336,9 @@ public:
         zoomIn.setRepeatSpeed(330, 110, 65);
         navigationButton(Arrow::up, "Scroll up", [this] { scrollRows(-1); });
         navigationButton(Arrow::down, "Scroll down", [this] { scrollRows(1); });
+        drumKitButton = std::make_unique<ju::TextButton>("DRUM LANES");
+        inspectorControls.addChildComponent(*drumKitButton);
+        drumKitButton->onClick = [this] { showDrumLanes(); };
         button(inspectorButtons, "COPY SETTINGS", [this] { useInspectorSettings(false); });
         button(inspectorButtons, "APPLY SETTINGS", [this] { useInspectorSettings(true); });
         inspector.setInterceptsMouseClicks(true, true);
@@ -565,7 +568,7 @@ public:
             track->state.setProperty(trackHeightProperty, heightForTrack(track) == 44, &undo);
             edit->markAsChanged();
             scrollRows(0);
-            revealTrack(te::getAudioTracks(*edit).indexOf(track));
+            revealTrack(visibleTracks().indexOf(track));
             updateControls();
         });
         inspectorControls.addChildComponent(heightInspectorButtons.front());
@@ -721,6 +724,7 @@ public:
             controls.removeFromTop(4);
             auto trackControls = controls;
             trackInputButtons[0]->setBounds(trackControls.removeFromTop(36).reduced(2));
+            drumKitButton->setBounds(trackInputButtons[0]->getBounds());
             layoutRow({ trackInspectorToggles[0], trackInspectorToggles[1], trackInputButtons[1] },
                       trackControls.removeFromTop(38));
             auto fader = trackControls.removeFromTop(120);
@@ -768,6 +772,37 @@ public:
             effectsEditor.setBounds(effectsEditorArea.getLocalBounds());
         }
         scrollRows(0);
+    }
+
+    static bool testDrumUi(te::Engine& engine)
+    {
+        const ju::TemporaryFile file(".tracktionedit"), settings(".settings");
+        MainGui gui(engine, settings.getFile());
+        auto project = te::createEmptyEdit(engine, file.getFile());
+        project->ensureNumberOfAudioTracks(maxTracks - 1);
+        auto* master = drumMaster::provision(*project, true);
+        if (!master)
+            return false;
+        gui.setProject(std::move(project), file.getFile());
+        if (gui.trackAt(0) != master || !drumMaster::isLane(*gui.trackAt(1))
+            || gui.trackCount() != maxTracks + 5 || !gui.canAddTrack()
+            || gui.canDispatch(UniversalAction::remove))
+            return false;
+        gui.addTrack(true);
+        if (gui.canAddTrack())
+            return false;
+        gui.selectTrack(0);
+        gui.insertMidi();
+        auto* clip = dynamic_cast<te::MidiClip*>(master->getClips().getFirst());
+        if (!clip || clip->getMidiChannel() != te::MidiChannel(drumMaster::midiChannel))
+            return false;
+
+        gui.menuItemSelected(enableDrumMasterMenuItem, 5);
+        if (gui.trackCount() != maxTracks || master->isProcessing(false))
+            return false;
+        gui.useHistory(false);
+        return gui.trackAt(0) == master && master->isProcessing(false)
+            && gui.trackCount() == maxTracks + 6;
     }
 
     static bool test(te::Engine& engine)
@@ -2401,7 +2436,9 @@ private:
         updateControls();
     }
 
-    ju::StringArray getMenuBarNames() override { return { "FILE", "EDIT", "INSERT", "OPTIONS", "HELP" }; }
+#include "DrumInspector.inc"
+
+    ju::StringArray getMenuBarNames() override { return { "FILE", "EDIT", "INSERT", "OPTIONS", "HELP", "SETTINGS" }; }
 
     ju::PopupMenu getMenuForIndex(int index, const ju::String&) override
     {
@@ -2416,12 +2453,45 @@ private:
             case 2: add({ audioTrack, midiTrack, midiItem, synth, reverb, vst3 }); break;
             case 3: add({ devices, armAudio, armMidi, monitoringReport }); break;
             case 4: add({ about }); break;
+            case 5:
+            {
+                auto* master = edit ? drumMaster::find(*edit) : nullptr;
+                menu.addItem(enableDrumMasterMenuItem, "Enable Drum Master", master && editingStopped(),
+                             master && master->isProcessing(false));
+                break;
+            }
             default: break;
         }
         return menu;
     }
 
-    void menuItemSelected(int, int) override {}
+    static constexpr int enableDrumMasterMenuItem = 10001;
+
+    void menuItemSelected(int item, int menu) override
+    {
+        if (menu != 5 || item != enableDrumMasterMenuItem || !editingStopped())
+            return;
+        auto* master = drumMaster::find(*edit);
+        if (!master)
+            return;
+        auto* primary = trackAt(selection);
+        const bool enable = !master->isProcessing(false);
+        if (!enable)
+        {
+            if (actionTrack() && drumMaster::isDrum(*actionTrack()))
+                actionSelection.track = {};
+            std::erase_if(actionSelection.clips, [this, master](auto id) {
+                auto* clip = te::findClipForID(*edit, id);
+                return clip && clip->getTrack() == master;
+            });
+        }
+        edit->getUndoManager().beginNewTransaction(enable ? "Enable Drum Master" : "Disable Drum Master");
+        drumMaster::setEnabled(*master, enable);
+        selection = visibleTracks().indexOf(primary);
+        firstRow = 0;
+        edit->restartPlayback();
+        updateControls();
+    }
     ju::ApplicationCommandTarget* getNextCommandTarget() override { return nullptr; }
 
     void getAllCommands(ju::Array<ju::CommandID>& list) override
@@ -2447,7 +2517,9 @@ private:
         const auto name = names[id - newProject];
         info.setInfo(name, name, "SimpleDAW", 0);
         const auto stopped = edit && !edit->getTransport().isPlaying();
-        const auto hasTrack = trackAt(selection) != nullptr;
+        const auto* track = trackAt(selection);
+        const bool hasTrack = track != nullptr;
+        const bool ordinaryTrack = track && !drumMaster::isDrum(*track);
         switch (id)
         {
             case saveProject: case saveProjectAs: case exportAudio: info.setActive(stopped); break;
@@ -2463,9 +2535,11 @@ private:
                 info.setActive(stopped && activeEditingArea() == EditingArea::timeline && missingWave(selectedClip()));
                 break;
             case audioTrack: case midiTrack: info.setActive(stopped && canAddTrack()); break;
-            case armAudio: info.setActive(edit && !edit->getTransport().isRecording() && hasTrack); break;
+            case armAudio: info.setActive(edit && !edit->getTransport().isRecording() && ordinaryTrack); break;
             case importMidiFile: info.setActive(stopped && actionTrack()); break;
-            case midiItem: case importAudio: case armMidi: case synth: case reverb: case vst3:
+            case importAudio: case armMidi: case synth: info.setActive(stopped && ordinaryTrack); break;
+            case midiItem: info.setActive(stopped && track && !drumMaster::isLane(*track)); break;
+            case reverb: case vst3:
                 info.setActive(stopped && hasTrack); break;
             case playStop: case startRecording: info.setActive(edit != nullptr); break;
             default: break;
@@ -2522,7 +2596,7 @@ private:
             case armAudio: armInput(false); break;
             case armMidi: armInput(true); break;
             case synth:
-                if (auto* track = selectedTrack())
+                if (auto* track = selectedTrack(); track && !drumMaster::isDrum(*track))
                     report(insertBuiltIn<te::FourOscPlugin>(*track, true) ? "Synth inserted" : "Could not insert synth");
                 break;
             case reverb:
@@ -2547,8 +2621,30 @@ private:
         return true;
     }
 
-    int trackCount() const { return edit ? te::getAudioTracks(*edit).size() : 0; }
-    te::AudioTrack* trackAt(int index) const { return edit ? te::getAudioTracks(*edit)[index] : nullptr; }
+    ju::Array<te::AudioTrack*> visibleTracks() const
+    {
+        if (!edit)
+            return {};
+        auto tracks = te::getAudioTracks(*edit);
+        if (auto* master = drumMaster::find(*edit))
+        {
+            tracks.removeIf([](auto* track) { return drumMaster::isDrum(*track); });
+            if (master->isProcessing(false))
+            {
+                tracks.insert(0, master);
+                if (!static_cast<bool>(master->state[drumMaster::collapsedProperty]))
+                {
+                    int index = 1;
+                    for (auto* lane : drumMaster::lanes(*master))
+                        tracks.insert(index++, lane);
+                }
+            }
+        }
+        return tracks;
+    }
+
+    int trackCount() const { return visibleTracks().size(); }
+    te::AudioTrack* trackAt(int index) const { return visibleTracks()[index]; }
     te::Clip* selectedClip() const
     {
         if (edit && actionSelection.clips.size() == 1)
@@ -2638,7 +2734,7 @@ private:
         const auto primaryID = primary ? primary->itemID : te::EditItemID{};
         if (EffectsEditor::applyHistory(*edit, redoAction))
         {
-            selection = te::getAudioTracks(*edit).indexOf(trackForID(primaryID));
+            selection = visibleTracks().indexOf(trackForID(primaryID));
             edit->restartPlayback();
         }
         updateControls();
@@ -2681,6 +2777,7 @@ private:
 
     static TrackType trackType(const te::AudioTrack& track)
     {
+        if (drumMaster::isMaster(track)) return TrackType::midi;
         const auto saved = track.state[trackTypeProperty].toString();
         if (saved == "Audio") return TrackType::audio;
         if (saved == "MIDI") return TrackType::midi;
@@ -2699,6 +2796,8 @@ private:
 
     static ju::String placementError(TrackType type, const te::AudioTrack& destination)
     {
+        if (drumMaster::isLane(destination))
+            return "Place drum patterns on the Master Drum Track.";
         const auto targetType = trackType(destination);
         if (targetType == type)
             return {};
@@ -2747,15 +2846,18 @@ private:
 
     std::vector<Placement> pastePlan(ju::String* reason = nullptr) const
     {
-        if (!clipClipboard || !trackAt(selection))
+        auto* selected = trackAt(selection);
+        if (!clipClipboard || !selected || drumMaster::isLane(*selected))
             return {};
-        const auto tracks = te::getAudioTracks(*edit);
+        auto tracks = visibleTracks();
+        tracks.removeIf([](auto* track) { return drumMaster::isLane(*track); });
+        const auto selectedIndex = tracks.indexOf(selected);
         const auto anchor = pasteStart();
         std::map<te::AudioTrack*, int> added;
         std::vector<Placement> plan;
         for (const auto& item : clipClipboard->clips)
         {
-            auto* track = tracks[selection + item.trackOffset];
+            auto* track = tracks[selectedIndex + item.trackOffset];
             const auto start = anchor + te::TimeDuration::fromSeconds(double(item.state[te::IDs::start]));
             const auto& tempoSequence = edit->tempoSequence;
             const auto end = item.hasBeatTimes ? tempoSequence.toTime(tempoSequence.toBeats(start) + item.lengthBeats)
@@ -2780,7 +2882,8 @@ private:
 
     bool snapshotClips(const std::vector<te::Clip*>& clips)
     {
-        const auto tracks = te::getAudioTracks(*edit);
+        auto tracks = visibleTracks();
+        tracks.removeIf([](auto* track) { return drumMaster::isLane(*track); });
         auto first = tracks.size();
         te::SelectableList items;
         for (auto* clip : clips)
@@ -2823,6 +2926,7 @@ private:
             state.setProperty(te::IDs::offset, position.getOffset().inSeconds(), nullptr);
             if (auto* clip = plan[i].track->insertClipWithState(state))
             {
+                setDrumClipChannel(*clip);
                 pasted.insert(clip->itemID);
             }
             else
@@ -3059,7 +3163,7 @@ private:
 
     juce::Colour trackColour(const te::AudioTrack& track) const
     {
-        const auto tracks = te::getAudioTracks(*edit);
+        const auto tracks = visibleTracks();
         const auto index = tracks.indexOf(const_cast<te::AudioTrack*>(&track));
         return track.getColour().isTransparent() ? palette(std::max(0, index)) : track.getColour();
     }
@@ -3263,9 +3367,11 @@ private:
     };
 
     std::vector<ClipChange> movePlan(const std::vector<te::Clip*>& clips, int rowDelta,
-                                     te::TimeDuration delta, ju::String* reason = nullptr) const
+                                     te::TimeDuration delta, ju::String* reason = nullptr, bool skipDrumLanes = false) const
     {
-        const auto tracks = te::getAudioTracks(*edit);
+        auto tracks = visibleTracks();
+        if (skipDrumLanes)
+            tracks.removeIf([](auto* track) { return drumMaster::isLane(*track); });
         std::vector<ClipChange> changes;
         std::map<te::AudioTrack*, int> outgoing, incoming;
         if (rowDelta != 0)
@@ -3337,6 +3443,8 @@ private:
                 report("Could not move clips");
                 return false;
             }
+            if (change.destination)
+                setDrumClipChannel(*change.clip);
             if (change.destination && change.clip->state.hasProperty(clipShadeProperty)
                 && cloneMembers(*change.clip).size() == 1)
                 change.clip->state.removeProperty(clipShadeProperty, &history);
@@ -3368,7 +3476,7 @@ private:
         if (clips.empty())
             return {};
         if (action == Action::up || action == Action::down)
-            return movePlan(clips, action == Action::up ? -1 : 1, {}, reason);
+            return movePlan(clips, action == Action::up ? -1 : 1, {}, reason, true);
         const bool move = action == Action::left || action == Action::right;
         const bool start = action == Action::startMinus || action == Action::startPlus;
         const bool earlier = action == Action::left || action == Action::startMinus || action == Action::endMinus;
@@ -3507,16 +3615,22 @@ private:
         return changes;
     }
 
-    te::AudioTrack* actionTrack() const { return trackForID(actionSelection.track); }
+    te::AudioTrack* actionTrack() const
+    {
+        auto* track = trackForID(actionSelection.track);
+        return track && (!drumMaster::isDrum(*track) || visibleTracks().contains(track)) ? track : nullptr;
+    }
 
     te::AudioTrack* trackMoveNeighbor(UniversalAction action) const
     {
         auto* track = actionTrack();
-        if (!track)
+        if (!track || drumMaster::isMaster(*track))
             return nullptr;
-        const auto tracks = te::getAudioTracks(*edit);
+        const auto tracks = visibleTracks();
         auto* neighbor = tracks[tracks.indexOf(track) + (action == UniversalAction::up ? -1 : 1)];
-        return neighbor && neighbor->state.getParent() == track->state.getParent() ? neighbor : nullptr;
+        return neighbor && !drumMaster::isMaster(*neighbor)
+            && drumMaster::isLane(*neighbor) == drumMaster::isLane(*track)
+            && neighbor->state.getParent() == track->state.getParent() ? neighbor : nullptr;
     }
 
     struct TrackInputSetting
@@ -3591,13 +3705,15 @@ private:
 
     bool canAddTrack() const
     {
-        return edit && trackCount() < maxTracks
+        auto tracks = visibleTracks();
+        tracks.removeIf([](auto* track) { return drumMaster::isDrum(*track); });
+        return edit && tracks.size() < maxTracks
             && te::getAllTracks(*edit).size() < engine.getEngineBehaviour().getEditLimits().maxNumTracks;
     }
 
     bool canPasteTrack() const
     {
-        return actionTrack() && trackClipboard && canAddTrack() && outputAvailable(trackClipboard->output)
+        return actionTrack() && !drumMaster::isDrum(*actionTrack()) && trackClipboard && canAddTrack() && outputAvailable(trackClipboard->output)
             && trackClipboard->state[trackTypeProperty].toString() != "Mixed legacy";
     }
 
@@ -3670,7 +3786,7 @@ private:
             assignment.setProperty(te::IDs::targetID, id, nullptr);
             input.device.addChild(assignment, -1, &history);
         }
-        selectTrack(te::getAudioTracks(*edit).indexOf(duplicate));
+        selectTrack(visibleTracks().indexOf(duplicate));
         revealTrack(selection);
         edit->restartPlayback();
     }
@@ -3872,8 +3988,10 @@ private:
             return false;
         if (activeEditingArea() == EditingArea::tracks)
         {
-            if (action == Action::copy || action == Action::remove)
-                return actionTrack() != nullptr;
+            if (action == Action::copy)
+                return actionTrack() && !drumMaster::isDrum(*actionTrack());
+            if (action == Action::remove)
+                return actionTrack() && !drumMaster::isMaster(*actionTrack());
             if (action == Action::paste)
                 return canPasteTrack();
             return (action == Action::up || action == Action::down) && trackMoveNeighbor(action);
@@ -3924,7 +4042,7 @@ private:
             const auto* primary = trackAt(selection);
             const auto primaryID = primary ? primary->itemID : te::EditItemID{};
             edit->deleteTrack(actionTrack());
-            selection = te::getAudioTracks(*edit).indexOf(trackForID(primaryID));
+            selection = visibleTracks().indexOf(trackForID(primaryID));
             actionSelection.track = {};
         }
         else
@@ -4036,7 +4154,7 @@ private:
             auto parent = track->state.getParent();
             history.beginNewTransaction("Move track");
             parent.moveChild(parent.indexOf(track->state), parent.indexOf(neighbor->state), &history);
-            selection = te::getAudioTracks(*edit).indexOf(track);
+            selection = visibleTracks().indexOf(track);
         }
         else
         {
@@ -4138,7 +4256,8 @@ private:
             for (auto* plugin : track->pluginList)
                 if (!plugin->isSynth() && !static_cast<bool>(plugin->state.getProperty(inspectorEQProperty, false))
                     && !dynamic_cast<te::VolumeAndPanPlugin*>(plugin)
-                    && !dynamic_cast<te::LevelMeterPlugin*>(plugin))
+                    && !dynamic_cast<te::LevelMeterPlugin*>(plugin)
+                    && !(drumMaster::isMaster(*track) && dynamic_cast<te::AuxSendPlugin*>(plugin)))
                     result.push_back(plugin);
         return result;
     }
@@ -4255,6 +4374,8 @@ private:
         ju::StringArray mixedTracks;
         for (auto* track : te::getAudioTracks(*edit))
         {
+            if (drumMaster::isDrum(*track))
+                continue;
             const auto type = trackType(*track);
             track->state.setProperty(trackTypeProperty, trackTypeName(type), nullptr);
             if (type == TrackType::mixed)
@@ -4329,20 +4450,21 @@ private:
     {
         if (!ready())
             return;
-        const auto count = trackCount();
+        const auto tracks = visibleTracks();
+        const auto count = std::count_if(tracks.begin(), tracks.end(),
+            [](const auto* track) { return !drumMaster::isDrum(*track); });
         if (!canAddTrack())
             return report("Track limit reached");
         edit->getUndoManager().beginNewTransaction(midi ? "Add MIDI track" : "Add audio track");
-        edit->ensureNumberOfAudioTracks(count + 1);
-        if (auto* track = trackAt(count))
+        if (auto track = edit->insertNewAudioTrack(te::TrackInsertPoint::getEndOfTracks(*edit), nullptr))
         {
             track->state.setProperty(trackTypeProperty, trackTypeName(midi ? TrackType::midi : TrackType::audio),
                                      &edit->getUndoManager());
             track->setName(ju::String(midi ? "MIDI " : "Audio ") + ju::String(count + 1));
-            track->setColour(palette(count));
+            track->setColour(palette(static_cast<int>(count)));
             edit->markAsChanged();
-            selectTrack(count);
-            revealTrack(count);
+            selectTrack(visibleTracks().indexOf(track.get()));
+            revealTrack(selection);
         }
     }
 
@@ -4362,6 +4484,13 @@ private:
         return edit->tempoSequence.toTime(te::tempo::BarsAndBeats { bar, {}, 0 });
     }
 
+    static void setDrumClipChannel(te::Clip& clip)
+    {
+        if (auto* midi = dynamic_cast<te::MidiClip*>(&clip);
+            midi && midi->getTrack() && drumMaster::isMaster(*midi->getTrack()))
+            midi->setMidiChannel(te::MidiChannel(drumMaster::midiChannel));
+    }
+
     void insertMidi()
     {
         if (auto* track = selectedTrack())
@@ -4372,6 +4501,7 @@ private:
             edit->getUndoManager().beginNewTransaction("Insert MIDI item");
             if (auto clip = te::insertMIDIClip(*track, "MIDI item", { editCursor, nextBar }))
             {
+                setDrumClipChannel(*clip);
                 actionSelection.clips = { clip->itemID };
                 actionSelection.requestedArea = EditingArea::timeline;
             }
@@ -4487,6 +4617,8 @@ private:
 
     int heightForTrack(const te::AudioTrack* track) const
     {
+        if (track && drumMaster::isLane(*track))
+            return 44;
         const auto tall = track ? static_cast<bool>(track->state.getProperty(trackHeightProperty, panels.tallTracks))
                                 : panels.tallTracks;
         return tall ? 76 : 44;
@@ -4760,7 +4892,7 @@ private:
     void pollMeters()
     {
         std::erase_if(meters, [](const auto& entry) { return entry.second->source == nullptr; });
-        for (auto* track : te::getAudioTracks(*edit))
+        for (auto* track : visibleTracks())
             if (auto* plugin = track->getLevelMeterPlugin())
             {
                 auto& meter = meters[track->itemID];
@@ -4857,7 +4989,10 @@ private:
         g.fillRect(body.removeFromLeft(7));
         g.setColour(ju::Colours::white);
         g.setFont(ju::FontOptions(17.0f, ju::Font::bold));
-        g.drawFittedText(ju::String(row + 1) + "  [" + trackTypeName(trackType(track)) + "] " + track.getName(),
+        const auto label = drumMaster::isLane(track) ? "    " + track.getName()
+            : drumMaster::isMaster(track) ? track.getName()
+            : ju::String(row + 1) + "  [" + trackTypeName(trackType(track)) + "] " + track.getName();
+        g.drawFittedText(label,
                          body.reduced(5, 0),
                          ju::Justification::centredLeft, 1);
     }
@@ -5027,7 +5162,8 @@ private:
         }
     }
 
-    void paintMidiNotes(ju::Graphics& g, te::MidiClip& clip, te::ClipPosition position, ju::Rectangle<int> area)
+    void paintMidiNotes(ju::Graphics& g, te::MidiClip& clip, te::ClipPosition position,
+                        ju::Rectangle<int> area, std::optional<int> drumNote = {})
     {
         auto& tempo = edit->tempoSequence;
         const auto origin = tempo.toBeats(position.getStartOfSource());
@@ -5044,13 +5180,16 @@ private:
             const auto repeatStart = origin + pattern * repeat;
             for (auto* note : clip.getSequence().getNotes())
             {
+                if (drumNote && note->getNoteNumber() != *drumNote)
+                    continue;
                 const auto start = length > 0.0 ? std::max(note->getStartBeat(), sourceStart) : note->getStartBeat();
                 const auto end = length > 0.0 ? std::min(note->getEndBeat(), sourceEnd) : note->getEndBeat();
                 if (end <= start)
                     continue;
                 const auto a = timeX(tempo.toTime(repeatStart + (start - sourceStart)));
                 const auto b = timeX(tempo.toTime(repeatStart + (end - sourceStart)));
-                const auto pitch = area.getBottom() - 2 - note->getNoteNumber() * ju::jmax(1, area.getHeight() - 3) / 127;
+                const auto pitch = drumNote ? area.getCentreY()
+                    : area.getBottom() - 2 - note->getNoteNumber() * ju::jmax(1, area.getHeight() - 3) / 127;
                 g.fillRect(a, pitch, ju::jmax(2, b - a), 2);
             }
             if (length <= 0.0)
@@ -5058,6 +5197,31 @@ private:
             const auto nextPixel = timeX(tempo.toTime(repeatStart)) + 1;
             const auto nextBeat = tempo.toBeats(te::TimePosition::fromSeconds(timeAt(nextPixel)));
             repeat = std::max(repeat + 1.0, std::floor((nextBeat - origin).inBeats() / length));
+        }
+    }
+
+    void paintDrumLane(ju::Graphics& g, te::AudioTrack& lane, int y, int height, ju::Colour colour)
+    {
+        auto* master = drumMaster::find(*edit);
+        auto* player = drumMaster::sampler(lane);
+        if (!master || !player)
+            return;
+        const auto settings = player->state.getChildWithName(drumMaster::laneType);
+        const auto note = static_cast<int>(settings[drumMaster::noteProperty]);
+        if (note < 0)
+            return;
+        for (auto* item : master->getClips())
+        {
+            auto* clip = dynamic_cast<te::MidiClip*>(item);
+            if (!clip)
+                continue;
+            const auto bounds = clipBounds(clip->getPosition().time, y, height);
+            if (bounds.isEmpty())
+                continue;
+            const ju::Graphics::ScopedSaveState state(g);
+            g.reduceClipRegion(bounds);
+            g.setColour(colour.withAlpha(clip->isMuted() ? 0.25f : 0.8f));
+            paintMidiNotes(g, *clip, clip->getPosition(), bounds, note);
         }
     }
 
@@ -5272,12 +5436,14 @@ private:
                            20, 62, 21, ju::Justification::centredLeft);
             }
         }
-        const auto tracks = te::getAudioTracks(*edit);
+        const auto tracks = visibleTracks();
         for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < arrangement.getHeight(); y += rowHeight(row), ++row)
         {
             auto& track = *tracks[row];
             const auto colour = track.getColour().isTransparent() ? palette(row) : track.getColour();
             paintTrack(g, track, row, y, colour);
+            if (drumMaster::isLane(track))
+                paintDrumLane(g, track, y, rowHeight(row), colour);
             for (auto* clip : track.getClips())
             {
                 const auto target = dragPreview && actionSelection.clips.contains(clip->itemID) ? row + dragRowDelta : row;
@@ -5389,7 +5555,7 @@ private:
             return;
 
         // Keep selection outlines visible above the ruler range and overlapping clips.
-        const auto tracks = te::getAudioTracks(*edit);
+        const auto tracks = visibleTracks();
         for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < arrangement.getHeight(); y += rowHeight(row), ++row)
             for (auto* clip : tracks[row]->getClips())
                 if (actionSelection.clips.contains(clip->itemID))
@@ -5485,7 +5651,7 @@ private:
             std::abs(boxAnchor->x - position.x) + 1, std::abs(boxAnchor->y - position.y) + 1).getIntersection(bounds);
         auto& items = actionSelection.clips;
         items.clear();
-        const auto tracks = te::getAudioTracks(*edit);
+        const auto tracks = visibleTracks();
         for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < bounds.getBottom(); y += rowHeight(row), ++row)
             for (auto* clip : tracks[row]->getClips())
                 if (clipBounds(clip->getPosition().time, y, rowHeight(row)).intersects(selectionBox))
@@ -5506,7 +5672,7 @@ private:
         {
             dragPreview.reset();
             dragError.clear();
-            const auto tracks = te::getAudioTracks(*edit);
+            const auto tracks = visibleTracks();
             auto* anchor = te::findClipForID(*edit, dragItem);
             if (!anchor || (pointerRow && !tracks[*pointerRow]))
                 return;
@@ -5635,9 +5801,14 @@ private:
         if (inspectorTrack)
         {
             description = inspectorTrack->getName();
-            const auto row = te::getAudioTracks(*edit).indexOf(inspectorTrack) + 1;
+            const auto row = visibleTracks().indexOf(inspectorTrack) + 1;
             const auto type = trackType(*inspectorTrack);
-            inspectorDetails += "\n" + ju::String(row) + (type == TrackType::audio ? "A" : type == TrackType::midi ? "M" : "")
+            if (drumMaster::isMaster(*inspectorTrack))
+                inspectorDetails += "\nDRUM MASTER";
+            else if (drumMaster::isLane(*inspectorTrack))
+                inspectorDetails += "\nDRUM LANE";
+            else
+                inspectorDetails += "\n" + ju::String(row) + (type == TrackType::audio ? "A" : type == TrackType::midi ? "M" : "")
                 + "  " + trackTypeName(type);
         }
         else if (inspectorClip)
@@ -5670,7 +5841,7 @@ private:
         if (!inspectorName.isBeingEdited())
             inspectorName.setText(description, ju::dontSendNotification);
         for (auto* control : inspectorButtons)
-            control->setVisible(inspectorTrack != nullptr);
+            control->setVisible(inspectorTrack && !drumMaster::isDrum(*inspectorTrack));
         for (auto* button : clipInspectorButtons)
         {
             button->setVisible(inspectorClip != nullptr);
@@ -5710,9 +5881,14 @@ private:
             static_cast<ju::Button*>(trackInspectorToggles[0])->setToggleState(inspectorTrack->isMuted(false), ju::dontSendNotification);
             static_cast<ju::Button*>(trackInspectorToggles[1])->setToggleState(inspectorTrack->isSolo(false), ju::dontSendNotification);
         }
+        const bool isDrum = inspectorTrack && drumMaster::isDrum(*inspectorTrack);
+        drumKitButton->setVisible(isDrum);
+        if (isDrum)
+            drumKitButton->setButtonText(drumMaster::isLane(*inspectorTrack) ? "DRUM SAMPLE" : "DRUM LANES");
+        drumKitButton->setEnabled(canEditInspector);
         for (auto* control : trackInputButtons)
         {
-            control->setVisible(inspectorTrack != nullptr);
+            control->setVisible(inspectorTrack && !isDrum);
             control->setEnabled(canEditInspector);
         }
         if (inspectorTrack)
@@ -5739,7 +5915,7 @@ private:
                 slider.setValue(gains[index], ju::dontSendNotification);
         }
         auto* height = static_cast<ju::Button*>(heightInspectorButtons.front());
-        height->setVisible(inspectorTrack != nullptr);
+        height->setVisible(inspectorTrack && !drumMaster::isLane(*inspectorTrack));
         height->setEnabled(canEditInspector);
         height->setButtonText(heightForTrack(inspectorTrack) > 44 ? "MAX HEIGHT" : "MIN HEIGHT");
         inspectorAutomation.setVisible(volume != nullptr);
@@ -5778,7 +5954,7 @@ private:
             effectButtons[2]->setEnabled(liveInspector && selected != effects.end());
         }
         inspectorOutput.setVisible(inspectorTrack != nullptr);
-        inspectorOutput.setEnabled(canEditInspector);
+        inspectorOutput.setEnabled(canEditInspector && !isDrum);
         if (inspectorTrack)
         {
             const auto route = trackOutput(*inspectorTrack);
@@ -5963,6 +6139,8 @@ private:
     ju::Viewport inspectorViewport;
     InspectorMeter inspectorMeter;
     ju::Label inspectorName, inspectorLoopCount;
+    std::unique_ptr<ju::TextButton> drumKitButton;
+    ju::Array<ju::File> drumLibrary = drumMaster::scanLibrary();
     ju::Label clipGainLabel { {}, "Gain" }, fadeInLabel { {}, "Fade In" }, fadeOutLabel { {}, "Fade Out" };
     ju::TextButton clipMute { "CLIP MUTE" }, eqBypass { "EQ BYPASS" };
     ju::Slider* parameterGesture = nullptr;

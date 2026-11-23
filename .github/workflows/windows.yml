@@ -63,6 +63,8 @@ jobs:
           foreach ($file in $payload) {
             Copy-Item -LiteralPath $file -Destination windows-download -ErrorAction Stop
           }
+          $drumSamples = Join-Path (Split-Path -Parent $metadata.executable) 'Drum Samples'
+          Copy-Item -LiteralPath $drumSamples -Destination windows-download -Recurse -ErrorAction Stop
       - name: Upload Windows x64 download
         if: github.repository == 'mlzion/SimpleDAW'
         id: download

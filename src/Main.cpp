@@ -3,6 +3,7 @@
 
 #include <JuceHeader.h>
 #include "MidiPlaybackNotes.h"
+#include <memory>
 #include <array>
 #include <cstdio>
 #include <numeric>
@@ -11,11 +12,13 @@
 
 namespace te = tracktion;
 namespace ju = juce;
+#include "DrumMaster.h"
 
 bool runEffectsFoundationTest(te::Engine&);
 
 namespace
 {
+
 constexpr int maxTracks = 24;
 constexpr const char* applicationTitle = "SimpleDAW v" SIMPLEDAW_RELEASE_VERSION;
 
@@ -277,6 +280,7 @@ bool DeviceSetup::test(te::Engine& engine)
     return midiInputs && midiInputs->getListBoxModel()->getNumRows() == availableMidi.size();
 }
 
+#include "../tests/DrumMaster.inc"
 #include "EffectsEditor.h"
 
 class MainGui final : public ju::Component, private ju::Timer, private ju::MenuBarModel,
@@ -340,8 +344,11 @@ private:
                 if (!next)
                     return report("Could not open project");
                 if (create)
-                {
                     next->ensureNumberOfAudioTracks(1);
+                if (!drumMaster::provision(*next, create))
+                    return report("Could not prepare the Master Drum Track");
+                if (create)
+                {
                     if (!te::EditFileOperations(*next).save(false, true, false))
                         return report("Could not create project file");
                 }
@@ -404,7 +411,7 @@ private:
         if (midi && playing)
             return;
         auto* track = trackAt(selection);
-        if (!track)
+        if (!track || drumMaster::isDrum(*track))
             return;
 
         if (const auto error = placementError(midi ? TrackType::midi : TrackType::audio, *track); error.isNotEmpty())
@@ -568,6 +575,10 @@ private:
         if (!edit)
             return;
 
+        if (auto* master = drumMaster::find(*edit); master && master->isProcessing(false))
+            for (auto* lane : drumMaster::lanes(*master))
+                if (auto* sampler = drumMaster::sampler(*lane))
+                    sampler->midiPanic();
         const bool recording = edit->getTransport().isRecording();
         edit->getTransport().stop(false, false);
         edit->getTransport().setPosition(editCursor);
@@ -664,6 +675,7 @@ private:
         auto clip = te::insertMIDIClip(track, file.getFileNameWithoutExtension(), { start, end });
         if (!clip)
             return ju::Result::fail("Could not create the MIDI clip");
+        setDrumClipChannel(*clip);
         for (const auto* event : *notes)
         {
             const auto& note = event->message;
@@ -734,6 +746,8 @@ private:
 
                 if (const int choice = menu.show(); choice > 0)
                 {
+                    if (drumMaster::isDrum(*track) && descriptions[choice - 1]->isInstrument)
+                        return report("Drum Master accepts audio effects only");
                     if (!descriptions[choice - 1]->isInstrument && audioInserts(track).size() >= 8)
                         return report("The track has eight or more audio inserts");
                     auto plugin = edit->getPluginCache().createNewPlugin(
@@ -786,9 +800,10 @@ public:
             || command == "--midi-import-test" || command == "--midi-inspector-test"
             || command == "--inspector-loop-test" || command == "--inspector-clone-test"
             || command == "--inspector-effects-test" || command == "--audio-overlap-test"
-            || command == "--device-setup-test";
+            || command == "--device-setup-test" || command == "--drum-master-test";
         engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW",
             std::make_unique<SimpleDawUIBehaviour>(), std::make_unique<SimpleDawEngineBehaviour>(testing));
+        engine->getPluginManager().createBuiltInType<drumMaster::Sampler>();
         if (testing)
         {
             bool passed = false;
@@ -798,6 +813,8 @@ public:
                 passed = MainGui::testCorrections(*engine);
             else if (command == "--uat-test")
                 passed = MainGui::testUniversalActions(*engine);
+            else if (command == "--drum-master-test")
+                passed = runDrumMasterTest(*engine) && MainGui::testDrumUi(*engine);
             else if (command == "--device-setup-test")
                 passed = DeviceSetup::test(*engine);
             else if (command == "--audio-overlap-test")

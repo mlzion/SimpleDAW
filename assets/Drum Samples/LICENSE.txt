@@ -1,0 +1,8 @@
+SimpleDAW synthesized percussion samples
+
+The WAV files in this directory were synthesized for SimpleDAW from
+oscillators and deterministic white noise. No external recordings were used.
+To the extent possible under law, the contributors waive all copyright and
+related or neighboring rights in these WAV files under CC0 1.0 Universal.
+
+https://creativecommons.org/publicdomain/zero/1.0/

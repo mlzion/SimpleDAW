@@ -15,6 +15,7 @@ FetchContent_MakeAvailable(juce tracktion)
 include(cmake/JuceDeviceSelector.cmake)
 include(cmake/RestoreTracktionOverlap.cmake)
 include(cmake/TracktionLiveMidi.cmake)
+include(cmake/TracktionDrumMaster.cmake)
 
 set(SIMPLEDAW_ASIO_SDK "" CACHE PATH "Optional directory containing iasiodrv.h")
 
@@ -73,8 +74,18 @@ if(SIMPLEDAW_ASIO_SDK)
     target_include_directories(SimpleDAW PRIVATE "${SIMPLEDAW_ASIO_SDK}")
 endif()
 
+add_custom_command(TARGET SimpleDAW POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/Drum Samples"
+        "$<TARGET_FILE_DIR:SimpleDAW>/Drum Samples"
+    VERBATIM)
+
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(SimpleDawDrumVoicesTest tests/DrumVoices.cpp)
+    target_include_directories(SimpleDawDrumVoicesTest PRIVATE src)
+    target_compile_features(SimpleDawDrumVoicesTest PRIVATE cxx_std_20)
+    add_test(NAME drum_voices COMMAND SimpleDawDrumVoicesTest)
     add_test(NAME project_round_trip COMMAND SimpleDAW --smoke-test)
     add_test(NAME main_gui COMMAND SimpleDAW --gui-test)
     add_test(NAME gui_corrections COMMAND SimpleDAW --correction-test)
@@ -87,9 +98,10 @@ if(BUILD_TESTING)
     add_test(NAME inspector_effects COMMAND SimpleDAW --inspector-effects-test)
     add_test(NAME audio_overlap COMMAND SimpleDAW --audio-overlap-test)
     add_test(NAME effects_editor COMMAND SimpleDAW --effects-editor-test)
+    add_test(NAME drum_master COMMAND SimpleDAW --drum-master-test)
     add_test(NAME device_setup COMMAND SimpleDAW --device-setup-test)
     set_tests_properties(project_round_trip main_gui gui_corrections universal_actions
         effects_foundation effects_editor midi_import midi_inspector inspector_loop inspector_clone
-        inspector_effects audio_overlap device_setup
+        inspector_effects audio_overlap device_setup drum_master
         PROPERTIES TIMEOUT 60)
 endif()
