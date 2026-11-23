@@ -38,3 +38,7 @@ Inspector COPY SETTINGS / APPLY SETTINGS uses a separate project-local snapshot.
 
 
 Track creation writes the track type to the Tracktion edit state. Untyped tracks with existing clips are classified from their contents. Empty untyped tracks keep prior MIDI creation labels where available and otherwise become Audio. Mixed legacy tracks are reported and retain their existing clips. New placement and duplication are blocked for mixed legacy tracks. Clip Paste, vertical Move, drag and Insert preflight type compatibility before committing. Recording also checks the types of armed destinations.
+
+## Planned MD0 Drum Master architecture — design only (2026-11-23)
+
+A protected singleton MDT owns MIDI pattern clips and up to 16 filtered child lanes; lane note assignments dispatch channel-10 GM hits to independent one-shot WAV samplers. Lane audio sums through a Drum Master bus with normal Main/FX sends. Settings-only Enable Drum Master controls visibility **and complete processing bypass**, preserving project state. Child lanes do not consume ordinary track slots. Shared UAT MIDI clip insertion will offer 1–4-bar lengths; inline drum editing shows at most 32 sixteenth-note steps in 4/4 with horizontal scroll. No Drum Mixer until normal Mixer exists; no MDT record/monitor until MD1. This is not current engine behavior. [Approved MD0 design](specifications/md0-master-drum-track-2026-11-23.md).
