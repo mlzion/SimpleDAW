@@ -91,3 +91,8 @@ Local Debian 13 x64 Release build with Clang 19 and Xvfb passed all five CTests:
 The E1 feature branch adds a reusable slide-up editor for native Tracktion Reverb and Compressor. It binds to track and plugin IDs in the active Edit, edits native parameter state during playback, displays bypass, and closes on target deletion or project replacement. Reverb uses independent Wet and Dry levels. Inspector owns chain actions and will call the editor on an effect-row double-click. [Integration contract and acceptance checklist](docs/testing/effects-editor-e1.md)
 
 The isolated E1 branch passed all six CTests on Debian 13 x64 Release with Clang 19 and Xvfb, including E0 and the new `effects_editor` suite. Five additional consecutive E1 runs passed. **PENDING** — Separately authorized integrated Windows x64 /MD build and live acceptance.
+
+
+## MD0 Master Drum Track — DESIGN ACCEPTED (2026-11-23)
+
+The protected singleton MDT, five-lane starter kit, expandable 16-lane GM channel-10 pattern editing, packaged and user-expandable WAV sample library, per-lane one-shot samplers, Inspector/bus routing, Settings-only enable/disable with processing bypass, and inline 16th-step editing (maximum 32 visible steps in 4/4) are approved **design**, not implemented. Shared ordinary-MIDI UAT Insert clip length (1–4 bars) is also approved. Dedicated Drum Mixer follows the normal Mixer; MDT live monitoring and recording are deferred to MD1. [MD0 design specification](docs/specifications/md0-master-drum-track-2026-11-23.md) · [Codex task sheet](docs/tasks/md0-master-drum-track-task-sheet.md). Implementation, Windows CI and merges require separate authorization. Piano Roll P0 integration PR #24 remains independent and awaits Windows acceptance.
