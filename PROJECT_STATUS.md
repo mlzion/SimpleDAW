@@ -4,7 +4,9 @@
 
 The integration branch ports the reusable editor from foundation commit `6486a5f`. MIDI clips open by double-click in the slide-up area shared with E1. The active editor owns UAT commands, with independent Timeline and Track selections. Note Duplicate, right-drag velocity, and remembered draw velocity are included. Note edits use Tracktion's Edit UndoManager and propagate across linked MIDI clips. Audition uses the current effective clip channel and existing instrument path. Track-owned MIDI routing remains deferred. [Editing and acceptance notes](docs/research/piano-roll-p0.md)
 
-Debian 13 x64 Release (GCC 14, `-O1`, Xvfb) passed all 14 CTests, including the integrated `piano_roll` suite. Windows x64 Release `/MD` and live acceptance await separate authorization.
+**Accepted baseline `73b9554`.** Linux and Windows x64 Release `/MD` passed 14/14 CTests. Windows live acceptance P01–P12 passed, as reported by the owner. [Windows run](https://github.com/mlzion/SimpleDAW/actions/runs/45196843591) · [Baseline ZIP](https://github.com/mlzion/SimpleDAW/actions/runs/45196843591/artifacts/14829881549)
+
+**Pending refinements in draft PR #24.** Separate edit and playback cursors, live velocity readouts, focus-sensitive bottom navigation, and a Timeline pulse for the edited clip. Debian 13 x64 Release (GCC 14, `-O1`, Xvfb) passed all 14 CTests. Piano Roll and E1 each passed three additional consecutive runs. Windows x64 Release `/MD` and focused live retesting await separate authorization. [Retest procedure](docs/research/piano-roll-p0.md#focused-windows-retest-for-the-refinements)
 
 ## Inspector v0.23.1 and Effects Editor E1 — ACCEPTED
 

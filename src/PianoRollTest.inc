@@ -64,6 +64,62 @@
                 surface.mouseDrag(mouse(surface, to, from, button));
             surface.mouseUp(mouse(surface, to, from, button));
         };
+        const auto ruler = at(0.40, 60).withY(roll.canvas().getY() + 7);
+        gesture(ruler, ruler);
+        if (!check(roll.editCursor == 0.5, "edit cursor snaps to the nearest grid line"))
+            return false;
+        roll.snap.setSelectedId(1, ju::dontSendNotification);
+        gesture(ruler, ruler);
+        const auto freeCursor = roll.grid.beat(static_cast<float>(ruler.x));
+        if (!check(roll.editCursor == freeCursor, "Snap None keeps the free edit cursor position"))
+            return false;
+        roll.snap.setSelectedId(4, ju::dontSendNotification);
+        roll.updatePlayback(seconds(1.5), false, 0.0);
+        if (!check(roll.playbackCursor == 1.0 && roll.editCursor == freeCursor,
+                   "playback cursor maps to source beats independently of the edit cursor"))
+            return false;
+        roll.updatePlayback(seconds(5), false, 0.0);
+        if (!check(!roll.playbackCursor, "playback cursor is hidden at the clip end"))
+            return false;
+        clip->setMuted(true);
+        roll.updatePlayback(seconds(2), false, 0.0);
+        if (!check(!roll.playbackCursor, "muted MIDI clip has no playback cursor"))
+            return false;
+        clip->setMuted(false);
+
+        const auto originalGrid = roll.grid;
+        const auto timelineScale = gui.pixelsPerSecond;
+        const auto timelineStart = gui.viewStart;
+        const auto timelineRow = gui.firstRow;
+        for (const auto slot : { 5, 3, 7 })
+            static_cast<ju::Button*>(gui.navigation[slot])->onClick();
+        static_cast<ju::Button*>(gui.pitchNavigation.back())->onClick();
+        if (!check(roll.grid.scale > originalGrid.scale && roll.grid.left > originalGrid.left
+                && roll.grid.top != originalGrid.top && roll.grid.row > originalGrid.row
+                && gui.pixelsPerSecond == timelineScale && gui.viewStart == timelineStart && gui.firstRow == timelineRow,
+                "shared navigation sends all four axes and zoom controls to Piano Roll"))
+            return false;
+        if (!check(gui.clipPulse(clipID, 500.0) == 1.0f && !gui.inspectorPulse(clipID, 500.0),
+                   "Piano Roll focus pulses only its bound clip"))
+            return false;
+        gui.actionSelection.requestedArea = EditingArea::inspector;
+        gui.updateControls();
+        static_cast<ju::Button*>(gui.navigation[5])->onClick();
+        if (!check(gui.pixelsPerSecond > timelineScale && roll.grid.scale > originalGrid.scale
+                && !gui.pitchNavigation.front()->isVisible()
+                && gui.inspectorPulse(clipID, 500.0) == 1.0f && gui.clipPulse(clipID, 1000.0) == 0.0f,
+                "Inspector focus targets Timeline navigation and keeps the original pulse"))
+            return false;
+        gui.focusPianoRoll();
+        if (!check(gui.clipPulse(clipID, 500.0) == 1.0f, "returning focus resumes the edited clip pulse"))
+            return false;
+        roll.grid = originalGrid;
+        roll.updateScrollbars();
+        gui.pixelsPerSecond = timelineScale;
+        gui.setViewStart(timelineStart);
+        roll.updatePlayback(std::nullopt, true, 0.0);
+        if (!check(!roll.playbackCursor && roll.followResumeTime == 0.0, "stop clears playback cursor and follow suspension"))
+            return false;
         {
             PianoRollPreviewListener listener;
             auto& track = *gui.trackAt(midiRow);
@@ -88,6 +144,14 @@
                     && listener.messages.size() == 4 && listener.messages.back().isNoteOff(),
                     "switching to E1 releases audition and prevents note commands"))
                 return false;
+            const auto scaleBeforeE1 = gui.pixelsPerSecond;
+            const auto pianoScaleBeforeE1 = roll.grid.scale;
+            static_cast<ju::Button*>(gui.navigation[5])->onClick();
+            if (!check(gui.pixelsPerSecond > scaleBeforeE1 && roll.grid.scale == pianoScaleBeforeE1
+                    && !gui.clipPulse(clipID, 500.0), "E1 focus navigates the Timeline without a Piano Roll pulse"))
+                return false;
+            gui.pixelsPerSecond = scaleBeforeE1;
+            gui.setViewStart(timelineStart);
             gui.arrangement.mouseDoubleClick(mouse(gui.arrangement, clipPoint, clipPoint, left, 2));
             if (!check(roll.isVisible() && !gui.effectsEditor.isVisible() && gui.effectsEditor.isOpen()
                     && gui.actionSelection.track == track.itemID && gui.actionSelection.clips.contains(clipID),
@@ -149,8 +213,13 @@
             return false;
 
         const auto velocityPoint = roll.velocityHandle(notes()[0]).getCentre().roundToInt() + roll.canvas().getPosition();
-        gesture(velocityPoint, velocityPoint.translated(0, 12));
-        if (!check(notes()[0].velocity < 96, "velocity lane drag updates sequence"))
+        const auto laneEnd = velocityPoint.translated(0, 12);
+        surface.mouseDown(mouse(surface, velocityPoint, velocityPoint, left));
+        surface.mouseDrag(mouse(surface, laneEnd, velocityPoint, left));
+        if (!check(roll.velocityReadout && roll.velocityReadout->value < 96, "velocity lane displays its live preview"))
+            return false;
+        surface.mouseUp(mouse(surface, laneEnd, velocityPoint, left));
+        if (!check(notes()[0].velocity < 96 && !roll.velocityReadout, "velocity lane commits and clears its readout"))
             return false;
         gui.useHistory(false);
         if (!check(notes()[0].velocity == 96, "velocity drag is undoable"))
@@ -188,8 +257,20 @@
         const auto editedPoint = at(1.35, 64);
         const auto beforeVelocityDrag = roll.selected;
         const auto priorVelocity = notes()[0].velocity;
-        gesture(editedPoint, editedPoint.translated(0, 16), right);
-        if (!check(notes()[0].velocity == priorVelocity - 16 && roll.selected == beforeVelocityDrag,
+        const auto rightEnd = editedPoint.translated(0, 16);
+        surface.mouseDown(mouse(surface, editedPoint, editedPoint, right));
+        surface.mouseDrag(mouse(surface, rightEnd, editedPoint, right));
+        if (!check(roll.velocityReadout && roll.velocityReadout->value == priorVelocity - 16
+                && !roll.velocityReadoutBounds().toFloat().intersects(roll.grid.bounds(roll.clicked)),
+                "right-drag readout follows velocity and avoids the edited note"))
+            return false;
+        gui.actionSelection.requestedArea = EditingArea::timeline;
+        gui.updateControls();
+        if (!check(!roll.velocityReadout && notes()[0].velocity == priorVelocity,
+                   "losing focus cancels the readout and the pending change"))
+            return false;
+        gesture(editedPoint, rightEnd, right);
+        if (!check(notes()[0].velocity == priorVelocity - 16 && roll.selected == beforeVelocityDrag && !roll.velocityReadout,
                    "right-drag adjusts the note without toggling selection"))
             return false;
         roll.mode.setToggleState(false, ju::dontSendNotification);
@@ -351,6 +432,36 @@
             return false;
         auto loopModel = roll.mutation();
         const auto loop = loopModel.range();
+        const auto start = clone->getStartBeat();
+        const auto atBeat = [&](double delta) { return gui.edit->tempoSequence.toTime(start + te::BeatDuration::fromBeats(delta)); };
+        const auto near = [](double a, double b) { return std::abs(a - b) < 1.0e-6; };
+        roll.updatePlayback(atBeat(loop.getLength() + 0.125), false, 0.0);
+        if (!check(roll.playbackCursor && near(*roll.playbackCursor, loop.getStart() + 0.125)
+                && gui.clipPulse(clone->itemID, 500.0) == 1.0f && !gui.clipPulse(parentID, 500.0),
+                "loop playback wraps into the source range and pulse transfers to the edited member"))
+            return false;
+
+        const auto previousGrid = roll.grid;
+        roll.grid.scale = 640;
+        roll.grid.left = loop.getStart();
+        const auto farBeat = loop.getLength() * 0.75;
+        gui.editCursor = atBeat(0.0);
+        gui.play();
+        gui.navigateTime(1, true);
+        const auto manuallyScrolled = roll.grid.left;
+        const auto resumes = roll.followResumeTime;
+        roll.updatePlayback(atBeat(farBeat), true, resumes - 1.0);
+        if (!check(resumes > 0.0 && roll.grid.left == manuallyScrolled, "manual navigation temporarily suspends follow"))
+            return false;
+        roll.updatePlayback(atBeat(farBeat), true, resumes);
+        if (!check(roll.grid.left > manuallyScrolled && loop.getStart() + farBeat < roll.grid.left + roll.visibleBeats(),
+                   "follow resumes and reveals the advancing playback cursor"))
+            return false;
+        gui.stop();
+        gui.updateControls();
+        roll.grid = previousGrid;
+        roll.updateScrollbars();
+
         const GridNote inSource { {}, loop.getStart(), 0.125, 48, 96 };
         const GridNote repetition { {}, loop.getEnd(), 0.125, 48, 96 };
         if (!check(loopModel.insert({ inSource, repetition }, "Outside source loop").empty()
@@ -378,7 +489,8 @@
         gui.edit->getUndoManager().beginNewTransaction("Delete edited clip");
         clone->removeFromParent();
         gui.updateControls();
-        if (!check(!roll.isVisible() && listener.messages.size() == 2 && listener.messages.back().isNoteOff(),
+        if (!check(!roll.isVisible() && !gui.clipPulse(cloneID, 500.0) && !roll.playbackCursor
+                && listener.messages.size() == 2 && listener.messages.back().isNoteOff(),
                    "deleting the target closes Piano Roll and releases audition"))
             return false;
         gui.useHistory(false);
@@ -391,5 +503,6 @@
         return check(listener.messages.size() == 4 && listener.messages.back().isNoteOff()
                      && listener.messages.back().getNoteNumber() == 64
                      && !roll.isVisible() && roll.clip == nullptr && !gui.effectsEditor.isOpen()
+                     && !gui.clipPulse(cloneID, 500.0) && !roll.playbackCursor
                      && roll.rememberedVelocity == 96, "project replacement clears editor bindings and gesture state");
     }

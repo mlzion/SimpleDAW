@@ -217,8 +217,8 @@ public:
     {
         setTitle("Piano Roll");
         setWantsKeyboardFocus(true);
-        for (auto* child : std::array<ju::Component*, 12> {
-                &name, &close, &mode, &snap, &zoomOut, &zoomIn, &pitchOut, &pitchIn, &quantize, &velocity, &horizontal, &vertical })
+        for (auto* child : std::array<ju::Component*, 8> {
+                &name, &close, &mode, &snap, &quantize, &velocity, &horizontal, &vertical })
             addAndMakeVisible(*child);
         close.setTitle("Close Piano Roll");
         close.onClick = [this] { if (onClose) onClose(); };
@@ -229,10 +229,6 @@ public:
         snap.addItemList({ "Snap None", "Snap 1/4", "Snap 1/8", "Snap 1/16", "Snap 1/32" }, 1);
         snap.setSelectedId(4, ju::dontSendNotification);
         snap.onChange = [this] { notify(); };
-        zoomOut.onClick = [this] { zoomTime(0.8); };
-        zoomIn.onClick = [this] { zoomTime(1.25); };
-        pitchOut.onClick = [this] { zoomPitch(-2); };
-        pitchIn.onClick = [this] { zoomPitch(2); };
         quantize.onClick = [this] {
             if (clip && editable && step() > 0)
             {
@@ -258,7 +254,7 @@ public:
             }
             notify();
         };
-        horizontal.onMove = [this](double start) { grid.left = start; repaint(); };
+        horizontal.onMove = [this](double start) { scrollTime(start - grid.left); };
         vertical.onMove = [this](double start) { grid.top = ju::roundToInt(start); repaint(); };
     }
 
@@ -272,10 +268,12 @@ public:
             cancelGesture();
             clip = target;
             selected.clear();
+            playbackCursor.reset();
+            followResumeTime = 0.0;
             if (clip)
             {
                 const auto model = MidiNoteEditor(*clip);
-                grid.left = cursor = model.range().getStart();
+                grid.left = editCursor = model.range().getStart();
                 const auto notes = model.notes();
                 const auto middle = notes.empty() ? 60 : notes.front().pitch;
                 grid.top = 127 - middle - pitchRows() / 2;
@@ -295,8 +293,8 @@ public:
         if (!isVisible())
             return;
         name.setText(clip ? clip->getName() : "Double-click a MIDI clip to edit it", ju::dontSendNotification);
-        for (auto* child : std::array<ju::Component*, 8> {
-                &mode, &snap, &zoomOut, &zoomIn, &pitchOut, &pitchIn, &horizontal, &vertical })
+        for (auto* child : std::array<ju::Component*, 4> {
+                &mode, &snap, &horizontal, &vertical })
             child->setEnabled(clip != nullptr);
         const auto notes = selectedNotes();
         velocity.setEnabled(editable && notes.size() == 1);
@@ -420,7 +418,7 @@ private:
             [](const auto& a, const auto& b) { return a.start < b.start; })->start;
         for (auto& note : notes)
         {
-            note.start += snapped(cursor) - earliest;
+            note.start += editCursor - earliest;
             if (!MidiNoteEditor(*clip).valid(note))
                 return {};
         }
@@ -485,8 +483,69 @@ private:
         vertical.setCurrentRange(grid.top, pitchRows(), ju::dontSendNotification);
     }
 
+    double beatsPerBar() const
+    {
+        const auto& meter = clip->edit.tempoSequence.getTimeSigAt(clip->getPosition().getStart());
+        return std::max(0.25, 4.0 * meter.numerator.get() / meter.denominator.get());
+    }
+
+    void suspendFollow()
+    {
+        if (clip->edit.getTransport().isPlaying())
+            followResumeTime = ju::Time::getMillisecondCounterHiRes() + 2000.0;
+    }
+
+    void scrollTime(double beats)
+    {
+        if (!clip)
+            return;
+        suspendFollow();
+        grid.left += beats;
+        updateScrollbars();
+        repaint();
+    }
+
+    void scrollPitch(int rows)
+    {
+        grid.top += rows;
+        updateScrollbars();
+        repaint();
+    }
+
+    void updatePlayback(std::optional<te::TimePosition> position, bool follow, double now)
+    {
+        playbackCursor.reset();
+        if (!position || !follow)
+            followResumeTime = 0.0;
+        if (!clip || !isVisible() || !position || !clip->getPosition().time.contains(*position)
+            || clip->isMuted() || !clip->getTrack() || !clip->getTrack()->shouldBePlayed())
+            return;
+
+        const auto beat = clip->edit.tempoSequence.toBeats(*position);
+        auto sourceBeat = (beat - clip->getContentStartBeat()).inBeats();
+        if (clip->isLooping())
+        {
+            const auto loop = MidiNoteEditor(*clip).range();
+            const auto length = loop.getLength();
+            if (length <= 0.0)
+                return;
+            sourceBeat = (beat - clip->getStartBeat() + clip->getOffsetInBeats()).inBeats();
+            sourceBeat = loop.getStart() + sourceBeat - length * std::floor(sourceBeat / length);
+        }
+        playbackCursor = sourceBeat;
+        if (follow && now >= followResumeTime
+            && (sourceBeat < grid.left || sourceBeat >= grid.left + visibleBeats()))
+        {
+            grid.left = sourceBeat - visibleBeats() * 0.1;
+            updateScrollbars();
+        }
+    }
+
     void zoomTime(double factor)
     {
+        if (!clip)
+            return;
+        suspendFollow();
         const auto middle = grid.left + visibleBeats() / 2;
         grid.scale = ju::jlimit(18.0, 640.0, grid.scale * factor);
         grid.left = middle - visibleBeats() / 2;
@@ -503,7 +562,7 @@ private:
         repaint();
     }
 
-    int headerHeight() const { return getWidth() < 620 ? 64 : 32; }
+    static constexpr int headerHeight() { return 32; }
 
     void resized() override
     {
@@ -511,19 +570,10 @@ private:
         auto header = area.removeFromTop(32);
         close.setBounds(header.removeFromRight(32).reduced(4));
         header = header.reduced(5, 3);
-        for (auto [control, width] : std::array<std::pair<ju::Component*, int>, 8> {{
-                 { &mode, 64 }, { &snap, 104 }, { &zoomOut, 56 }, { &zoomIn, 56 },
-                 { &pitchOut, 64 }, { &pitchIn, 64 }, { &quantize, 82 }, { &velocity, 86 } }})
-        {
-            if (headerHeight() == 64 && control == &pitchOut)
-            {
-                name.setBounds(header.reduced(5, 0));
-                header = area.removeFromTop(32).reduced(5, 3);
-            }
+        for (auto [control, width] : std::array<std::pair<ju::Component*, int>, 4> {{
+                 { &mode, 64 }, { &snap, 104 }, { &quantize, 82 }, { &velocity, 86 } }})
             control->setBounds(header.removeFromLeft(width).reduced(2, 0));
-        }
-        if (headerHeight() == 32)
-            name.setBounds(header.reduced(5, 0));
+        name.setBounds(header.reduced(5, 0));
         horizontal.setBounds(area.removeFromBottom(G::scroll).withTrimmedLeft(G::keys).withTrimmedRight(G::scroll));
         vertical.setBounds(area.removeFromRight(G::scroll).withTrimmedTop(G::ruler).withTrimmedBottom(G::lane));
         updateScrollbars();
@@ -568,8 +618,7 @@ private:
             ju::Graphics::ScopedSaveState saved(g);
             g.reduceClipRegion(area.withTop(0).withBottom(laneY() + G::lane));
             const auto origin = limits.getStart();
-            const auto& meter = clip->edit.tempoSequence.getTimeSigAt(clip->getPosition().getStart());
-            const double bar = std::max(0.25, 4.0 * meter.numerator.get() / meter.denominator.get());
+            const auto bar = beatsPerBar();
             const auto subdivision = step() > 0 && step() * grid.scale >= 7 ? step() : 1.0;
             for (double beat = origin + std::floor((grid.left - origin) / subdivision) * subdivision;
                  beat <= std::min(limits.getEnd(), grid.left + visibleBeats()); beat += subdivision)
@@ -590,7 +639,9 @@ private:
             if (end < area.getRight())
                 g.fillRect(end, 0, area.getRight() - end, laneY() + G::lane);
             g.setColour(ju::Colour(0xff70859a));
-            g.drawVerticalLine(ju::roundToInt(grid.x(cursor)), 0, static_cast<float>(laneY() + G::lane));
+            const auto editX = ju::roundToInt(grid.x(editCursor));
+            g.drawVerticalLine(editX, 0, static_cast<float>(laneY() + G::lane));
+            g.fillRect(editX - 3, laneY() + G::lane - 4, 7, 4);
             for (const bool selectedPass : { false, true })
                 for (const auto& note : notes)
                     if (limits.contains(note.start) && contains(note.id) == selectedPass)
@@ -615,12 +666,50 @@ private:
                 g.drawRect(box);
             }
         }
+        if (playbackCursor)
+        {
+            ju::Graphics::ScopedSaveState saved(g);
+            g.reduceClipRegion(area.withTop(0).withBottom(laneY() + G::lane));
+            const auto x = grid.x(*playbackCursor);
+            g.setColour(ju::Colour(0xffffc65b));
+            g.fillRect(x - 0.75f, 0.0f, 1.5f, static_cast<float>(laneY() + G::lane));
+            g.fillRect(x - 3.0f, 0.0f, 6.0f, 4.0f);
+        }
+        if (velocityReadout)
+        {
+            const auto bounds = velocityReadoutBounds();
+            g.setColour(ju::Colour(0xff141b24));
+            g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
+            g.setColour(ju::Colours::white);
+            g.drawText(ju::String(velocityReadout->value), bounds, ju::Justification::centred);
+        }
         if (active)
         {
             g.setOrigin(0, 0);
             g.setColour(ju::Colours::white);
             g.drawRect(getLocalBounds(), 2);
         }
+    }
+
+    ju::Rectangle<int> velocityReadoutBounds() const
+    {
+        constexpr int width = 36, height = 21, gap = 6;
+        const auto& readout = *velocityReadout;
+        const auto note = grid.bounds(clicked).getSmallestIntegerContainer();
+        const auto x = ju::jlimit(0, std::max(0, noteArea().getRight() - width), readout.pointer.x + gap);
+        const auto bottom = laneY() + G::lane;
+        auto bounds = ju::Rectangle<int>(x, ju::jlimit(0, bottom - height, readout.pointer.y - gap - height),
+                                        width, height);
+        if (bounds.intersects(note))
+        {
+            if (note.getY() >= height + gap)
+                bounds.setY(note.getY() - gap - height);
+            else if (note.getBottom() + gap + height <= bottom)
+                bounds.setY(note.getBottom() + gap);
+            else
+                bounds.setX(G::keys - width - gap);
+        }
+        return bounds;
     }
 
     const GridNote& previewFor(const GridNote& note) const
@@ -716,7 +805,10 @@ private:
         if (point.x < G::keys || point.x >= area.getRight() || !limits.contains(grid.beat(static_cast<float>(point.x))))
             return;
         anchor = point;
-        cursor = grid.beat(static_cast<float>(point.x));
+        const auto beat = grid.beat(static_cast<float>(point.x));
+        editCursor = snapped(beat);
+        if (editCursor >= limits.getEnd() && step() > 0.0)
+            editCursor = std::max(limits.getStart(), editCursor - step());
         auto notes = model.notes();
         const bool inLane = point.y >= laneY() && point.y < laneY() + G::lane;
         if (inLane)
@@ -789,8 +881,8 @@ private:
         if (gesture == Gesture::draw)
         {
             const auto start = std::max(0.0, step() > 0
-                ? limits.getStart() + std::floor((cursor - limits.getStart()) / step()) * step()
-                : cursor);
+                ? limits.getStart() + std::floor((grid.beat(static_cast<float>(anchor.x)) - limits.getStart()) / step()) * step()
+                : editCursor);
             const auto length = dragged ? std::max(step(), snapped(raw) - start) : rememberedLength;
             preview = {{ {}, start, std::min(limits.getEnd() - start, std::max(MidiNoteEditor::minimumLength, length)),
                          grid.pitch(static_cast<float>(anchor.y)), rememberedVelocity }};
@@ -817,6 +909,8 @@ private:
                 return model.valid(note);
             }))
             preview.clear();
+        if ((gesture == Gesture::velocity || gesture == Gesture::rightVelocity) && !preview.empty())
+            velocityReadout = VelocityReadout { preview.front().velocity, point };
         if (gesture == Gesture::move && !preview.empty())
         {
             const auto& note = previewFor(clicked);
@@ -830,7 +924,7 @@ private:
 
     void mouseDrag(const ju::MouseEvent& event) override
     {
-        if (gesture != Gesture::none && event.getDistanceFromDragStart() >= 4)
+        if (gesture != Gesture::none && (gestureDragged || event.getDistanceFromDragStart() >= 4))
         {
             gestureDragged = true;
             updatePreview(event.getPosition() - canvas().getPosition(), true);
@@ -885,11 +979,9 @@ private:
         if (!clip)
             return;
         if (wheel.deltaX != 0 || event.mods.isShiftDown())
-            grid.left -= (wheel.deltaX != 0 ? wheel.deltaX : wheel.deltaY) * visibleBeats();
+            scrollTime(-(wheel.deltaX != 0 ? wheel.deltaX : wheel.deltaY) * visibleBeats());
         else
-            grid.top -= ju::roundToInt(wheel.deltaY * 12);
-        updateScrollbars();
-        repaint();
+            scrollPitch(-ju::roundToInt(wheel.deltaY * 12));
     }
 
     void timerCallback() override { stopAudition(); }
@@ -910,12 +1002,15 @@ private:
         {
             stopAudition();
             cancelGesture();
+            playbackCursor.reset();
+            followResumeTime = 0.0;
         }
     }
 
     void cancelGesture()
     {
         gesture = Gesture::none;
+        velocityReadout.reset();
         gestureDragged = false;
         originals.clear();
         preview.clear();
@@ -934,15 +1029,17 @@ private:
     GridNote clicked {};
     ju::Point<int> anchor;
     ju::Rectangle<int> box;
-    double cursor = 0.0, rememberedLength = 0.25;
+    struct VelocityReadout { int value; ju::Point<int> pointer; };
+    std::optional<VelocityReadout> velocityReadout;
+    std::optional<double> playbackCursor;
+    double editCursor = 0.0, followResumeTime = 0.0, rememberedLength = 0.25;
     static constexpr int defaultVelocity = 96;
     int lastAudition = -1, rememberedVelocity = defaultVelocity;
     bool gestureDragged = false;
     std::vector<ju::ValueTree> selected, boxSelection;
     std::vector<GridNote> originals, preview, clipboard;
     ju::Label name;
-    ju::TextButton close { "×" }, mode { "DRAW" }, zoomOut { "TIME −" }, zoomIn { "TIME +" },
-        pitchOut { "PITCH −" }, pitchIn { "PITCH +" }, quantize { "QUANTIZE" };
+    ju::TextButton close { "×" }, mode { "DRAW" }, quantize { "QUANTIZE" };
     ju::ComboBox snap;
     ju::Slider velocity;
     ScrollBar horizontal { false }, vertical { true };

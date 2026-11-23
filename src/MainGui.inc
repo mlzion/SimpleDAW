@@ -337,18 +337,28 @@ public:
         snap.onChange = [this] { updateControls(); };
         button(panelButtons, "INSPECTOR", [this] { panels.inspectorOpen = !panels.inspectorOpen; saveLayout(); });
 
-        navigationButton(Arrow::screenLeft, "Scroll left one screen", [this] { scrollTime(-visibleSeconds()); });
-        navigationButton(Arrow::screenRight, "Scroll right one screen", [this] { scrollTime(visibleSeconds()); });
-        navigationButton(Arrow::left, "Scroll left one bar", [this] { scrollBar(-1); });
-        navigationButton(Arrow::right, "Scroll right one bar", [this] { scrollBar(1); });
-        auto& zoomOut = button(navigation, "-", [this] { zoom(0.8); }, 0xff193c57);
+        navigationButton(Arrow::screenLeft, "Scroll left one screen", [this] { navigateTime(-1, true); });
+        navigationButton(Arrow::screenRight, "Scroll right one screen", [this] { navigateTime(1, true); });
+        navigationButton(Arrow::left, "Scroll left one bar", [this] { navigateTime(-1, false); });
+        navigationButton(Arrow::right, "Scroll right one bar", [this] { navigateTime(1, false); });
+        auto configureZoom = [](ju::Button& control) {
+            control.setWantsKeyboardFocus(false);
+            control.setRepeatSpeed(330, 110, 65);
+        };
+        auto& zoomOut = button(navigation, "-", [this] { navigateZoom(0.8); }, 0xff193c57);
         zoomOut.setTooltip("Zoom out horizontally");
-        zoomOut.setRepeatSpeed(330, 110, 65);
-        auto& zoomIn = button(navigation, "+", [this] { zoom(1.25); }, 0xff193c57);
+        configureZoom(zoomOut);
+        auto& zoomIn = button(navigation, "+", [this] { navigateZoom(1.25); }, 0xff193c57);
         zoomIn.setTooltip("Zoom in horizontally");
-        zoomIn.setRepeatSpeed(330, 110, 65);
-        navigationButton(Arrow::up, "Scroll up", [this] { scrollRows(-1); });
-        navigationButton(Arrow::down, "Scroll down", [this] { scrollRows(1); });
+        configureZoom(zoomIn);
+        navigationButton(Arrow::up, "Scroll up", [this] { navigateRows(-1); });
+        navigationButton(Arrow::down, "Scroll down", [this] { navigateRows(1); });
+        auto& pitchOut = button(pitchNavigation, "PITCH −", [this] { navigatePitchZoom(-2); }, 0xff193c57);
+        auto& pitchIn = button(pitchNavigation, "PITCH +", [this] { navigatePitchZoom(2); }, 0xff193c57);
+        configureZoom(pitchOut);
+        configureZoom(pitchIn);
+        pitchOut.setVisible(false);
+        pitchIn.setVisible(false);
         button(inspectorButtons, "COPY SETTINGS", [this] { useInspectorSettings(false); });
         button(inspectorButtons, "APPLY SETTINGS", [this] { useInspectorSettings(true); });
         inspector.setInterceptsMouseClicks(true, true);
@@ -627,7 +637,12 @@ public:
             panels.tallTracks = !panels.tallTracks;
             saveLayout();
         });
-        followButton = &button(navigation, "FOLLOW", [this] { follow = !follow; });
+        followButton = &button(navigation, "FOLLOW", [this] {
+            follow = !follow;
+            pianoRoll.followResumeTime = 0.0;
+            updateControls();
+        });
+        followButton->setWantsKeyboardFocus(false);
         report("Create or open a project to begin");
         setSize(1440, 850);
         updateControls();
@@ -720,7 +735,8 @@ public:
         }
         area.removeFromTop(4);
         status.setBounds(area.removeFromBottom(26));
-        layoutRow(navigation, area.removeFromBottom(40), { 8, 8, 8, 8, 8, 8, 8, 8, 13, 13 }, { 4, 6, 8 });
+        navigationBounds = area.removeFromBottom(40);
+        layoutNavigation(navigationBounds);
 
         inspector.setVisible(panels.inspectorOpen);
         inspectorDivider.setVisible(panels.inspectorOpen);
@@ -2366,11 +2382,54 @@ private:
         auto& control = *buttons.add(new ArrowButton(arrow));
         control.setTitle(title);
         control.setTooltip(title);
+        control.setWantsKeyboardFocus(false);
         control.setColour(ju::TextButton::buttonColourId, ju::Colour(0xff292929));
         control.setRepeatSpeed(330, 110, 65);
         control.onClick = std::move(action);
         addAndMakeVisible(control);
         navigation.push_back(&control);
+    }
+
+    void layoutNavigation(ju::Rectangle<int> bounds)
+    {
+        if (!pianoRollHasFocus())
+            return layoutRow(navigation, bounds, { 8, 8, 8, 8, 8, 8, 8, 8, 13, 13 }, { 4, 6, 8 });
+
+        auto controls = navigation;
+        controls.insert(controls.end() - 2, pitchNavigation.begin(), pitchNavigation.end());
+        layoutRow(controls, bounds, { 8, 8, 8, 8, 8, 8, 8, 8, 10, 10, 13, 13 }, { 4, 6, 8, 10 });
+    }
+
+    void navigateTime(int direction, bool byScreen)
+    {
+        if (pianoRollHasFocus() && pianoRoll.clip)
+            pianoRoll.scrollTime(direction * (byScreen ? pianoRoll.visibleBeats() : pianoRoll.beatsPerBar()));
+        else if (byScreen)
+            scrollTime(direction * visibleSeconds());
+        else
+            scrollBar(direction);
+    }
+
+    void navigateRows(int direction)
+    {
+        if (pianoRollHasFocus())
+            pianoRoll.scrollPitch(direction);
+        else
+            scrollRows(direction);
+    }
+
+    void navigateZoom(double factor)
+    {
+        if (pianoRollHasFocus())
+            pianoRoll.zoomTime(factor);
+        else
+            zoom(factor);
+    }
+
+    void navigatePitchZoom(int delta)
+    {
+        if (pianoRollHasFocus())
+            pianoRoll.zoomPitch(delta);
     }
 
     void combo(ju::ComboBox& control, std::vector<ju::Component*>& row,
@@ -4902,12 +4961,23 @@ private:
         return {};
     }
 
-    std::optional<float> inspectorPulse(te::EditItemID item, double milliseconds) const
+    static std::optional<float> selectionPulse(te::EditItemID item, te::EditItemID target, double milliseconds)
     {
-        if (!item.isValid() || item != inspectorPulseTarget())
+        if (!item.isValid() || item != target)
             return {};
         const auto phase = milliseconds * ju::MathConstants<double>::twoPi / 1000.0;
         return static_cast<float>(0.5 - 0.5 * std::cos(phase));
+    }
+
+    std::optional<float> inspectorPulse(te::EditItemID item, double milliseconds) const
+    {
+        return selectionPulse(item, inspectorPulseTarget(), milliseconds);
+    }
+
+    std::optional<float> clipPulse(te::EditItemID item, double milliseconds) const
+    {
+        const auto target = pianoRollHasFocus() ? pianoRollClip : inspectorPulseTarget();
+        return selectionPulse(item, target, milliseconds);
     }
 
     bool trackIsHighlighted(const te::AudioTrack& track) const
@@ -5192,7 +5262,7 @@ private:
         const auto* missing = missingWave(&clip);
         if (missing)
             colour = ju::Colours::grey;
-        const auto pulse = inspectorPulse(clip.itemID, ju::Time::getMillisecondCounterHiRes());
+        const auto pulse = clipPulse(clip.itemID, ju::Time::getMillisecondCounterHiRes());
         const auto fill = pulse ? ju::jmap(*pulse, 0.44f, 0.82f) : selected ? 0.56f : 0.27f;
         g.setColour(colour.withMultipliedBrightness(fill));
         g.setOpacity(0.8f);
@@ -5784,7 +5854,17 @@ private:
             pianoRollClip = {};
         }
         const auto active = activeEditingArea();
-        pianoRoll.refresh(editedMidiClip, pianoRoll.isVisible() && editingStopped(), pianoRollHasFocus());
+        const bool pianoFocused = pianoRollHasFocus();
+        pianoRoll.refresh(editedMidiClip, pianoRoll.isVisible() && editingStopped(), pianoFocused);
+        if (pitchNavigation.front()->isVisible() != pianoFocused)
+        {
+            for (auto* control : pitchNavigation)
+                control->setVisible(pianoFocused);
+            layoutNavigation(navigationBounds);
+        }
+        const auto playing = edit && edit->getTransport().isPlaying();
+        pianoRoll.updatePlayback(playing ? std::optional { edit->getTransport().getPosition() } : std::nullopt,
+                                 follow, ju::Time::getMillisecondCounterHiRes());
         if (actionSelection.requestedArea && actionSelection.requestedArea != active)
             actionSelection.requestedArea = active;
         if (active != EditingArea::inspector && active != EditingArea::window)
@@ -6156,7 +6236,8 @@ private:
     ju::TextButton *playButton = nullptr, *pauseButton = nullptr, *loopButton = nullptr,
         *clickButton = nullptr, *countButton = nullptr, *heightButton = nullptr, *followButton = nullptr;
     ju::TextButton *undoButton = nullptr, *redoButton = nullptr;
-    std::vector<ju::Component*> first, second, panelButtons, historyButtons, inspectorButtons, navigation;
+    std::vector<ju::Component*> first, second, panelButtons, historyButtons, inspectorButtons, navigation, pitchNavigation;
+    ju::Rectangle<int> navigationBounds;
     std::array<ActionGroup, 4> actionGroups;
     std::vector<ActionButton> actionButtons;
     ActionSelection actionSelection;
