@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include <JuceHeader.h>
+#include "MidiPlaybackNotes.h"
 #include <array>
 #include <cstdio>
 #include <numeric>
@@ -29,10 +30,37 @@ public:
     }
 };
 
-class SmokeTestEngineBehaviour final : public te::EngineBehaviour
+const ju::Identifier midiVelocityProperty("simpleDawMidiVelocity");
+const ju::Identifier midiTransposeProperty("simpleDawMidiTranspose");
+
+class SimpleDawEngineBehaviour final : public te::EngineBehaviour
 {
 public:
-    bool autoInitialiseDeviceManager() override { return false; }
+    explicit SimpleDawEngineBehaviour(bool testingIn) : testing(testingIn) {}
+    bool autoInitialiseDeviceManager() override { return !testing; }
+
+    ju::MidiMessageSequence createPlaybackMidiSequence(const te::MidiList& list, te::MidiClip& clip,
+        te::MidiList::TimeBase timeBase, bool generateMPE) override
+    {
+        auto source = te::MidiList::createDefaultPlaybackMidiSequence(list, clip, timeBase, generateMPE);
+        const int velocity = ju::jlimit(0, 200, static_cast<int>(clip.state.getProperty(midiVelocityProperty, 100)));
+        const int transpose = ju::jlimit(-24, 24, static_cast<int>(clip.state.getProperty(midiTransposeProperty, 0)));
+        if (velocity == 100 && transpose == 0)
+            return source;
+
+        ju::MidiMessageSequence playback;
+        simpleDaw::MidiPlaybackNotes notes;
+        for (const auto* event : source)
+        {
+            auto message = event->message;
+            if (notes.map(message, transpose, velocity, [&](ju::MidiMessage off) { playback.addEvent(off); }))
+                playback.addEvent(message);
+        }
+        return playback;
+    }
+
+private:
+    bool testing;
 };
 
 bool insertAudio(te::AudioTrack& track, const ju::File& file, te::TimePosition start = {})
@@ -41,19 +69,22 @@ bool insertAudio(te::AudioTrack& track, const ju::File& file, te::TimePosition s
     if (!audio.isValid() || audio.getLength() <= 0.0)
         return false;
 
-    return track.insertWaveClip(file.getFileNameWithoutExtension(), file,
-        {{ start, start + te::TimeDuration::fromSeconds(audio.getLength()) }, {}}, false) != nullptr;
+    auto clip = track.insertWaveClip(file.getFileNameWithoutExtension(), file,
+        {{ start, start + te::TimeDuration::fromSeconds(audio.getLength()) }, {}}, false);
+    if (!clip)
+        return false;
+    return true;
 }
 
 template<typename PluginType>
-bool insertBuiltIn(te::AudioTrack& track, bool synth = false)
+bool insertBuiltIn(te::AudioTrack& track, bool synth = false, int index = 0)
 {
     auto plugin = track.edit.getPluginCache().createNewPlugin(PluginType::xmlTypeName,
         te::PluginManager::createBuiltInPluginDescription<PluginType>(synth));
     if (plugin == nullptr)
         return false;
 
-    track.pluginList.insertPlugin(plugin, 0, nullptr);
+    track.pluginList.insertPlugin(plugin, index, nullptr);
     return true;
 }
 
@@ -141,6 +172,112 @@ bool smokeTest(te::Engine& engine)
     return reader->read(&samples, 0, samples.getNumSamples(), 0, true, true)
         && samples.getMagnitude(0, samples.getNumSamples()) > 0.01f;
 }
+
+class DeviceSetup final : public ju::Component
+{
+public:
+    explicit DeviceSetup(ju::AudioDeviceManager& managerIn) : manager(managerIn)
+    {
+        addAndMakeVisible(refresh);
+        refresh.onClick = [this] { refreshDevices(); };
+#if JUCE_WINDOWS && ! JUCE_ASIO
+        addAndMakeVisible(driverHelp);
+        driverHelp.setText("Windows Audio uses WASAPI. ASIO is unavailable in this build.",
+                           ju::dontSendNotification);
+#endif
+        refreshDevices();
+        setSize(540, 600);
+    }
+
+    static bool test(te::Engine& engine);
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced(12);
+        refresh.setBounds(area.removeFromTop(32).removeFromLeft(155));
+#if JUCE_WINDOWS && ! JUCE_ASIO
+        driverHelp.setBounds(area.removeFromTop(28));
+#endif
+        selector->setBounds(area);
+    }
+
+private:
+    void refreshDevices()
+    {
+        // Scan only. The manager retains its active device and saved setup.
+        for (auto* type : manager.getAvailableDeviceTypes())
+            type->scanForDevices();
+
+        selector.reset();
+        selector = std::make_unique<ju::AudioDeviceSelectorComponent>(manager,
+            0, 32, 2, 32, true, false, true, false);
+        addAndMakeVisible(*selector);
+        resized();
+    }
+
+    ju::AudioDeviceManager& manager;
+    ju::TextButton refresh { "Refresh Devices" };
+#if JUCE_WINDOWS && ! JUCE_ASIO
+    ju::Label driverHelp;
+#endif
+    std::unique_ptr<ju::AudioDeviceSelectorComponent> selector;
+};
+
+bool DeviceSetup::test(te::Engine& engine)
+{
+    auto& devices = engine.getDeviceManager();
+    devices.getHostedAudioDeviceInterface().initialise({});
+    devices.dispatchPendingUpdates();
+    auto& manager = devices.deviceManager;
+    auto* activeDevice = manager.getCurrentAudioDevice();
+    if (activeDevice == nullptr || manager.getCurrentAudioDeviceType() != "Hosted Device")
+        return false;
+
+    const auto findDeviceBox = [](ju::Component& component, const auto& find) -> ju::ComboBox* {
+        for (auto* child : component.getChildren())
+        {
+            if (auto* box = dynamic_cast<ju::ComboBox*>(child); box && box->getItemText(0) == "Hosted Device"
+                && box->indexOfItemId(-1) >= 0)
+                return box;
+            if (auto* box = find(*child, find))
+                return box;
+        }
+        return nullptr;
+    };
+
+    DeviceSetup setup(manager);
+    auto* audioChoice = findDeviceBox(*setup.selector, findDeviceBox);
+    const auto original = manager.getAudioDeviceSetup();
+    if (audioChoice == nullptr || audioChoice->getText() != original.outputDeviceName)
+        return false;
+
+    // Drive the real audio ComboBox handler, then check the active choice without reopening Setup.
+    audioChoice->setSelectedId(-1, ju::dontSendNotification);
+    audioChoice->onChange();
+    if (manager.getCurrentAudioDevice() != nullptr || audioChoice->getSelectedId() != -1)
+        return false;
+    audioChoice->setSelectedId(1, ju::dontSendNotification);
+    audioChoice->onChange();
+    if (manager.getCurrentAudioDevice() == nullptr
+        || audioChoice->getText() != manager.getAudioDeviceSetup().outputDeviceName)
+        return false;
+
+    activeDevice = manager.getCurrentAudioDevice();
+    const auto beforeRefresh = manager.getAudioDeviceSetup();
+    const auto saved = manager.createStateXml();
+    setup.refresh.onClick();
+    const auto restored = manager.createStateXml();
+    if (manager.getCurrentAudioDevice() != activeDevice || manager.getAudioDeviceSetup() != beforeRefresh
+        || !saved || !restored || !saved->isEquivalentTo(restored.get(), true))
+        return false;
+
+    // MIDI inventory is refreshed independently of the selected audio endpoint.
+    auto* midiInputs = setup.selector->getMidiInputSelectorListBox();
+    const auto availableMidi = ju::MidiInput::getAvailableDevices();
+    return midiInputs && midiInputs->getListBoxModel()->getNumRows() == availableMidi.size();
+}
+
+#include "EffectsEditor.h"
 
 class MainGui final : public ju::Component, private ju::Timer, private ju::MenuBarModel,
                       private ju::ApplicationCommandTarget
@@ -254,9 +391,8 @@ private:
         ju::DialogWindow::LaunchOptions dialog;
         dialog.dialogTitle = "Audio and MIDI devices";
         dialog.dialogBackgroundColour = ju::Colours::darkgrey;
-        dialog.content.setOwned(new ju::AudioDeviceSelectorComponent(engine.getDeviceManager().deviceManager,
-            0, 32, 2, 32, true, false, true, false));
-        dialog.content->setSize(480, 560);
+        dialog.componentToCentreAround = this;
+        dialog.content.setOwned(new DeviceSetup(engine.getDeviceManager().deviceManager));
         dialog.runModal();
     }
 
@@ -478,6 +614,98 @@ private:
             });
     }
 
+    ju::Result importMidi(te::AudioTrack& track, const ju::File& file, te::TimePosition start)
+    {
+        if (const auto error = placementError(TrackType::midi, track); error.isNotEmpty())
+            return ju::Result::fail(error);
+
+        ju::FileInputStream stream(file);
+        ju::MidiFile midi;
+        if (!stream.openedOk() || !midi.readFrom(stream, true))
+            return ju::Result::fail("Could not read the MIDI file");
+        const auto ticksPerBeat = midi.getTimeFormat();
+        if (ticksPerBeat <= 0)
+            return ju::Result::fail("MIDI import requires musical ticks per quarter note");
+
+        const ju::MidiMessageSequence* notes = nullptr;
+        for (int index = 0; index < midi.getNumTracks(); ++index)
+        {
+            const auto* sequence = midi.getTrack(index);
+            bool hasNotes = false;
+            for (const auto* event : *sequence)
+                if (event->message.isNoteOn())
+                {
+                    hasNotes = true;
+                    break;
+                }
+            if (!hasNotes)
+                continue;
+            if (notes)
+                return ju::Result::fail("The MIDI file has multiple note-bearing tracks");
+            notes = sequence;
+        }
+        if (!notes)
+            return ju::Result::fail("The MIDI file contains no notes");
+
+        const auto endTick = notes->getEndTime();
+        for (const auto* event : *notes)
+            if (event->message.isNoteOn()
+                && (!event->noteOffObject
+                    || event->noteOffObject->message.getTimeStamp() <= event->message.getTimeStamp()))
+                return ju::Result::fail("The MIDI track contains a note without a valid duration");
+
+        const auto startBeat = edit->tempoSequence.toBeats(start);
+        const auto end = edit->tempoSequence.toTime(startBeat + te::BeatDuration::fromBeats(endTick / ticksPerBeat));
+        if (start < te::TimePosition{} || end <= start || end > te::Edit::getMaximumEditEnd())
+            return ju::Result::fail("The MIDI clip would exceed the available timeline");
+
+        auto& undo = edit->getUndoManager();
+        undo.beginNewTransaction("Import MIDI");
+        auto clip = te::insertMIDIClip(track, file.getFileNameWithoutExtension(), { start, end });
+        if (!clip)
+            return ju::Result::fail("Could not create the MIDI clip");
+        for (const auto* event : *notes)
+        {
+            const auto& note = event->message;
+            if (!note.isNoteOn())
+                continue;
+            const auto tick = note.getTimeStamp();
+            const auto duration = event->noteOffObject->message.getTimeStamp() - tick;
+            clip->getSequence().addNote(note.getNoteNumber(), te::BeatPosition::fromBeats(tick / ticksPerBeat),
+                te::BeatDuration::fromBeats(duration / ticksPerBeat), note.getVelocity(), 0, &undo);
+        }
+        actionSelection.clips = { clip->itemID };
+        actionSelection.requestedArea = EditingArea::timeline;
+        edit->markAsChanged();
+        updateControls();
+        return ju::Result::ok();
+    }
+
+    void chooseMidiImport()
+    {
+        if (!ready())
+            return;
+        auto* track = actionTrack();
+        if (!track)
+            return report("Select a MIDI track first");
+        if (const auto error = placementError(TrackType::midi, *track); error.isNotEmpty())
+            return warnPlacement(error);
+        const auto trackID = track->itemID;
+        auto* project = edit.get();
+        const auto start = editCursor;
+        chooseFile("Import MIDI at the edit cursor", "*.mid;*.midi",
+            ju::FileBrowserComponent::openMode | ju::FileBrowserComponent::canSelectFiles,
+            [this, project, trackID, start](const ju::File& file) {
+                if (edit.get() != project || !ready())
+                    return;
+                if (auto* destination = te::findAudioTrackForID(*edit, trackID))
+                {
+                    const auto result = importMidi(*destination, file, start);
+                    report(result.wasOk() ? ju::String("MIDI imported") : result.getErrorMessage());
+                }
+            });
+    }
+
     void loadVst3()
     {
         if (!selectedTrack())
@@ -506,12 +734,16 @@ private:
 
                 if (const int choice = menu.show(); choice > 0)
                 {
+                    if (!descriptions[choice - 1]->isInstrument && audioInserts(track).size() >= 8)
+                        return report("The track has eight or more audio inserts");
                     auto plugin = edit->getPluginCache().createNewPlugin(
                         te::ExternalPlugin::xmlTypeName, *descriptions[choice - 1]);
                     if (plugin == nullptr || plugin->getWrappedAudioProcessor() == nullptr)
                         return report("Could not load VST3");
 
-                    track->pluginList.insertPlugin(plugin, 0, nullptr);
+                    edit->getUndoManager().beginNewTransaction("Insert VST3");
+                    track->pluginList.insertPlugin(plugin,
+                        descriptions[choice - 1]->isInstrument ? 0 : audioInsertIndex(*track), nullptr);
                     report("Inserted " + descriptions[choice - 1]->name);
                 }
             });
@@ -535,6 +767,8 @@ private:
     std::unique_ptr<ju::FileChooser> chooser;
 };
 
+#include "../tests/EffectsEditor.inc"
+
 class Application final : public ju::JUCEApplication
 {
 public:
@@ -548,12 +782,13 @@ public:
 
         const bool testing = command == "--smoke-test" || command == "--gui-test"
             || command == "--correction-test" || command == "--uat-test"
-            || command == "--effects-foundation-test";
-        std::unique_ptr<te::EngineBehaviour> engineBehaviour;
-        if (testing)
-            engineBehaviour = std::make_unique<SmokeTestEngineBehaviour>();
+            || command == "--effects-foundation-test" || command == "--effects-editor-test"
+            || command == "--midi-import-test" || command == "--midi-inspector-test"
+            || command == "--inspector-loop-test" || command == "--inspector-clone-test"
+            || command == "--inspector-effects-test" || command == "--audio-overlap-test"
+            || command == "--device-setup-test";
         engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW",
-            std::make_unique<SimpleDawUIBehaviour>(), std::move(engineBehaviour));
+            std::make_unique<SimpleDawUIBehaviour>(), std::make_unique<SimpleDawEngineBehaviour>(testing));
         if (testing)
         {
             bool passed = false;
@@ -563,6 +798,22 @@ public:
                 passed = MainGui::testCorrections(*engine);
             else if (command == "--uat-test")
                 passed = MainGui::testUniversalActions(*engine);
+            else if (command == "--device-setup-test")
+                passed = DeviceSetup::test(*engine);
+            else if (command == "--audio-overlap-test")
+                passed = MainGui::testAudioOverlap(*engine);
+            else if (command == "--inspector-effects-test")
+                passed = MainGui::testInspectorEffects(*engine);
+            else if (command == "--inspector-clone-test")
+                passed = MainGui::testInspectorClone(*engine);
+            else if (command == "--inspector-loop-test")
+                passed = MainGui::testInspectorLoop(*engine);
+            else if (command == "--midi-inspector-test")
+                passed = MainGui::testMidiInspector(*engine);
+            else if (command == "--midi-import-test")
+                passed = MainGui::testMidiImport(*engine);
+            else if (command == "--effects-editor-test")
+                passed = MainGui::testEffectsEditor(*engine);
             else if (command == "--effects-foundation-test")
                 passed = runEffectsFoundationTest(*engine);
             else

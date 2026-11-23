@@ -4,6 +4,8 @@ The source archive contains three top-level source directories, `SimpleDAW`, `JU
 
 The explicitly authorized, manually dispatched Windows x64 workflow creates the archive from the exact three Git checkouts, extracts it into a fresh directory, and uses the extracted sources to build and run the Windows tests. Its run summary records the revisions and SHA-256 checksums for the source archive and executable. The Windows workflow publishes the tested `/MD` executable and matching source together in a versioned artifact, such as `SimpleDAW-v0.21-Windows-x64`. GitHub adds the ZIP extension to the download.
 
+During configuration SimpleDAW applies its audio overlap integration to the pinned Tracktion playback graph. The application tree supplies the CMake hook and graph source, so configuring from the archived Git revisions applies the same integration.
+
 ## Rebuild on Windows
 
 Install Git if creating an archive from checkouts. To build from an extracted archive, install CMake 3.22 or newer, Visual Studio 2022 with **Desktop development with C++**, the x64 MSVC v143 toolset and the Windows SDK. Run in PowerShell from the archive root.
