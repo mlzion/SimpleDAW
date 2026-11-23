@@ -20,4 +20,4 @@ Run `ctest --test-dir <build> -C Release --output-on-failure` with a display ser
 
 ## Integrated Windows x64 /MD acceptance
 
-Use the integrated [v0.23.1 Windows acceptance checklist](v0.23.1-live-test.md) for the Inspector and Effects Editor. Windows CI and live testing are pending.
+Use the integrated [v0.23.1 Windows acceptance checklist](v0.23.1-live-test.md) for the Inspector and Effects Editor. Effects Editor E1 is **ACCEPTED**. Windows live acceptance is **COMPLETE** on `69359da`. The final run passed all 13 CTests, runtime dependency verification and isolated startup. PR #20 integrated E1 into `main`. [Final acceptance record](v0.23.1-live-test.md#final-acceptance-record) · [Windows run](https://github.com/mlzion/SimpleDAW/actions/runs/45129466466)
