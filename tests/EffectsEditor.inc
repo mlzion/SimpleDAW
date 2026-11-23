@@ -79,6 +79,24 @@ bool MainGui::testEffectsEditor(te::Engine& engine)
                "Inspector selection leaves editor bound to the original instance"))
         return false;
 
+    gui.selectTrack(te::getAudioTracks(*gui.edit).indexOf(second));
+    if (!check(!editor.isOpen(), "selecting another track closes the editor")
+        || !check(gui.openEffectsEditor(firstID, reverbID), "open the previous effect again"))
+        return false;
+    const auto now = ju::Time::getCurrentTime();
+    const auto click = [&](ju::Component& component) {
+        return ju::MouseEvent(ju::Desktop::getInstance().getMainMouseSource(), {},
+            ju::ModifierKeys::leftButtonModifier, 0, 0, 0, 0, 0, &component, &component,
+            now, {}, now, 1, false);
+    };
+    gui.mouseDown(click(editor.bypass));
+    if (!check(editor.isOpen(), "interacting inside the editor keeps it open"))
+        return false;
+    gui.mouseDown(click(gui.inspectorName));
+    if (!check(!editor.isOpen(), "unrelated Inspector control closes the editor")
+        || !check(gui.openEffectsEditor(firstID, reverbID), "reopen after an unrelated control"))
+        return false;
+
     auto& chain = first->pluginList;
     chain.state.moveChild(chain.state.indexOf(reverb->state), chain.state.indexOf(sibling->state),
                           &gui.edit->getUndoManager());
@@ -87,14 +105,14 @@ bool MainGui::testEffectsEditor(te::Engine& engine)
     adjust("damping", 0.35);
     adjust("wet level", 0.4);
     adjust("dry level", 0.0);
-    if (!check(editor.bypass.getText() == "BYPASSED" && editor.title.getText().contains("Reverb 2")
+    if (!check(editor.bypass.getButtonText() == "BYPASSED" && editor.title.getText().contains("Reverb 2")
             && near(reverb->getDamp(), 0.35) && near(reverb->getWet(), 0.4) && near(reverb->getDry(), 0.0)
             && near(sibling->getDamp(), 0.5), "reorder, bypass readout, and native Wet/Dry endpoints"))
         return false;
 
     reverb->setEnabled(true);
     gui.updateControls();
-    if (!check(editor.bypass.getText() == "ACTIVE", "bypass restoration"))
+    if (!check(editor.bypass.getButtonText() == "ACTIVE", "bypass restoration"))
         return false;
     reverb->setEnabled(false);
     if (!check(gui.openEffectsEditor(firstID, compressorID) && editor.controls.size() == 5,
@@ -132,7 +150,7 @@ bool MainGui::testEffectsEditor(te::Engine& engine)
         || !check(gui.openEffectsEditor(firstID, compressorID) && near(control("attack").slider.getValue(), 4)
             && near(control("release").slider.getValue(), 180) && near(control("output gain").slider.getValue(), 6),
                   "reopen saved Compressor values")
-        || !check(gui.openEffectsEditor(firstID, reverbID) && editor.bypass.getText() == "BYPASSED"
+        || !check(gui.openEffectsEditor(firstID, reverbID) && editor.bypass.getButtonText() == "BYPASSED"
             && near(control("room size").slider.getValue(), 0.8) && near(control("damping").slider.getValue(), 0.35)
             && near(control("wet level").slider.getValue(), 0.4) && near(control("dry level").slider.getValue(), 0.0),
                   "reopen saved Reverb values and bypass"))
@@ -177,7 +195,7 @@ bool MainGui::testEffectsEditor(te::Engine& engine)
     transport.setLoopRange({ {}, te::TimePosition::fromSeconds(0.1) });
     transport.looping = true;
     transport.ensureContextAllocated();
-    std::atomic<float> peak { 0.0f };
+    std::atomic<float> peak { 0.0f }, rightPeak { 0.0f };
     std::jthread processing([&](std::stop_token stop) {
         ju::AudioBuffer<float> buffer(2, device.blockSize);
         ju::MidiBuffer midi;
@@ -186,7 +204,8 @@ bool MainGui::testEffectsEditor(te::Engine& engine)
             buffer.clear();
             midi.clear();
             host.processBlock(buffer, midi);
-            peak.store(buffer.getMagnitude(0, buffer.getNumSamples()));
+            peak.store(buffer.getMagnitude(0, 0, buffer.getNumSamples()));
+            rightPeak.store(buffer.getMagnitude(1, 0, buffer.getNumSamples()));
             ju::Thread::sleep(5);
         }
     });
@@ -208,7 +227,16 @@ bool MainGui::testEffectsEditor(te::Engine& engine)
         return false;
     adjust("output gain", 12.0);
     if (!check(waitForPeak([baseline](float level) { return level > baseline * 2; }),
-               "Compressor slider changes hosted playback output")
+               "Compressor slider changes hosted playback output"))
+        return false;
+    editor.bypass.onClick();
+    if (!check(editor.bypass.getButtonText() == "BYPASSED"
+            && waitForPeak([baseline](float level) { return level > 0.02f && level < baseline * 1.6f; }),
+               "live Compressor bypass removes its output gain"))
+        return false;
+    editor.bypass.onClick();
+    if (!check(waitForPeak([baseline](float level) { return level > baseline * 2; }),
+               "live Compressor re-enable restores processing")
         || !check(gui.openEffectsEditor(firstID, siblingID), "switch effect while playback continues"))
         return false;
     adjust("wet level", 0.0);
@@ -216,12 +244,78 @@ bool MainGui::testEffectsEditor(te::Engine& engine)
     if (!check(waitForPeak([](float level) { return level < 0.001f; }),
                "Reverb Wet/Dry sliders attenuate hosted playback output"))
         return false;
+    editor.bypass.onClick();
+    if (!check(editor.bypass.getButtonText() == "BYPASSED"
+            && waitForPeak([](float level) { return level > 0.05f; }), "live E1 bypass restores the signal"))
+        return false;
+    editor.bypass.onClick();
+    if (!check(waitForPeak([](float level) { return level < 0.001f; }), "live E1 re-enable restores processing"))
+        return false;
     adjust("wet level", 1.0 / 3.0);
     if (!check(waitForPeak([](float level) { return level > 0.01f; }),
                "Reverb produces wet-only output while playing"))
         return false;
+    gui.stop();
+    if (!check(editor.isOpen() && !transport.isPlaying(), "STOP preserves the effects editor target"))
+        return false;
+    gui.play();
     gui.closeEffectsEditor();
     if (!check(!editor.isOpen() && transport.isPlaying(), "closing the editor leaves playback running"))
+        return false;
+    gui.selectTrack(te::getAudioTracks(*gui.edit).indexOf(first));
+    auto* fader = first->getVolumePlugin();
+    const auto originalVolume = fader->getVolumeDb();
+    float trackPeak = 0;
+    if (!check(waitForPeak([&trackPeak](float level) { trackPeak = level; return level > 0.05f; }),
+               "baseline after closing E1"))
+        return false;
+    {
+        ju::Slider::ScopedDragNotification drag(gui.inspectorVolume);
+        gui.inspectorVolume.setValue(-8, ju::sendNotificationSync);
+        gui.inspectorVolume.setValue(-20, ju::sendNotificationSync);
+        if (!check(gui.inspectorVolume.isEnabled()
+                && waitForPeak([trackPeak](float level) { return level > 0.005f && level < trackPeak * 0.45f; }),
+                   "track fader changes sound before release"))
+            return false;
+    }
+    gui.stop();
+    gui.useHistory(false);
+    if (!check(near(fader->getVolumeDb(), originalVolume), "one Undo restores an entire fader gesture"))
+        return false;
+    gui.play();
+    gui.inspectorPan.setValue(-100, ju::sendNotificationSync);
+    if (!check(gui.inspectorPan.isEnabled() && waitForPeak([&](float level) {
+            return level > 0.05f && rightPeak.load() < 0.001f;
+        }), "live track pan changes the stereo output"))
+    {
+        std::fprintf(stderr, "Pan %.3f left %.6f right %.6f position %.6f playing %d\n",
+            fader->getPan(), peak.load(), rightPeak.load(), transport.getPosition().inSeconds(),
+            static_cast<int>(transport.isPlaying()));
+        return false;
+    }
+    gui.inspectorPan.setValue(0, ju::sendNotificationSync);
+    gui.inspectorEQ[1].setValue(-12, ju::sendNotificationSync);
+    float eqPeak = 0;
+    if (!check(gui.inspectorEQ[1].isEnabled() && waitForPeak([&](float level) {
+            eqPeak = level;
+            return level > 0.01f && level < trackPeak * 0.75f;
+        }), "live mid EQ cuts the hosted test tone"))
+        return false;
+    gui.eqBypass.onClick();
+    if (!check(waitForPeak([eqPeak](float level) { return level > eqPeak * 1.3f; }),
+               "live EQ bypass restores the hosted signal"))
+        return false;
+    gui.actionSelection.clips = { first->getClips().getFirst()->itemID };
+    gui.actionSelection.requestedArea = EditingArea::timeline;
+    gui.updateControls();
+    gui.inspectorGain.setValue(-24, ju::sendNotificationSync);
+    if (!check(gui.inspectorGain.isEnabled() && waitForPeak([trackPeak](float level) {
+            return level > 0.002f && level < trackPeak * 0.35f;
+        }), "live clip gain attenuates playback"))
+        return false;
+    gui.clipMute.onClick();
+    if (!check(waitForPeak([](float level) { return level < 0.001f; }) && !first->isMuted(false),
+               "live audio clip mute leaves the track unmuted"))
         return false;
     gui.stop();
     processing.request_stop();

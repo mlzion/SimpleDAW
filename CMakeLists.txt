@@ -12,8 +12,8 @@ FetchContent_Declare(tracktion
     GIT_SUBMODULES ""
     SOURCE_SUBDIR modules)
 FetchContent_MakeAvailable(juce tracktion)
-include(cmake/TracktionAudioOverlap.cmake)
 include(cmake/JuceDeviceSelector.cmake)
+include(cmake/RestoreTracktionOverlap.cmake)
 
 set(SIMPLEDAW_ASIO_SDK "" CACHE PATH "Optional directory containing iasiodrv.h")
 

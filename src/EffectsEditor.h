@@ -2,20 +2,38 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 
+inline void toggleEffectBypass(te::Plugin& plugin)
+{
+    plugin.edit.getUndoManager().beginNewTransaction("Effect bypass");
+    plugin.setEnabled(!plugin.isEnabled());
+    plugin.edit.getUndoManager().beginNewTransaction();
+}
+
+inline constexpr std::array<const char*, 3> eqGainIDs {
+    "Low-pass gain", "Mid gain 1", "High-pass gain"
+};
+
 class EffectsEditor final : public ju::Component
 {
 public:
     EffectsEditor(std::function<te::Edit*()> getEdit, std::function<void()> onClose)
         : edit(std::move(getEdit))
     {
-        for (auto* label : { &title, &bypass, &mixGuide })
+        for (auto* label : { &title, &mixGuide })
         {
             label->setColour(ju::Label::textColourId, ju::Colours::white);
             addAndMakeVisible(*label);
         }
         title.setFont(ju::FontOptions(20.0f, ju::Font::bold));
-        bypass.setFont(ju::FontOptions(16.0f, ju::Font::bold));
-        bypass.setJustificationType(ju::Justification::centred);
+        addAndMakeVisible(bypass);
+        bypass.onClick = [this] {
+            if (target && !edit()->getTransport().isRecording())
+                if (auto* plugin = resolve(*target).second)
+                {
+                    toggleEffectBypass(*plugin);
+                    refresh();
+                }
+        };
         mixGuide.setFont(ju::FontOptions(14.0f));
         addAndMakeVisible(closeButton);
         closeButton.onClick = std::move(onClose);
@@ -99,13 +117,28 @@ public:
         {
             auto plugin = te::findPluginForState(project, state);
             const auto* definitions = plugin ? parameterDefinitions(*plugin) : nullptr;
-            if (!definitions)
+            ju::String parameterID;
+            if (definitions)
+                for (const auto& definition : *definitions)
+                    if (definition.property == property)
+                        parameterID = definition.id;
+            if (dynamic_cast<te::EqualiserPlugin*>(plugin.get()))
+            {
+                const std::array properties { te::IDs::loGain, te::IDs::midGain1, te::IDs::hiGain };
+                for (size_t index = 0; index < properties.size(); ++index)
+                    if (properties[index] == property)
+                        parameterID = eqGainIDs[index];
+            }
+            if (dynamic_cast<te::VolumeAndPanPlugin*>(plugin.get()))
+            {
+                if (property == te::IDs::volume)
+                    parameterID = "volume";
+                else if (property == te::IDs::pan)
+                    parameterID = "pan";
+            }
+            if (parameterID.isEmpty())
                 continue;
-            const auto definition = std::find_if(definitions->begin(), definitions->end(),
-                [&property](const auto& candidate) { return candidate.property == property; });
-            if (definition == definitions->end())
-                continue;
-            if (auto parameter = plugin->getAutomatableParameterByID(definition->id))
+            if (auto parameter = plugin->getAutomatableParameterByID(parameterID))
             {
                 // Undo of a first edit removes the property. Temporarily materialize the native
                 // default so refreshing the parameter cannot create an undo step and discard Redo.
@@ -155,8 +188,9 @@ public:
         title.setText(plugin->getName() + " " + ju::String(occurrence) + "  |  " + track->getName(),
                       ju::dontSendNotification);
         const bool enabled = plugin->isEnabled();
-        bypass.setText(enabled ? "ACTIVE" : "BYPASSED", ju::dontSendNotification);
-        bypass.setColour(ju::Label::textColourId, enabled ? ju::Colours::limegreen : ju::Colours::yellow);
+        bypass.setButtonText(enabled ? "ACTIVE" : "BYPASSED");
+        bypass.setToggleState(!enabled, ju::dontSendNotification);
+        bypass.setEnabled(!edit()->getTransport().isRecording());
         for (const auto& control : controls)
             if (auto parameter = plugin->getAutomatableParameterByID(control->definition.id))
                 control->update(*parameter);
@@ -329,7 +363,8 @@ private:
     std::function<te::Edit*()> edit;
     std::optional<Target> target;
     std::vector<std::unique_ptr<Control>> controls;
-    ju::Label title, bypass, mixGuide { {}, "Mute Wet for full dry   |   Mute Dry for full wet" };
+    ju::TextButton bypass;
+    ju::Label title, mixGuide { {}, "Mute Wet for full dry   |   Mute Dry for full wet" };
     ju::TextButton closeButton { "CLOSE" };
     bool highlighted = false;
 };

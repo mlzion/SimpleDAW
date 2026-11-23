@@ -2,9 +2,9 @@
 
 ## v0.23.1 Inspector implementation in progress
 
-Draft PR #20 contains the Track and Clip Inspectors, File MIDI import, loop controls and source-linked Clone/Unclone. Tracktion's MIDI playback hook applies velocity and transpose while retaining source notes. The pinned Tracktion graph gates audio REPLACE overlaps before summing. The timeline uses the same precedence and draws a combined thumbnail envelope for overlapping MIX clips.
+Draft PR #20 contains the Track and Clip Inspectors, File MIDI import, loop controls and source-linked Clone/Unclone. Tracktion's MIDI playback hook applies velocity and transpose while retaining source notes. Overlapping audio sums before track processing. The timeline draws a combined thumbnail envelope for overlaps.
 
-The Track Inspector provides input assignment and separate arm, automatic monitoring, independent metering, native three-band EQ, Volume/Pan automation selection, per-track MIN/MAX, and effect rows addressed by stable Tracktion IDs. PR #20 integrates the E1 branch from PR #21. Effect-row double-click opens the slide-up editor with the owning track and plugin `EditItemID` values. Inspector owns chain actions. E1 owns the native parameter controls and keeps its binding through selection changes and reorder. Windows x64 /MD live acceptance remains pending. Bus 1 and Bus 2 are deferred. [Requirements and acceptance checklist](docs/testing/v0.23.1-live-test.md) · [Draft PR #20](https://github.com/mlzion/SimpleDAW/pull/20) · [Effects Editor PR #21](https://github.com/mlzion/SimpleDAW/pull/21)
+The Track Inspector provides input assignment and separate arm, automatic monitoring, independent metering, native three-band EQ, Volume/Pan automation selection, per-track MIN/MAX, and effect rows addressed by stable Tracktion IDs. PR #20 integrates the E1 branch from PR #21. Effect-row double-click opens the slide-up editor with the owning track and plugin `EditItemID` values. Inspector owns chain actions. E1 owns the native parameter controls and keeps its binding through reorder. Selecting another track, a clip or an unrelated Inspector control closes the editor. Windows x64 /MD live acceptance remains pending. Bus 1 and Bus 2 are deferred. [Requirements and acceptance checklist](docs/testing/v0.23.1-live-test.md) · [Draft PR #20](https://github.com/mlzion/SimpleDAW/pull/20) · [Effects Editor PR #21](https://github.com/mlzion/SimpleDAW/pull/21)
 
 The integrated Debian 13 x64 Release build with Clang 19 and Xvfb passed all 12 CTests, including Effects Foundation E0, Effects Editor E1 and the Inspector row handoff. The handoff regression edits the selected Reverb after reorder and verifies instance isolation, bypass, save/reopen and safe deletion. The full suite also covers rendered audio overlap, MIDI import and playback modifiers, loops, clones, UAT and recording. Windows CI awaits separate authorization.
 
@@ -15,6 +15,12 @@ The first integrated Windows x64 /MD build passed all 12 CTests and isolated sta
 The Inspector pulses only the active target background while focused. The persistent workspace and launcher buttons were removed. The full-height timeline hosts E1 as an overlay opened by effect-row double-click.
 
 Debian 13 x64 Release with Clang 19 and Xvfb passed all 13 CTests. The new Setup test drives hosted audio selection in the same dialog, verifies a rescan preserves active and saved configuration, and checks the MIDI list against the enumerated inventory. The Linux runner had no physical MIDI input. The layout and focus regressions cover legacy workspace preferences, the single-target pulse and E1 on the full-height timeline. Windows CI for the corrections awaits separate authorization.
+
+## Live acceptance correction package
+
+PR #20 adds live Inspector volume, pan, track EQ, clip gain and MIDI modifiers with one Undo transaction per slider gesture. Track EQ and inserts expose live bypass. Audio and MIDI Clip Mute follows clone-linked editing. SPLIT and ruler-range TRIM are available for independent clips. Ordinary clips inherit their current track color, and legacy REPLACE flags are ignored. The Inspector has explicit track and clip headings and audio slider labels. E1 supports live bypass on both native effects, closes on unrelated selection and switches instances on double-click. ADD EFFECT offers Reverb and Compressor.
+
+Debian 13 x64 Release with Clang 19 and Xvfb passed all 13 CTests. Updated tests cover audible hosted gain, pan, EQ and bypass, a complete fader gesture undo, Audio and MIDI SPLIT/TRIM, clone color and mute, mixed overlap with legacy flags, and editor focus and chain handling. MIDI modifiers were verified against the generated playback sequence. Hardware MIDI timing, Windows playback and the R01–R12 checks remain pending. Windows CI was not dispatched for this package. [Windows R01–R12 acceptance checklist](docs/testing/v0.23.1-live-test.md#r01r12-correction-retest)
 
 ## Windows build policy
 

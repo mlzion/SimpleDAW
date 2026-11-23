@@ -7,7 +7,6 @@
 #include <numeric>
 #include <set>
 #include <thread>
-#include "AudioOverlap.h"
 
 namespace te = tracktion;
 namespace ju = juce;
@@ -33,28 +32,11 @@ public:
 const ju::Identifier midiVelocityProperty("simpleDawMidiVelocity");
 const ju::Identifier midiTransposeProperty("simpleDawMidiTranspose");
 
-void markAudioPlacement(te::AudioClipBase& clip)
-{
-    auto order = simpleDaw::overlapPlacement(clip);
-    for (auto* track : te::getAudioTracks(clip.edit))
-        for (auto* item : track->getClips())
-            if (dynamic_cast<te::AudioClipBase*>(item))
-                order = std::max(order, simpleDaw::overlapPlacement(*item));
-    clip.state.setProperty(simpleDaw::overlapPlacementProperty, order + 1, &clip.edit.getUndoManager());
-}
-
 class SimpleDawEngineBehaviour final : public te::EngineBehaviour
 {
 public:
     explicit SimpleDawEngineBehaviour(bool testingIn) : testing(testingIn) {}
     bool autoInitialiseDeviceManager() override { return !testing; }
-
-    void newClipAdded(te::Clip& clip, bool fromRecording) override
-    {
-        if (fromRecording)
-            if (auto* audio = dynamic_cast<te::AudioClipBase*>(&clip))
-                markAudioPlacement(*audio);
-    }
 
     ju::MidiMessageSequence createPlaybackMidiSequence(const te::MidiList& list, te::MidiClip& clip,
         te::MidiList::TimeBase timeBase, bool generateMPE) override
@@ -114,7 +96,6 @@ bool insertAudio(te::AudioTrack& track, const ju::File& file, te::TimePosition s
         {{ start, start + te::TimeDuration::fromSeconds(audio.getLength()) }, {}}, false);
     if (!clip)
         return false;
-    markAudioPlacement(*clip);
     return true;
 }
 

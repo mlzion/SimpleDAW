@@ -1,10 +1,10 @@
 # Effects Editor E1
 
-E1 opens a fixed, slide-up panel over the full-height timeline. The persistent editor workspace and launcher buttons have been removed. The Track List, Inspector and transport stay accessible. The header names the track and effect, numbers instances of the same effect type in processing order, and displays the instance's current bypass state. The editor starts closed with every project.
+E1 opens a fixed, slide-up panel over the full-height timeline. The persistent editor workspace and launcher buttons have been removed. The Track List, Inspector and transport stay accessible. The header names the track and effect, numbers instances of the same effect type in processing order, and provides an ACTIVE/BYPASSED button for the instance. The editor starts closed with every project.
 
 ## Inspector integration
 
-For an effect-row double-click, call `MainGui::openEffectsEditor(trackID, pluginID)` with the Tracktion track and plugin `EditItemID` from the active Edit. The function returns whether a supported editor was opened. Single-click uses normal Inspector selection. Existing selection and chain operations stay with Inspector. The editor resolves the pair within the active Edit for each update and write. Reorder may change the header number. Deletion or project replacement closes the editor. Bypass continues to use Tracktion's enable state through Inspector.
+For an effect-row double-click, call `MainGui::openEffectsEditor(trackID, pluginID)` with the Tracktion track and plugin `EditItemID` from the active Edit. The function returns whether a supported editor was opened. Single-click uses normal Inspector selection. Existing selection and chain operations stay with Inspector. The editor resolves the pair within the active Edit for each update and write. Reorder may change the header number. Deletion, project replacement, selection of another track or a clip, and unrelated Inspector controls close the editor. Double-clicking another insert switches the editor. The editor and Inspector both change the same Tracktion enable state, including during playback.
 
 The editor takes the existing Editing Windows action context when opened or clicked. The current Universal Actions have no applicable effect-parameter operation, so they are disabled while that context has focus. The existing Undo and Redo controls remain available under their usual transport rules. Undo and Redo refresh the live native parameter from the restored Tracktion state even when the editor is closed.
 
@@ -16,7 +16,7 @@ The editor takes the existing Editing Windows action context when opened or clic
 
 ## Automated checks
 
-Run `ctest --test-dir <build> -C Release --output-on-failure` with a display server on Linux. The `effects_editor` test calls the Inspector-facing entry point directly and drives the JUCE controls. It checks both native effects, bound and unbound IDs, independent instances, reorder, bypass, project round-trip, deletion, undo/redo, editor lifecycle, minimum window layout, and hosted audio playback. The `inspector_effects` test drives the Inspector list model through the real editor handoff and exercises parameter isolation, Inspector bypass and removal, and save/reopen. The `effects_foundation` test continues to check native DSP and project graph rendering.
+Run `ctest --test-dir <build> -C Release --output-on-failure` with a display server on Linux. The `effects_editor` test calls the Inspector-facing entry point directly and drives the JUCE controls. It checks both native effects, independent instances, reorder, live bypass, project round-trip, deletion, Undo/Redo, focus changes, STOP, minimum window layout and hosted playback. Hosted audio verifies live Inspector volume, pan, EQ, clip gain and clip mute. The `inspector_effects` test drives the Inspector list model through the real editor handoff and exercises parameter isolation, Inspector bypass and removal, and save/reopen. The `effects_foundation` test continues to check native DSP and project graph rendering.
 
 ## Integrated Windows x64 /MD acceptance
 

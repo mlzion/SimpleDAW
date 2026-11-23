@@ -342,18 +342,25 @@ public:
         inspector.addAndMakeVisible(inspectorViewport);
         inspectorViewport.setViewedComponent(&inspectorControls, false);
         inspectorViewport.setScrollBarsShown(true, false);
+        inspectorViewport.setScrollBarThickness(22);
         inspectorControls.addMouseListener(this, true);
         inspectorControls.addAndMakeVisible(inspectorMeter);
         for (auto* control : inspectorButtons)
             inspectorControls.addAndMakeVisible(control);
         button(clipInspectorButtons, "DUPLICATE", [this] { copyInspectedClip(false); });
         button(clipInspectorButtons, "CLONE", [this] { toggleInspectorClone(); });
+        button(clipInspectorButtons, "UNCLONE", [this] { toggleInspectorClone(true); });
         for (auto* control : clipInspectorButtons)
             inspectorControls.addChildComponent(control);
         inspectorControls.addChildComponent(inspectorName);
         button(colourInspectorButtons, "COLOR", [this] { chooseInspectorColour(); });
         inspectorControls.addChildComponent(colourInspectorButtons.front());
         inspectorName.setEditable(true);
+        inspectorName.setTooltip("Click to edit the name");
+        inspectorName.setColour(ju::Label::backgroundColourId, ju::Colour(0xff171717));
+        inspectorName.setColour(ju::Label::outlineColourId, ju::Colour(0xff858585));
+        for (auto* label : { &clipGainLabel, &fadeInLabel, &fadeOutLabel })
+            inspectorControls.addChildComponent(*label);
         inspectorName.onEditorShow = [this] {
             actionSelection.requestedArea = EditingArea::inspector;
             updateControls();
@@ -441,11 +448,14 @@ public:
         inspectorGain.setDoubleClickReturnValue(true, 0);
         for (auto* fade : { &inspectorFadeIn, &inspectorFadeOut })
             fade->setTextValueSuffix(" s");
+        for (auto* slider : { &inspectorVolume, &inspectorPan, &inspectorGain,
+                             &inspectorVelocity, &inspectorTranspose })
+            configureLiveSlider(*slider);
         inspectorVolume.onValueChange = [this] {
             if (auto* track = actionTrack(); track && inspectorContext == EditingArea::tracks)
                 if (auto* plugin = track->getVolumePlugin())
                 {
-                    edit->getUndoManager().beginNewTransaction("Track volume");
+                    beginParameterChange(inspectorVolume, "Track volume");
                     plugin->setVolumeDb(static_cast<float>(inspectorVolume.getValue()));
                 }
         };
@@ -453,14 +463,14 @@ public:
             if (auto* track = actionTrack(); track && inspectorContext == EditingArea::tracks)
                 if (auto* plugin = track->getVolumePlugin())
                 {
-                    edit->getUndoManager().beginNewTransaction("Track pan");
+                    beginParameterChange(inspectorPan, "Track pan");
                     plugin->setPan(static_cast<float>(inspectorPan.getValue() / 100));
                 }
         };
         inspectorGain.onValueChange = [this] {
             if (auto* clip = inspectedAudioClip())
             {
-                edit->getUndoManager().beginNewTransaction("Clip gain");
+                beginParameterChange(inspectorGain, "Clip gain");
                 for (auto* member : cloneMembers(*clip))
                     if (auto* audio = dynamic_cast<te::AudioClipBase*>(member))
                         audio->setGainDB(static_cast<float>(inspectorGain.getValue()));
@@ -489,22 +499,20 @@ public:
         inspectorTranspose.onValueChange = [this] {
             setMidiInspectorValue(midiTransposeProperty, static_cast<int>(inspectorTranspose.getValue()), 0, "Clip transpose");
         };
+        clipMute.onClick = [this] {
+            if (auto* clip = inspectorContext == EditingArea::timeline ? selectedClip() : nullptr)
+            {
+                edit->getUndoManager().beginNewTransaction("Clip mute");
+                const bool mute = !clip->isMuted();
+                for (auto* member : cloneMembers(*clip))
+                    member->setMuted(mute);
+                edit->restartPlayback();
+                updateControls();
+            }
+        };
+        inspectorControls.addChildComponent(clipMute);
         inspectorFadeIn.onValueChange = [this] { setInspectorFade(true); };
         inspectorFadeOut.onValueChange = [this] { setInspectorFade(false); };
-        button(overlapButtons, "MIX", [this] {
-            auto* clip = inspectedAudioClip();
-            if (!editingStopped() || !clip)
-                return;
-            auto& undo = edit->getUndoManager();
-            undo.beginNewTransaction("Audio overlap mode");
-            const auto replace = !simpleDaw::replacesAudio(*clip);
-            for (auto* member : cloneMembers(*clip))
-                member->state.setProperty(simpleDaw::replaceOverlapProperty, replace, &undo);
-            edit->markAsChanged();
-            edit->restartPlayback();
-            updateControls();
-        });
-        inspectorControls.addChildComponent(overlapButtons.front());
         button(loopInspectorButtons, "LOOP", [this] { changeInspectorLoop(true); });
         inspectorControls.addChildComponent(*loopInspectorButtons.front());
         inspectorControls.addChildComponent(inspectorLoopCount);
@@ -526,7 +534,7 @@ public:
             slider.setTextBoxStyle(ju::Slider::TextBoxRight, false, 76, 26);
             slider.setTextValueSuffix(" dB");
             slider.setDoubleClickReturnValue(true, 0);
-            slider.setChangeNotificationOnlyOnRelease(true);
+            configureLiveSlider(slider);
             slider.onValueChange = [this, index] { setInspectorEQ(index); };
             inspectorControls.addChildComponent(slider);
         }
@@ -562,7 +570,23 @@ public:
         inspectorEffects.setModel(&inspectorEffectsModel);
         inspectorEffects.setRowHeight(32);
         inspectorControls.addChildComponent(inspectorEffects);
-        button(effectButtons, "ADD REVERB", [this] { editInspectorEffect(0); });
+        eqBypass.onClick = [this] {
+            if (auto* track = inspectorContext == EditingArea::tracks ? actionTrack() : nullptr)
+                if (auto* eq = trackEQ(track))
+                    toggleEffectBypass(*eq);
+            updateControls();
+        };
+        inspectorControls.addChildComponent(eqBypass);
+        button(effectButtons, "ADD EFFECT", [this] {
+            const auto track = actionSelection.track;
+            auto* project = edit.get();
+            ju::PopupMenu menu;
+            menu.addItem(1, "Reverb");
+            menu.addItem(2, "Compressor");
+            const auto choice = menu.show();
+            if (choice && edit.get() == project && actionSelection.track == track)
+                editInspectorEffect(0, choice == 2);
+        });
         button(effectButtons, "DELETE", [this] { editInspectorEffect(1); });
         button(effectButtons, "ENABLE / DISABLE", [this] { editInspectorEffect(2); });
         button(effectButtons, "UP", [this] { editInspectorEffect(3); });
@@ -685,8 +709,9 @@ public:
         {
             inspector.setBounds(area.removeFromRight(ju::jmin(panels.inspectorWidth, maxInspector())));
             inspectorDivider.setBounds(area.removeFromRight(8));
-            inspectorViewport.setBounds(inspector.getLocalBounds().withTrimmedTop(105));
-            inspectorControls.setSize(std::max(0, inspectorViewport.getWidth() - inspectorViewport.getScrollBarThickness()), 810);
+            inspectorViewport.setBounds(inspector.getLocalBounds().withTrimmedTop(inspectorContext == EditingArea::tracks ? 66 : 110));
+            inspectorControls.setSize(std::max(0, inspectorViewport.getWidth() - inspectorViewport.getScrollBarThickness()),
+                                      inspectorContext == EditingArea::tracks ? 830 : 310);
             auto controls = inspectorControls.getLocalBounds().reduced(8);
             auto identity = controls.removeFromTop(32);
             colourInspectorButtons.front()->setBounds(identity.removeFromRight(62).reduced(2));
@@ -702,6 +727,7 @@ public:
             inspectorPan.setBounds(trackControls.removeFromTop(36));
             for (auto& eq : inspectorEQ)
                 eq.setBounds(trackControls.removeFromTop(32));
+            eqBypass.setBounds(trackControls.removeFromTop(32).reduced(2));
             inspectorEffects.setBounds(trackControls.removeFromTop(150).reduced(2));
             layoutRow({ effectButtons[0], effectButtons[1], effectButtons[2] }, trackControls.removeFromTop(36));
             layoutRow({ effectButtons[3], effectButtons[4] }, trackControls.removeFromTop(36));
@@ -710,19 +736,25 @@ public:
             heightInspectorButtons.front()->setBounds(trackControls.removeFromTop(36).reduced(2));
             inspectorAutomation.setBounds(trackControls.removeFromTop(36).reduced(2));
             inspectorOutput.setBounds(trackControls.removeFromTop(36).reduced(2));
+            clipMute.setBounds(controls.removeFromTop(32).reduced(2));
             auto midiControls = controls;
             inspectorVelocity.setBounds(midiControls.removeFromTop(36));
             inspectorTranspose.setBounds(midiControls.removeFromTop(36));
-            inspectorGain.setBounds(controls.removeFromTop(36));
-            inspectorFadeIn.setBounds(controls.removeFromTop(36));
-            inspectorFadeOut.setBounds(controls.removeFromTop(36));
-            overlapButtons.front()->setBounds(controls.removeFromTop(36).reduced(2));
+            auto layoutAudioSlider = [&controls](ju::Label& label, ju::Slider& slider) {
+                auto row = controls.removeFromTop(36);
+                label.setBounds(row.removeFromLeft(65));
+                slider.setBounds(row);
+            };
+            layoutAudioSlider(clipGainLabel, inspectorGain);
+            layoutAudioSlider(fadeInLabel, inspectorFadeIn);
+            layoutAudioSlider(fadeOutLabel, inspectorFadeOut);
             auto loopRow = controls.removeFromTop(36);
             loopInspectorButtons.front()->setBounds(loopRow.removeFromLeft(loopRow.getWidth() / 2).reduced(2));
             inspectorLoopCount.setBounds(loopRow.reduced(2));
             auto copies = controls.removeFromTop(36);
             clipInspectorButtons[0]->setBounds(copies.removeFromLeft(copies.getWidth() / 2).reduced(2));
             clipInspectorButtons[1]->setBounds(copies.reduced(2));
+            clipInspectorButtons[2]->setBounds(controls.removeFromTop(34).reduced(2));
         }
 
         arrangement.setBounds(area);
@@ -959,7 +991,7 @@ public:
 
         const auto clipCount = first->getClips().size();
         for (const auto& slot : gui.actionButtons)
-            if (slot.action == Action::split || slot.action == Action::trim || slot.action == Action::reserved)
+            if (slot.action == Action::reserved)
             {
                 if (!check(!slot.button->isEnabled() && !gui.canDispatch(slot.action), "deferred actions stay disabled"))
                     return false;
@@ -1300,6 +1332,53 @@ public:
         return reopened && verify(*reopened);
     }
 
+    static bool testSplitAndTrim(MainGui& gui, te::Clip& clip)
+    {
+        using Action = UniversalAction;
+        const auto original = clip.getPosition();
+        const auto length = original.getLength();
+        const auto start = original.getStart();
+        const auto middle = start + length / 2;
+        auto* track = static_cast<te::AudioTrack*>(clip.getTrack());
+        const auto count = track->getClips().size();
+        gui.snap.setSelectedId(1, ju::dontSendNotification);
+        gui.actionSelection.clips = { clip.itemID };
+        gui.actionSelection.requestedArea = EditingArea::timeline;
+        gui.editCursor = start;
+        gui.timeSelection.reset();
+        gui.updateControls();
+        if (gui.canDispatch(Action::split) || gui.canDispatch(Action::trim))
+            return false;
+        gui.editCursor = middle;
+        gui.timeSelection = te::TimeRange(start + length / 4, middle);
+        if (!gui.canDispatch(Action::split) || !gui.canDispatch(Action::trim))
+            return false;
+        gui.dispatchAction(Action::trim);
+        if (clip.getPosition().time != *gui.timeSelection
+            || std::abs((clip.getPosition().getOffset() - original.getOffset() - length / 4).inSeconds()) > 1e-8)
+            return false;
+        gui.useHistory(false);
+        if (clip.getPosition() != original)
+            return false;
+        gui.useHistory(true);
+        if (clip.getPosition().time != *gui.timeSelection)
+            return false;
+        gui.useHistory(false);
+        gui.dispatchAction(Action::split);
+        if (gui.actionSelection.clips.size() != 2 || track->getClips().size() != count + 1
+            || clip.getPosition().getEnd() != middle
+            || gui.canDispatch(Action::split) || gui.canDispatch(Action::trim))
+            return false;
+        const auto results = gui.selectedClips();
+        for (auto* result : results)
+            if (result->getName() != clip.getName() || result->isMuted() != clip.isMuted()
+                || result->state.getProperty(midiVelocityProperty) != clip.state.getProperty(midiVelocityProperty)
+                || result->state.getProperty(midiTransposeProperty) != clip.state.getProperty(midiTransposeProperty))
+                return false;
+        gui.useHistory(false);
+        return track->getClips().size() == count && clip.getPosition() == original;
+    }
+
     static bool testMidiInspector(te::Engine& engine)
     {
         const auto dir = ju::File::getSpecialLocation(ju::File::tempDirectory)
@@ -1367,7 +1446,13 @@ public:
             return false;
         auto reopened = te::loadEditFromFile(engine, project);
         auto* restored = reopened ? dynamic_cast<te::MidiClip*>(te::findClipForID(*reopened, clip->itemID)) : nullptr;
-        return restored && verify(*restored, 96, 127);
+        if (!restored || !verify(*restored, 96, 127))
+            return false;
+        gui.clipMute.onClick();
+        if (!clip->isMuted() || track->isMuted(false))
+            return false;
+        gui.useHistory(false);
+        return !clip->isMuted() && testSplitAndTrim(gui, *clip);
     }
 
     static bool testInspectorLoop(te::Engine& engine)
@@ -1471,8 +1556,29 @@ public:
         gui.setMidiInspectorValue(midiVelocityProperty, 50, 100, "Velocity");
         if (static_cast<int>(source->state.getProperty(midiVelocityProperty)) != 50)
             return fail(__LINE__);
+        gui.trackAt(sourceRow)->setColour(ju::Colours::blue);
+        gui.trackAt(sourceRow + 1)->setColour(ju::Colours::orange);
+        const auto linkedColour = gui.inspectedClipColour(*source);
+        if (gui.inspectedClipColour(*clone) != linkedColour)
+            return fail(__LINE__);
+        gui.clipMute.onClick();
+        if (!source->isMuted() || !clone->isMuted())
+            return fail(__LINE__);
+        gui.useHistory(false);
+        for (auto* linked : std::array<te::Clip*, 2> { source.get(), clone })
+        {
+            const auto range = linked->getPosition().time;
+            gui.actionSelection.clips = { linked->itemID };
+            gui.actionSelection.requestedArea = EditingArea::timeline;
+            gui.editCursor = range.getStart() + range.getLength() / 2;
+            gui.timeSelection = te::TimeRange(range.getStart(), gui.editCursor);
+            gui.updateControls();
+            if (gui.canDispatch(UniversalAction::split) || gui.canDispatch(UniversalAction::trim))
+                return fail(__LINE__);
+        }
         gui.toggleInspectorClone();
-        if (gui.cloneMembers(*source).size() != 1)
+        if (gui.inspectedClipColour(*clone) != ju::Colours::orange
+            || gui.inspectedClipColour(*source) != ju::Colours::blue || gui.cloneMembers(*source).size() != 1)
             return fail(__LINE__);
         gui.useHistory(false);
         if (gui.cloneMembers(*source).size() != 2)
@@ -1514,26 +1620,29 @@ public:
         auto* track = gui.actionTrack();
         if (!track || !insertBuiltIn<te::FourOscPlugin>(*track, true))
             return false;
-        for (int i = 0; i < 9; ++i)
+        gui.editInspectorEffect(0, true);
+        for (int i = 0; i < 8; ++i)
             gui.editInspectorEffect(0);
         auto effects = audioInserts(track);
         if (effects.size() != 8 || track->pluginList.indexOf(effects.front()) <= 0)
             return false;
-        const auto id = effects.front()->itemID;
-        gui.inspectorEffectID = id;
-        gui.editInspectorEffect(4);
-        effects = audioInserts(track);
-        if (effects.size() != 8 || effects[1]->itemID != id)
+        if (!dynamic_cast<te::CompressorPlugin*>(effects.front()))
             return false;
+        const auto id = effects[1]->itemID;
+        gui.inspectorEffectID = id;
+        gui.editInspectorEffect(3);
+        effects = audioInserts(track);
+        if (effects.size() != 8 || effects[0]->itemID != id)
+            return false;
+        gui.inspectorEffects.selectRow(2);
         gui.inspectorEffects.selectRow(0);
-        gui.inspectorEffects.selectRow(1);
         if (gui.effectsEditor.isOpen() || gui.inspectorEffectID != id)
             return false;
 
         const auto now = ju::Time::getCurrentTime();
         const ju::MouseEvent click(ju::Desktop::getInstance().getMainMouseSource(), {}, {}, 0, 0, 0, 0, 0,
             &gui.inspectorEffects, &gui.inspectorEffects, now, {}, now, 2, false);
-        gui.inspectorEffectsModel.listBoxItemDoubleClicked(1, click);
+        gui.inspectorEffectsModel.listBoxItemDoubleClicked(0, click);
         if (!gui.effectsEditor.isOpen() || gui.activeEditingArea() != EditingArea::window
             || gui.inspectorEffectID != id)
             return false;
@@ -1543,20 +1652,20 @@ public:
         if (roomSize == editor.controls.end())
             return false;
         (*roomSize)->slider.setValue(0.63, ju::sendNotificationSync);
-        auto* edited = dynamic_cast<te::ReverbPlugin*>(effects[1]);
-        auto* neighbour = dynamic_cast<te::ReverbPlugin*>(effects[0]);
+        auto* edited = dynamic_cast<te::ReverbPlugin*>(effects[0]);
+        auto* neighbour = dynamic_cast<te::ReverbPlugin*>(effects[2]);
         if (!edited || !neighbour || std::abs(edited->getRoomSize() - 0.63f) > 0.0001f
             || std::abs(neighbour->getRoomSize() - 0.3f) > 0.0001f)
             return false;
         gui.editInspectorEffect(2);
-        if (effects[1]->isEnabled() || editor.bypass.getText() != "BYPASSED" || !gui.save())
+        if (effects[0]->isEnabled() || editor.bypass.getButtonText() != "BYPASSED" || !gui.save())
             return false;
         auto reopened = te::loadEditFromFile(engine, project);
         const auto restored = reopened ? audioInserts(te::findAudioTrackForID(*reopened, track->itemID))
                                        : std::vector<te::Plugin*>{};
-        if (restored.size() != 8 || restored[1]->itemID != id || restored[1]->isEnabled())
+        if (restored.size() != 8 || !dynamic_cast<te::CompressorPlugin*>(restored[1]) || restored[0]->itemID != id || restored[0]->isEnabled())
             return false;
-        auto* restoredReverb = dynamic_cast<te::ReverbPlugin*>(restored[1]);
+        auto* restoredReverb = dynamic_cast<te::ReverbPlugin*>(restored[0]);
         if (!restoredReverb || std::abs(restoredReverb->getRoomSize() - 0.63f) > 0.0001f)
             return false;
         gui.editInspectorEffect(1);
@@ -1569,7 +1678,22 @@ public:
             || eq->loFreqValue.get() != 100.0f || eq->loGainValue.get() != 8.0f)
             return false;
         gui.useHistory(false);
-        return trackEQ(track) == nullptr;
+        if (trackEQ(track) != nullptr)
+            return false;
+        gui.useHistory(true);
+        auto* restoredEQ = trackEQ(track);
+        if (!restoredEQ || restoredEQ->loGainValue.get() != 8.0f)
+            return false;
+        gui.inspectorEQ[0].setValue(-7.0, ju::sendNotificationSync);
+        gui.useHistory(false);
+        if (restoredEQ->getAutomatableParameterByID(eqGainIDs[0])->getCurrentValue() != 8.0f)
+            return false;
+        gui.eqBypass.onClick();
+        if (restoredEQ->isEnabled() || !gui.save())
+            return false;
+        auto withEQ = te::loadEditFromFile(engine, project);
+        auto* savedEQ = withEQ ? trackEQ(te::findAudioTrackForID(*withEQ, track->itemID)) : nullptr;
+        return savedEQ && !savedEQ->isEnabled() && savedEQ->loGainValue.get() == 8.0f;
     }
 
     static bool testAudioOverlap(te::Engine& engine)
@@ -1596,46 +1720,19 @@ public:
         auto clips = track->getClips();
         if (clips.size() != 2)
             return fail(__LINE__);
-        auto* lower = dynamic_cast<te::AudioClipBase*>(clips[0]);
-        auto* upper = dynamic_cast<te::AudioClipBase*>(clips[1]);
-        if (!lower || !upper || !simpleDaw::suppressedAudioRanges(*lower, clips).empty())
-            return fail(__LINE__);
-        if (simpleDaw::overlapPlacement(*lower) > simpleDaw::overlapPlacement(*upper))
-            std::swap(lower, upper);
-        const auto mixFile = dir.getChildFile("mix.wav");
-        const auto replaceFile = dir.getChildFile("replace.wav");
-        if (!exportWave(*gui.edit, mixFile))
-            return fail(__LINE__);
-        auto& undo = gui.edit->getUndoManager();
-        undo.beginNewTransaction("Replace fixtures");
-        lower->state.setProperty(simpleDaw::replaceOverlapProperty, true, &undo);
-        upper->state.setProperty(simpleDaw::replaceOverlapProperty, true, &undo);
-        if (simpleDaw::suppressedAudioRanges(*lower, clips).size() != 1
-            || !simpleDaw::suppressedAudioRanges(*upper, clips).empty())
-            return fail(__LINE__);
-        gui.useHistory(false);
-        if (simpleDaw::replacesAudio(*upper))
-            return fail(__LINE__);
-        gui.useHistory(true);
-        gui.edit->restartPlayback();
-        const auto initialUpper = upper->getPosition();
-        auto shifted = initialUpper;
-        shifted.time = shifted.time + te::TimeDuration::fromSeconds(0.05);
-        undo.beginNewTransaction("Move Replace fixture");
-        upper->setPosition(shifted);
-        const auto suppression = simpleDaw::suppressedAudioRanges(*lower, clips);
-        if (suppression.size() != 1 || suppression.front().getStart() != shifted.getStart()
-            || suppression.front().getEnd() != lower->getPosition().getEnd()
-            || !simpleDaw::suppressedAudioRanges(*upper, clips).empty())
-            return fail(__LINE__);
-        gui.useHistory(false);
-        const auto restoredUpper = upper->getPosition();
-        if (std::abs((restoredUpper.getStart() - initialUpper.getStart()).inSeconds()) > 1.0e-9
-            || std::abs((restoredUpper.getEnd() - initialUpper.getEnd()).inSeconds()) > 1.0e-9)
-            return fail(__LINE__);
-        if (!exportWave(*gui.edit, replaceFile))
-            return fail(__LINE__);
+        const auto summedFile = dir.getChildFile("summed.wav");
+        const auto singleFile = dir.getChildFile("single.wav");
+        clips[1]->state.setProperty("simpleDawReplaceOverlap", true, nullptr);
+        const auto trackID = track->itemID;
         if (!gui.save())
+            return fail(__LINE__);
+        gui.setProject(te::loadEditFromFile(engine, project), project);
+        auto* restoredTrack = gui.trackForID(trackID);
+        if (!restoredTrack || restoredTrack->getClips().size() != 2 || !exportWave(*gui.edit, summedFile))
+            return fail(__LINE__);
+        restoredTrack->getClips()[1]->setMuted(true);
+        gui.edit->restartPlayback();
+        if (!exportWave(*gui.edit, singleFile))
             return fail(__LINE__);
 
         const auto peak = [](const ju::File& file) {
@@ -1649,17 +1746,11 @@ public:
                 return 0.0f;
             return data.getMagnitude(0, data.getNumSamples());
         };
-        const auto mix = peak(mixFile);
-        const auto replace = peak(replaceFile);
-        auto reopened = te::loadEditFromFile(engine, project);
-        auto* restored = reopened ? te::findClipForID(*reopened, upper->itemID) : nullptr;
-        if (!(mix > 0.05f && replace > 0.02f && std::abs(mix / replace - 2.0f) < 0.12f
-            && restored && simpleDaw::replacesAudio(*restored)))
-        {
-            std::fprintf(stderr, "Overlap render peaks: MIX %.6f, REPLACE %.6f\n", mix, replace);
+        const auto summed = peak(summedFile);
+        const auto single = peak(singleFile);
+        if (single <= 0.02f || std::abs(summed / single - 2.0f) >= 0.12f)
             return fail(__LINE__);
-        }
-        return true;
+        return testSplitAndTrim(gui, *restoredTrack->getClips().getFirst());
     }
 
     static bool testClipPlacementAndMinimum(MainGui& gui, te::Engine& engine, const ju::File& project,
@@ -2618,7 +2709,7 @@ private:
         {
             auto state = clipClipboard->clips[i].state.createCopy();
             clearCloneIdentity(state, nullptr);
-            state.removeProperty(simpleDaw::overlapPlacementProperty, nullptr);
+            state.removeProperty(clipColourProperty, nullptr);
             te::EditItemID::remapIDs(state, nullptr, *edit, &remappedIDs);
             const auto& position = plan[i].position;
             state.setProperty(te::IDs::start, position.getStart().inSeconds(), nullptr);
@@ -2626,8 +2717,6 @@ private:
             state.setProperty(te::IDs::offset, position.getOffset().inSeconds(), nullptr);
             if (auto* clip = plan[i].track->insertClipWithState(state))
             {
-                if (auto* audio = dynamic_cast<te::AudioClipBase*>(clip))
-                    markAudioPlacement(*audio);
                 pasted.insert(clip->itemID);
             }
             else
@@ -2757,15 +2846,40 @@ private:
         updateControls();
     }
 
+    void configureLiveSlider(ju::Slider& slider)
+    {
+        slider.setChangeNotificationOnlyOnRelease(false);
+        slider.onDragStart = [this, &slider] {
+            if (edit)
+            {
+                parameterGesture = &slider;
+                edit->getUndoManager().beginNewTransaction(slider.getName());
+            }
+        };
+        slider.onDragEnd = [this, &slider] {
+            if (edit && parameterGesture == &slider)
+            {
+                parameterGesture = nullptr;
+                edit->getUndoManager().beginNewTransaction();
+            }
+        };
+    }
+
+    void beginParameterChange(const ju::Slider& slider, const char* name)
+    {
+        if (parameterGesture != &slider)
+            edit->getUndoManager().beginNewTransaction(name);
+    }
+
     void setMidiInspectorValue(const ju::Identifier& property, int value, int defaultValue, const char* transaction)
     {
-        if (!editingStopped() || inspectorContext != EditingArea::timeline)
+        if (!edit || edit->getTransport().isRecording() || inspectorContext != EditingArea::timeline)
             return;
         auto* clip = dynamic_cast<te::MidiClip*>(selectedClip());
         if (!clip || static_cast<int>(clip->state.getProperty(property, defaultValue)) == value)
             return;
         auto& undo = edit->getUndoManager();
-        undo.beginNewTransaction(transaction);
+        beginParameterChange(property == midiVelocityProperty ? inspectorVelocity : inspectorTranspose, transaction);
         for (auto* member : cloneMembers(*clip))
             member->state.setProperty(property, value, &undo);
         edit->markAsChanged();
@@ -2846,8 +2960,9 @@ private:
 
     juce::Colour inspectedClipColour(te::Clip& clip) const
     {
-        auto* parent = cloneMembers(clip).front();
-        if (parent->state.hasProperty(clipColourProperty))
+        const auto members = cloneMembers(clip);
+        auto* parent = members.front();
+        if (members.size() > 1 && parent->state.hasProperty(clipColourProperty))
             return juce::Colour::fromString(parent->state[clipColourProperty].toString());
         if (auto* track = dynamic_cast<te::AudioTrack*>(parent->getTrack()))
             return trackColour(*track);
@@ -2906,7 +3021,7 @@ private:
         arrangement.repaint();
     }
 
-    void toggleInspectorClone()
+    void toggleInspectorClone(bool uncloneParent = false)
     {
         if (!editingStopped() || inspectorContext != EditingArea::timeline)
             return;
@@ -2914,13 +3029,18 @@ private:
         if (!clip)
             return;
         const auto members = cloneMembers(*clip);
-        if (members.size() > 1 && members.front() != clip)
+        if (members.size() > 1 && (uncloneParent || members.front() != clip))
         {
             auto& undo = edit->getUndoManager();
             undo.beginNewTransaction("Unclone clip");
-            const auto colour = inspectedClipColour(*clip);
-            clip->state.setProperty(clipColourProperty, colour.toString(), &undo);
+            clip->state.removeProperty(clipColourProperty, &undo);
             clearCloneIdentity(clip->state, &undo);
+            if (members.size() == 2)
+            {
+                auto* remaining = members.front() == clip ? members.back() : members.front();
+                clearCloneIdentity(remaining->state, &undo);
+                remaining->state.removeProperty(clipColourProperty, &undo);
+            }
             edit->markAsChanged();
             updateControls();
         }
@@ -2962,22 +3082,21 @@ private:
         te::EditItemID::remapIDs(state, nullptr, *edit);
         state.removeProperty(te::IDs::linkID, nullptr);
         clearCloneIdentity(state, nullptr);
-        state.removeProperty(simpleDaw::overlapPlacementProperty, nullptr);
+        state.removeProperty(clipColourProperty, nullptr);
         state.setProperty(te::IDs::start, editCursor.inSeconds(), nullptr);
         state.setProperty(te::IDs::length, length.inSeconds(), nullptr);
         state.setProperty(te::IDs::offset, offset.inSeconds(), nullptr);
-        state.setProperty(clipColourProperty, inspectedClipColour(*source).toString(), nullptr);
+        if (linked)
+            state.setProperty(clipColourProperty, inspectedClipColour(*source).toString(), nullptr);
         auto& undo = edit->getUndoManager();
         undo.beginNewTransaction(linked ? "Clone clip" : "Duplicate clip");
         if (auto* duplicateClip = track->insertClipWithState(state))
         {
-            if (auto* audio = dynamic_cast<te::AudioClipBase*>(duplicateClip))
-                markAudioPlacement(*audio);
             if (linked)
             {
                 auto family = static_cast<int>(source->state.getProperty(cloneFamilyProperty, 0));
                 int order = 1;
-                if (family == 0)
+                if (cloneMembers(*source).size() == 1)
                 {
                     for (auto* row : te::getAudioTracks(*edit))
                         for (auto* item : row->getClips())
@@ -3099,9 +3218,6 @@ private:
         for (const auto& change : changes)
         {
             const auto previous = change.clip->getPosition();
-            if (auto* audio = dynamic_cast<te::AudioClipBase*>(change.clip);
-                audio && (change.destination || previous.getStart() != change.position.getStart()))
-                markAudioPlacement(*audio);
             if (change.destination && (!change.clip->moveTo(*change.destination) || change.clip->getTrack() != change.destination))
             {
                 history.undoCurrentTransactionOnly();
@@ -3650,7 +3766,9 @@ private:
             return false;
         if (action == Action::paste)
             return !pastePlan().empty();
-        if (action == Action::split || action == Action::trim || action == Action::reserved)
+        if (action == Action::split || action == Action::trim)
+            return modifyRange(action).has_value();
+        if (action == Action::reserved)
             return false;
         const auto clips = selectedClips();
         if (action == Action::remove)
@@ -3716,6 +3834,31 @@ private:
         return reason;
     }
 
+    std::optional<te::TimeRange> modifyRange(UniversalAction action) const
+    {
+        auto* clip = selectedClip();
+        auto* track = clip ? dynamic_cast<te::AudioTrack*>(clip->getTrack()) : nullptr;
+        if (!clip || !ordinaryClip(*clip) || cloneMembers(*clip).size() > 1
+            || !destinationAvailable(track, action == UniversalAction::split ? 1 : 0))
+            return {};
+        const auto original = clip->getPosition().time;
+        if (action == UniversalAction::split)
+        {
+            const auto cursor = te::TimePosition::fromSeconds(snapSeconds(editCursor.inSeconds()));
+            const auto margin = te::TimeDuration::fromSeconds(0.001);
+            if (cursor > original.getStart() + margin && cursor < original.getEnd() - margin)
+                return te::TimeRange(original.getStart(), cursor);
+        }
+        else if (timeSelection)
+        {
+            const auto start = std::max(original.getStart(), timeSelection->getStart());
+            const auto end = std::min(original.getEnd(), timeSelection->getEnd());
+            if (start < end)
+                return te::TimeRange(start, end);
+        }
+        return {};
+    }
+
     void dispatchAction(UniversalAction action)
     {
         using Action = UniversalAction;
@@ -3742,6 +3885,33 @@ private:
                 pasteTrack(*actionTrack());
             else
                 pasteClips(pastePlan());
+        }
+        else if (action == Action::split || action == Action::trim)
+        {
+            auto* clip = selectedClip();
+            const auto range = *modifyRange(action);
+            if (action == Action::trim && range == clip->getPosition().time)
+                return;
+            history.beginNewTransaction(action == Action::split ? "Split clip" : "Trim clip");
+            if (action == Action::split)
+            {
+                if (auto* right = static_cast<te::AudioTrack*>(clip->getTrack())->splitClip(*clip, range.getEnd()))
+                    actionSelection.clips = { clip->itemID, right->itemID };
+                else
+                    history.undoCurrentTransactionOnly();
+            }
+            else
+            {
+                const auto old = clip->getPosition();
+                clip->setPosition({ range, old.getOffset() + (range.getStart() - old.getStart()) });
+                if (auto* audio = dynamic_cast<te::AudioClipBase*>(clip); audio && !audio->isLooping())
+                {
+                    audio->setFadeIn(std::min(audio->getFadeIn(), range.getLength()));
+                    audio->setFadeOut(std::min(audio->getFadeOut(), range.getLength() - audio->getFadeIn()));
+                }
+            }
+            history.beginNewTransaction();
+            edit->restartPlayback();
         }
         else if (tracks)
         {
@@ -3813,10 +3983,9 @@ private:
     void setInspectorEQ(size_t band)
     {
         auto* track = inspectorContext == EditingArea::tracks ? actionTrack() : nullptr;
-        if (!track || !editingStopped())
+        if (!track || edit->getTransport().isRecording())
             return;
-        auto& undo = edit->getUndoManager();
-        undo.beginNewTransaction("Track EQ");
+        beginParameterChange(inspectorEQ[band], "Track EQ");
         auto* eq = trackEQ(track);
         if (!eq)
         {
@@ -3826,22 +3995,15 @@ private:
             if (!eq)
                 return;
             eq->state.setProperty(inspectorEQProperty, true, nullptr);
-            eq->loFreqValue = 100.0f;
-            eq->midFreqValue1 = 1000.0f;
-            eq->hiFreqValue = 10000.0f;
-            eq->midGainValue2 = 0.0f;
+            eq->getAutomatableParameterByID("Low-pass freq")->setParameter(100.0f, ju::sendNotification);
+            eq->getAutomatableParameterByID("Mid freq 1")->setParameter(1000.0f, ju::sendNotification);
+            eq->getAutomatableParameterByID("High-pass freq")->setParameter(10000.0f, ju::sendNotification);
             const auto fader = track->pluginList.indexOf(track->getVolumePlugin());
             track->pluginList.insertPlugin(plugin, fader >= 0 ? fader : track->pluginList.size(), nullptr);
         }
-        const auto gain = static_cast<float>(inspectorEQ[band].getValue());
-        if (band == 0)
-            eq->loGainValue = gain;
-        else if (band == 1)
-            eq->midGainValue1 = gain;
-        else
-            eq->hiGainValue = gain;
+        if (auto parameter = eq->getAutomatableParameterByID(eqGainIDs[band]))
+            parameter->setParameter(static_cast<float>(inspectorEQ[band].getValue()), ju::sendNotification);
         edit->markAsChanged();
-        edit->restartPlayback();
         updateControls();
     }
 
@@ -3865,9 +4027,10 @@ private:
         return result;
     }
 
-    void editInspectorEffect(int action)
+    void editInspectorEffect(int action, bool compressor = false)
     {
-        if (!editingStopped() || inspectorContext != EditingArea::tracks)
+        if (!edit || edit->getTransport().isRecording() || (action != 2 && !editingStopped())
+            || inspectorContext != EditingArea::tracks)
             return;
         auto* track = actionTrack();
         if (!track)
@@ -3878,9 +4041,12 @@ private:
         {
             if (effects.size() >= 8)
                 return report("The track has eight or more audio inserts");
-            undo.beginNewTransaction("Add Reverb");
-            if (!insertBuiltIn<te::ReverbPlugin>(*track, false, audioInsertIndex(*track)))
-                return report("Could not insert Reverb");
+            undo.beginNewTransaction(compressor ? "Add Compressor" : "Add Reverb");
+            const auto index = audioInsertIndex(*track);
+            const auto added = compressor ? insertBuiltIn<te::CompressorPlugin>(*track, false, index)
+                                          : insertBuiltIn<te::ReverbPlugin>(*track, false, index);
+            if (!added)
+                return report("Could not insert effect");
         }
         else
         {
@@ -3898,8 +4064,9 @@ private:
             }
             else if (action == 2)
             {
-                undo.beginNewTransaction("Enable or disable effect");
-                plugin->setEnabled(!plugin->isEnabled());
+                toggleEffectBypass(*plugin);
+                updateControls();
+                return;
             }
             else
             {
@@ -3966,6 +4133,7 @@ private:
         slideEffectsOut({});
         meters.clear();
         arrangement.waves.clear();
+        parameterGesture = nullptr;
         edit = std::move(next);
         edit->playInStopEnabled = true;
         ju::StringArray mixedTracks;
@@ -4066,6 +4234,8 @@ private:
     {
         selection = index;
         auto* track = trackAt(index);
+        if (effectsEditor.target && track && effectsEditor.target->track != track->itemID)
+            closeEffectsEditor();
         actionSelection.track = track ? track->itemID : te::EditItemID{};
         actionSelection.requestedArea = EditingArea::tracks;
         updateControls();
@@ -4673,15 +4843,9 @@ private:
             ju::AudioThumbnail* thumbnail;
         };
         std::vector<Source> mixed;
-        std::vector<te::TimeRange> replaced;
         for (auto* item : track.getClips())
             if (auto* audio = dynamic_cast<te::AudioClipBase*>(item); audio && !audio->isMuted())
             {
-                if (simpleDaw::replacesAudio(*audio))
-                {
-                    replaced.push_back(audio->getPosition().time);
-                    continue;
-                }
                 auto file = audio->getPlaybackFile().getFile();
                 if (!file.existsAsFile())
                     file = audio->getOriginalFile();
@@ -4700,11 +4864,6 @@ private:
             const auto left = timeAt(x);
             const auto right = timeAt(x + 1);
             const auto time = te::TimePosition::fromSeconds((left + right) * 0.5);
-            if (std::any_of(replaced.begin(), replaced.end(), [&](auto range) { return range.contains(time); }))
-            {
-                previousMixed = false;
-                continue;
-            }
             float lower = 0.0f, upper = 0.0f;
             int count = 0;
             for (const auto& source : mixed)
@@ -4837,12 +4996,10 @@ private:
                             const auto b = timeX(range.getEnd());
                             g.excludeClipRegion(content.withX(a).withWidth(std::max(0, b - a)));
                         };
-                        for (auto range : simpleDaw::suppressedAudioRanges(*audio, track->getClips()))
-                            hideWaveform(range);
-                        if (!dragPreview && !audio->isMuted() && !simpleDaw::replacesAudio(*audio))
+                        if (!dragPreview && !audio->isMuted())
                             for (auto* other : track->getClips())
                                 if (auto* wave = dynamic_cast<te::AudioClipBase*>(other);
-                                    wave && wave != audio && !wave->isMuted() && !simpleDaw::replacesAudio(*wave)
+                                    wave && wave != audio && !wave->isMuted()
                                     && !missingWave(wave) && wave->getPosition().time.overlaps(positionInEdit.time))
                                     hideWaveform(wave->getPosition().time);
                     }
@@ -4905,15 +5062,6 @@ private:
             const auto filename = missing->getOriginalFile().getFileName();
             name = "Missing: " + (filename.isNotEmpty() ? filename : name);
         }
-        if (simpleDaw::replacesAudio(clip))
-            if (auto* track = dynamic_cast<te::AudioTrack*>(clip.getTrack()))
-                for (auto* other : track->getClips())
-                    if (other != &clip && dynamic_cast<te::AudioClipBase*>(other)
-                        && other->getPosition().time.overlaps(clip.getPosition().time))
-                    {
-                        name = "R  " + name;
-                        break;
-                    }
         g.drawFittedText(name, title.reduced(4, 0), ju::Justification::centredLeft, 1);
     }
 
@@ -5050,7 +5198,16 @@ private:
             return;
         if (event.eventComponent == &inspector || event.eventComponent == &inspectorControls
             || inspectorControls.isParentOf(event.eventComponent))
+        {
+            auto* component = event.eventComponent;
+            const auto contains = [component](ju::Component* control) {
+                return control == component || control->isParentOf(component);
+            };
+            if (effectsEditor.isOpen() && !contains(&inspectorEffects)
+                && !std::any_of(effectButtons.begin(), effectButtons.end(), contains))
+                closeEffectsEditor();
             actionSelection.requestedArea = EditingArea::inspector;
+        }
         else if (event.eventComponent == &effectsEditor || effectsEditor.isParentOf(event.eventComponent))
             actionSelection.requestedArea = EditingArea::window;
         updateControls();
@@ -5139,6 +5296,8 @@ private:
         {
             if (track && trackBounds(y, rowHeight(row)).contains(event.getPosition()))
             {
+                if (effectsEditor.target && effectsEditor.target->track != track->itemID)
+                    closeEffectsEditor();
                 actionSelection.track = track->itemID;
                 selection = row;
             }
@@ -5167,6 +5326,8 @@ private:
                     auto* clip = clips[index];
                     if (!clipBounds(clip->getPosition().time, y, rowHeight(row)).contains(event.getPosition()))
                         continue;
+                    if (effectsEditor.isOpen())
+                        closeEffectsEditor();
                     selection = row;
                     // Keep an existing group until a click resolves or a drag starts.
                     const bool draggable = dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip);
@@ -5203,6 +5364,8 @@ private:
             for (auto* clip : tracks[row]->getClips())
                 if (clipBounds(clip->getPosition().time, y, rowHeight(row)).intersects(selectionBox))
                     items.insert(clip->itemID);
+        if (!items.empty() && effectsEditor.isOpen())
+            closeEffectsEditor();
     }
 
     void updateDragPreview(double pointerTime, std::optional<int> pointerRow = std::nullopt)
@@ -5328,10 +5491,19 @@ private:
         if (actionSelection.requestedArea && actionSelection.requestedArea != active)
             actionSelection.requestedArea = active;
         if (active != EditingArea::inspector && !(active == EditingArea::window && effectsEditor.isOpen()))
+        {
+            const auto oldContext = inspectorContext;
             inspectorContext = active;
+            if (oldContext != inspectorContext)
+                resized();
+        }
 
         ju::String description;
         ju::String inspectorDetails;
+        if (inspectorContext == EditingArea::tracks)
+            inspectorDetails = "TRACK";
+        else if (inspectorContext == EditingArea::timeline)
+            inspectorDetails = "CLIP";
         auto* inspectorTrack = inspectorContext == EditingArea::tracks ? actionTrack() : nullptr;
         auto* inspectorClip = inspectorContext == EditingArea::timeline ? selectedClip() : nullptr;
         if (inspectorTrack)
@@ -5339,14 +5511,14 @@ private:
             description = inspectorTrack->getName();
             const auto row = te::getAudioTracks(*edit).indexOf(inspectorTrack) + 1;
             const auto type = trackType(*inspectorTrack);
-            inspectorDetails = ju::String(row) + (type == TrackType::audio ? "A" : type == TrackType::midi ? "M" : "")
+            inspectorDetails += "\n" + ju::String(row) + (type == TrackType::audio ? "A" : type == TrackType::midi ? "M" : "")
                 + "  " + trackTypeName(type);
         }
         else if (inspectorClip)
         {
             description = inspectorClip->getName();
             const auto position = inspectorClip->getPosition();
-            inspectorDetails = dynamic_cast<te::MidiClip*>(inspectorClip) ? "MIDI" : "Audio";
+            inspectorDetails += dynamic_cast<te::MidiClip*>(inspectorClip) ? "\nMIDI" : "\nAudio";
             if (auto* track = inspectorClip->getTrack())
                 inspectorDetails += "  " + track->getName();
             if (inspectorClip->state.hasProperty(cloneFamilyProperty) && cloneMembers(*inspectorClip).size() > 1)
@@ -5356,12 +5528,13 @@ private:
                 + " s\nLength " + ju::String(position.getLength().inSeconds(), 3) + " s";
         }
         else if (inspectorContext == EditingArea::timeline && !actionSelection.clips.empty())
-            inspectorDetails = ju::String(static_cast<int>(actionSelection.clips.size())) + " clips selected";
-        inspector.setText(inspectorDetails.isEmpty() ? "INSPECTOR" : "INSPECTOR\n\n" + inspectorDetails,
+            inspectorDetails += "\n" + ju::String(static_cast<int>(actionSelection.clips.size())) + " clips selected";
+        inspector.setText(inspectorDetails.isEmpty() ? "INSPECTOR" : "INSPECTOR\n" + inspectorDetails,
                           ju::dontSendNotification);
+        const bool liveInspector = edit && !edit->getTransport().isRecording();
         const bool canEditInspector = editingStopped() && (inspectorTrack || inspectorClip);
         auto* colour = static_cast<ju::Button*>(colourInspectorButtons.front());
-        colour->setVisible(inspectorTrack || inspectorClip);
+        colour->setVisible(inspectorTrack || (inspectorClip && cloneMembers(*inspectorClip).size() > 1));
         colour->setEnabled(canEditInspector);
         if (inspectorTrack || inspectorClip)
             colour->setColour(ju::TextButton::buttonColourId,
@@ -5380,6 +5553,7 @@ private:
         if (inspectorClip)
         {
             const auto members = cloneMembers(*inspectorClip);
+            clipInspectorButtons[2]->setVisible(members.size() > 1 && members.front() == inspectorClip);
             static_cast<ju::Button*>(clipInspectorButtons[1])->setButtonText(
                 members.size() > 1 && members.front() != inspectorClip ? "UNCLONE" : "CLONE");
         }
@@ -5394,7 +5568,10 @@ private:
         }
         auto* volume = inspectorTrack ? inspectorTrack->getVolumePlugin() : nullptr;
         for (auto* control : { &inspectorVolume, &inspectorPan })
+        {
             control->setVisible(volume != nullptr);
+            control->setEnabled(liveInspector);
+        }
         if (volume)
         {
             if (!inspectorVolume.isMouseButtonDown())
@@ -5431,7 +5608,7 @@ private:
         {
             auto& slider = inspectorEQ[index];
             slider.setVisible(inspectorTrack != nullptr);
-            slider.setEnabled(canEditInspector);
+            slider.setEnabled(liveInspector);
             if (!slider.isMouseButtonDown())
                 slider.setValue(gains[index], ju::dontSendNotification);
         }
@@ -5447,6 +5624,9 @@ private:
             const auto id = parameter ? parameter->paramID : ju::String();
             inspectorAutomation.setSelectedId(id == "volume" ? 1 : id == "pan" ? 2 : 0, ju::dontSendNotification);
         }
+        eqBypass.setVisible(inspectorTrack != nullptr);
+        eqBypass.setEnabled(liveInspector && eq != nullptr);
+        eqBypass.setToggleState(eq && !eq->isEnabled(), ju::dontSendNotification);
         inspectorEffects.setVisible(inspectorTrack != nullptr);
         for (auto* button : effectButtons)
         {
@@ -5469,6 +5649,7 @@ private:
             else
                 inspectorEffects.selectRow(static_cast<int>(std::distance(effects.begin(), selected)), true);
             effectButtons.front()->setEnabled(canEditInspector && effects.size() < 8);
+            effectButtons[2]->setEnabled(liveInspector && selected != effects.end());
         }
         inspectorOutput.setVisible(inspectorTrack != nullptr);
         inspectorOutput.setEnabled(canEditInspector);
@@ -5496,23 +5677,23 @@ private:
         auto* midi = dynamic_cast<te::MidiClip*>(inspectorClip);
         const auto syncMidi = [&](ju::Slider& slider, const ju::Identifier& property, int defaultValue) {
             slider.setVisible(midi != nullptr);
-            slider.setEnabled(canEditInspector);
+            slider.setEnabled(liveInspector);
             if (midi && !slider.isMouseButtonDown())
                 slider.setValue(static_cast<int>(midi->state.getProperty(property, defaultValue)), ju::dontSendNotification);
         };
         syncMidi(inspectorVelocity, midiVelocityProperty, 100);
         syncMidi(inspectorTranspose, midiTransposeProperty, 0);
+        clipMute.setVisible(inspectorClip != nullptr);
+        clipMute.setEnabled(liveInspector && inspectorClip);
+        clipMute.setToggleState(inspectorClip && inspectorClip->isMuted(), ju::dontSendNotification);
         auto* audio = inspectedAudioClip();
-        auto* overlap = static_cast<ju::Button*>(overlapButtons.front());
-        overlap->setVisible(audio != nullptr);
-        overlap->setEnabled(canEditInspector);
-        if (audio)
-            overlap->setButtonText(simpleDaw::replacesAudio(*audio) ? "REPLACE" : "MIX");
+        for (auto* label : { &clipGainLabel, &fadeInLabel, &fadeOutLabel })
+            label->setVisible(audio != nullptr);
         for (auto* slider : { &inspectorGain, &inspectorFadeIn, &inspectorFadeOut })
             slider->setVisible(audio != nullptr);
         if (audio)
         {
-            inspectorGain.setEnabled(canEditInspector);
+            inspectorGain.setEnabled(liveInspector);
             if (!inspectorGain.isMouseButtonDown())
                 inspectorGain.setValue(audio->getGainDB(), ju::dontSendNotification);
             const auto duration = audio->getPosition().getLength().inSeconds();
@@ -5654,10 +5835,13 @@ private:
     ju::Viewport inspectorViewport;
     InspectorMeter inspectorMeter;
     ju::Label inspectorName, inspectorLoopCount;
+    ju::Label clipGainLabel { {}, "Gain" }, fadeInLabel { {}, "Fade In" }, fadeOutLabel { {}, "Fade Out" };
+    ju::TextButton clipMute { "CLIP MUTE" }, eqBypass { "EQ BYPASS" };
+    ju::Slider* parameterGesture = nullptr;
     ju::ComboBox inspectorOutput, inspectorAutomation;
     std::array<ju::Slider, 3> inspectorEQ;
     std::vector<ju::Component*> trackInputButtons, heightInspectorButtons, colourInspectorButtons;
-    std::vector<ju::Component*> clipInspectorButtons, trackInspectorToggles, loopInspectorButtons, overlapButtons;
+    std::vector<ju::Component*> clipInspectorButtons, trackInspectorToggles, loopInspectorButtons;
     ju::Slider inspectorVolume, inspectorPan, inspectorGain, inspectorFadeIn, inspectorFadeOut;
     ju::Slider inspectorVelocity, inspectorTranspose;
     ju::Component effectsEditorArea;
