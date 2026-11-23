@@ -43,3 +43,8 @@ All three original PDFs were parsed and all 14 pages rendered for visual inspect
 | `SimpleDAW_Master_Spec_With_Pending.pdf` | `09e221586f2e3686becad6863152e74e3459f51d39168a2cf601bc74033da7f0` |
 | `SimpleDAW_Universal_Actions_Integration_Spec.pdf` | `d1e19f22134f135be581438f6ac4e576fd5da9c24cc6fe850f74297ba613c04b` |
 | `SimpleDAW_Development_Phase_Plan_Draft_0_1.pdf` | `c58a7109b0c645a13c0016c07b5946376254f7ee19fffb1a6330b88a8df800b9` |
+
+## MD0 Drum Master — accepted design, pending implementation
+
+- [MD0 Master Drum Track specification](md0-master-drum-track-2026-11-23.md) — accepted singleton MDT, Settings enable/disable, GM lane/sampler, packaged WAV library, inline pattern editing, shared MIDI Insert lengths and audio bus rules. Not implemented.
+- [MD0 Codex task sheet](../tasks/md0-master-drum-track-task-sheet.md) — prepared work packages and acceptance criteria; **not authorization** to code or run Windows CI. Normal Mixer precedes Drum Mixer; MDT recording/monitoring deferred to MD1.
