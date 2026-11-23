@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include <JuceHeader.h>
+#include "MidiPlaybackNotes.h"
 #include <array>
 #include <cstdio>
 #include <numeric>
@@ -48,36 +49,12 @@ public:
             return source;
 
         ju::MidiMessageSequence playback;
-        // At the pitch limits several source pitches can map to the same output.
-        // Release only the most recently triggered source for that channel and pitch.
-        std::array<std::array<int, 128>, 16> owner;
-        for (auto& channel : owner)
-            channel.fill(-1);
+        simpleDaw::MidiPlaybackNotes notes;
         for (const auto* event : source)
         {
             auto message = event->message;
-            if (message.isNoteOn() || message.isNoteOff() || message.isAftertouch())
-            {
-                if (velocity == 0)
-                    continue;
-                const auto pitch = message.getNoteNumber();
-                const auto output = ju::jlimit(0, 127, pitch + transpose);
-                auto& active = owner[message.getChannel() - 1][output];
-                if (message.isNoteOn())
-                {
-                    active = pitch;
-                    const auto scaled = ju::jlimit(1, 127, (message.getVelocity() * velocity + 50) / 100);
-                    message.setVelocity(static_cast<float>(scaled) / 127.0f);
-                }
-                else if (message.isNoteOff())
-                {
-                    if (active != pitch)
-                        continue;
-                    active = -1;
-                }
-                message.setNoteNumber(output);
-            }
-            playback.addEvent(message);
+            if (notes.map(message, transpose, velocity, [&](ju::MidiMessage off) { playback.addEvent(off); }))
+                playback.addEvent(message);
         }
         return playback;
     }

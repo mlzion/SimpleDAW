@@ -510,6 +510,8 @@ public:
                 updateControls();
             }
         };
+        clipMute.setColour(ju::TextButton::buttonOnColourId, ju::Colours::yellow);
+        clipMute.setColour(ju::TextButton::textColourOnId, ju::Colours::black);
         inspectorControls.addChildComponent(clipMute);
         inspectorFadeIn.onValueChange = [this] { setInspectorFade(true); };
         inspectorFadeOut.onValueChange = [this] { setInspectorFade(false); };
@@ -1379,6 +1381,89 @@ public:
         return track->getClips().size() == count && clip.getPosition() == original;
     }
 
+    static bool testLiveMidiNoteTermination(te::Engine& engine, const ju::File& dir)
+    {
+        auto& devices = engine.getDeviceManager();
+        auto& host = devices.getHostedAudioDeviceInterface();
+        const te::HostedAudioDeviceInterface::Parameters parameters;
+        host.initialise(parameters);
+        host.prepareToPlay(parameters.sampleRate, parameters.blockSize);
+        devices.dispatchPendingUpdates();
+        auto* midiOut = devices.getMidiOutDevice(0);
+        if (!midiOut)
+            return false;
+        const auto midiOutID = midiOut->getDeviceID();
+        ju::MessageManager::getInstance()->runDispatchLoopUntil(100);
+
+        for (const bool proxy : { true, false })
+        {
+            const auto project = dir.getChildFile(proxy ? "proxy.tracktionedit" : "live.tracktionedit");
+            MainGui gui(engine, dir.getChildFile("gui.settings"));
+            gui.setProject(te::createEmptyEdit(engine, project), project);
+            gui.addTrack(true);
+            auto* track = gui.actionTrack();
+            track->getOutput().setOutputToDeviceID(midiOutID);
+            auto clip = te::insertMIDIClip(*track, "Note termination", { {}, te::TimePosition::fromSeconds(2) });
+            if (!clip)
+                return false;
+            clip->setUsesProxy(proxy);
+            auto& notes = clip->getSequence();
+            notes.addNote(60, te::BeatPosition::fromBeats(0.25), te::BeatDuration::fromBeats(0.75), 90, 0, nullptr);
+            notes.addNote(62, te::BeatPosition::fromBeats(1.25), te::BeatDuration::fromBeats(0.5), 90, 0, nullptr);
+            notes.addNote(64, te::BeatPosition::fromBeats(2), te::BeatDuration::fromBeats(0.25), 90, 0, nullptr);
+            gui.actionSelection.clips = { clip->itemID };
+            gui.actionSelection.requestedArea = EditingArea::timeline;
+            gui.updateControls();
+            auto* output = track->getOutput().getOutputDevice(false);
+            if (!output || !output->isMidi() || !output->isEnabled())
+            {
+                std::fprintf(stderr, "Hosted MIDI output not routed: %s (%s)\n",
+                    track->getOutput().getOutputName().toRawUTF8(), midiOutID.toRawUTF8());
+                return false;
+            }
+            gui.edit->getTransport().ensureContextAllocated();
+            gui.play();
+            auto& transport = gui.edit->getTransport();
+            if (!transport.isPlaying())
+                return false;
+            ju::AudioBuffer<float> audio(2, parameters.blockSize);
+            ju::MidiBuffer midi;
+            std::vector<int> emitted;
+            for (int block = 0; block < 120; ++block)
+            {
+                audio.clear();
+                midi.clear();
+                host.processBlock(audio, midi);
+                for (const auto entry : midi)
+                {
+                    const auto message = entry.getMessage();
+                    if (message.isNoteOn() || message.isNoteOff())
+                    {
+                        const auto pitch = message.getNoteNumber();
+                        emitted.push_back(message.isNoteOn() ? pitch : -pitch);
+                        if (message.isNoteOn() && pitch == 60)
+                            gui.inspectorTranspose.setValue(12, ju::sendNotificationSync);
+                        if (message.isNoteOn() && pitch == 74)
+                            gui.inspectorVelocity.setValue(0, ju::sendNotificationSync);
+                    }
+                }
+                ju::MessageManager::getInstance()->runDispatchLoopUntil(1);
+            }
+            const auto position = transport.getPosition();
+            gui.stop();
+            if (emitted != std::vector<int> { 60, -60, 74, -74 })
+            {
+                std::fprintf(stderr, "Live MIDI note termination (%s, %.3f s):",
+                    proxy ? "seconds" : "beats", position.inSeconds());
+                for (const auto note : emitted)
+                    std::fprintf(stderr, " %d", note);
+                std::fprintf(stderr, "\n");
+                return false;
+            }
+        }
+        return true;
+    }
+
     static bool testMidiInspector(te::Engine& engine)
     {
         const auto dir = ju::File::getSpecialLocation(ju::File::tempDirectory)
@@ -1448,11 +1533,31 @@ public:
         auto* restored = reopened ? dynamic_cast<te::MidiClip*>(te::findClipForID(*reopened, clip->itemID)) : nullptr;
         if (!restored || !verify(*restored, 96, 127))
             return false;
-        gui.clipMute.onClick();
-        if (!clip->isMuted() || track->isMuted(false))
+        const auto inherited = gui.trackColour(*track);
+        if (!gui.colourInspectorButtons.front()->isVisible())
+            return false;
+        gui.edit->getUndoManager().beginNewTransaction("Change color");
+        gui.setClipShade(*clip, 1);
+        if (gui.inspectedClipColour(*clip) != inherited.darker(0.35f) || !gui.save())
+            return false;
+        auto shaded = te::loadEditFromFile(engine, project);
+        auto* shadedClip = shaded ? te::findClipForID(*shaded, clip->itemID) : nullptr;
+        if (!shadedClip || shadedClip->state[clipShadeProperty] != clip->state[clipShadeProperty])
+            return false;
+        gui.edit->getUndoManager().beginNewTransaction("Track color");
+        gui.setClipShade(*clip, 3);
+        if (gui.inspectedClipColour(*clip) != inherited)
             return false;
         gui.useHistory(false);
-        return !clip->isMuted() && testSplitAndTrim(gui, *clip);
+        if (gui.inspectedClipColour(*clip) != inherited.darker(0.35f))
+            return false;
+        gui.clipMute.onClick();
+        if (!clip->isMuted() || track->isMuted(false) || !gui.clipMute.getToggleState()
+            || gui.clipMute.getButtonText() != "CLIP MUTED")
+            return false;
+        gui.useHistory(false);
+        return !clip->isMuted() && testSplitAndTrim(gui, *clip)
+            && testLiveMidiNoteTermination(engine, dir);
     }
 
     static bool testInspectorLoop(te::Engine& engine)
@@ -2710,6 +2815,7 @@ private:
             auto state = clipClipboard->clips[i].state.createCopy();
             clearCloneIdentity(state, nullptr);
             state.removeProperty(clipColourProperty, nullptr);
+            state.removeProperty(clipShadeProperty, nullptr);
             te::EditItemID::remapIDs(state, nullptr, *edit, &remappedIDs);
             const auto& position = plan[i].position;
             state.setProperty(te::IDs::start, position.getStart().inSeconds(), nullptr);
@@ -2883,7 +2989,6 @@ private:
         for (auto* member : cloneMembers(*clip))
             member->state.setProperty(property, value, &undo);
         edit->markAsChanged();
-        edit->restartPlayback();
         updateControls();
     }
 
@@ -2950,6 +3055,7 @@ private:
     }
 
     inline static const juce::Identifier clipColourProperty { "simpleDawClipColour" };
+    inline static const juce::Identifier clipShadeProperty { "simpleDawClipShade" };
 
     juce::Colour trackColour(const te::AudioTrack& track) const
     {
@@ -2962,11 +3068,26 @@ private:
     {
         const auto members = cloneMembers(clip);
         auto* parent = members.front();
-        if (members.size() > 1 && parent->state.hasProperty(clipColourProperty))
-            return juce::Colour::fromString(parent->state[clipColourProperty].toString());
+        const auto& property = members.size() > 1 ? clipColourProperty : clipShadeProperty;
+        if (parent->state.hasProperty(property))
+            return juce::Colour::fromString(parent->state[property].toString());
         if (auto* track = dynamic_cast<te::AudioTrack*>(parent->getTrack()))
             return trackColour(*track);
         return parent->getColour();
+    }
+
+    void setClipShade(te::Clip& clip, int choice)
+    {
+        const auto members = cloneMembers(clip);
+        const auto& property = members.size() > 1 ? clipColourProperty : clipShadeProperty;
+        const auto colour = inspectedClipColour(clip);
+        const auto shade = choice == 1 ? colour.darker(0.35f) : colour.brighter(0.35f);
+        auto& undo = edit->getUndoManager();
+        for (auto* member : members)
+            if (choice == 3)
+                member->state.removeProperty(property, &undo);
+            else
+                member->state.setProperty(property, shade.toString(), &undo);
     }
 
     void chooseInspectorColour()
@@ -2989,7 +3110,7 @@ private:
             const auto colour = inspectedClipColour(*clip);
             menu.addColouredItem(1, "Darker", colour.darker(0.35f));
             menu.addColouredItem(2, "Lighter", colour.brighter(0.35f));
-            menu.addItem(3, "Track color");
+            menu.addItem(3, "Track Color");
         }
         const auto choice = menu.show();
         if (choice == 0 || edit.get() != project || !editingStopped())
@@ -3004,17 +3125,7 @@ private:
         }
         else if (auto* current = te::findClipForID(*edit, id))
         {
-            const auto colour = inspectedClipColour(*current);
-            const auto members = cloneMembers(*current);
-            auto shade = choice == 1 ? colour.darker(0.35f) : colour.brighter(0.35f);
-            if (choice == 3)
-                if (auto* parentTrack = dynamic_cast<te::AudioTrack*>(members.front()->getTrack()))
-                    shade = trackColour(*parentTrack);
-            for (auto* member : members)
-                if (choice == 3 && members.size() == 1)
-                    member->state.removeProperty(clipColourProperty, &undo);
-                else
-                    member->state.setProperty(clipColourProperty, shade.toString(), &undo);
+            setClipShade(*current, choice);
         }
         edit->markAsChanged();
         updateControls();
@@ -3083,6 +3194,7 @@ private:
         state.removeProperty(te::IDs::linkID, nullptr);
         clearCloneIdentity(state, nullptr);
         state.removeProperty(clipColourProperty, nullptr);
+        state.removeProperty(clipShadeProperty, nullptr);
         state.setProperty(te::IDs::start, editCursor.inSeconds(), nullptr);
         state.setProperty(te::IDs::length, length.inSeconds(), nullptr);
         state.setProperty(te::IDs::offset, offset.inSeconds(), nullptr);
@@ -3103,6 +3215,7 @@ private:
                             family = std::max(family, static_cast<int>(item->state.getProperty(cloneFamilyProperty, 0)));
                     ++family;
                     source->state.setProperty(clipColourProperty, duplicateClip->state[clipColourProperty], &undo);
+                    source->state.removeProperty(clipShadeProperty, &undo);
                     source->state.setProperty(cloneFamilyProperty, family, &undo);
                     source->state.setProperty(cloneOrderProperty, 0, &undo);
                 }
@@ -3224,6 +3337,9 @@ private:
                 report("Could not move clips");
                 return false;
             }
+            if (change.destination && change.clip->state.hasProperty(clipShadeProperty)
+                && cloneMembers(*change.clip).size() == 1)
+                change.clip->state.removeProperty(clipShadeProperty, &history);
             if (change.sourceResize && dynamic_cast<te::MidiClip*>(change.clip))
             {
                 const auto& tempo = edit->tempoSequence;
@@ -4954,7 +5070,7 @@ private:
         if (bounds.isEmpty())
             return;
         const auto selected = actionSelection.clips.contains(clip.itemID);
-        if (clip.state.hasProperty(clipColourProperty) || clip.state.hasProperty(cloneFamilyProperty))
+        if (clip.state.hasProperty(clipShadeProperty) || clip.state.hasProperty(cloneFamilyProperty))
             colour = inspectedClipColour(clip);
         const auto* missing = missingWave(&clip);
         if (missing)
@@ -4977,7 +5093,7 @@ private:
                            static_cast<float>(x + bounds.getHeight()), static_cast<float>(bounds.getY()));
         }
         auto content = bounds.reduced(1, 2);
-        const auto title = content.removeFromTop(16);
+        auto title = content.removeFromTop(16);
         {
             const ju::Graphics::ScopedSaveState state(g);
             g.reduceClipRegion(content);
@@ -5061,6 +5177,16 @@ private:
         {
             const auto filename = missing->getOriginalFile().getFileName();
             name = "Missing: " + (filename.isNotEmpty() ? filename : name);
+        }
+        if (clip.isMuted())
+        {
+            const bool wide = title.getWidth() >= 70;
+            auto badge = title.removeFromLeft(wide ? 53 : std::min(16, title.getWidth())).reduced(1);
+            g.setColour(ju::Colours::yellow);
+            g.fillRoundedRectangle(badge.toFloat(), 2.0f);
+            g.setColour(ju::Colours::black);
+            g.drawFittedText(wide ? "MUTED" : "M", badge, ju::Justification::centred, 1);
+            g.setColour(ju::Colours::white);
         }
         g.drawFittedText(name, title.reduced(4, 0), ju::Justification::centredLeft, 1);
     }
@@ -5534,7 +5660,7 @@ private:
         const bool liveInspector = edit && !edit->getTransport().isRecording();
         const bool canEditInspector = editingStopped() && (inspectorTrack || inspectorClip);
         auto* colour = static_cast<ju::Button*>(colourInspectorButtons.front());
-        colour->setVisible(inspectorTrack || (inspectorClip && cloneMembers(*inspectorClip).size() > 1));
+        colour->setVisible(inspectorTrack || inspectorClip);
         colour->setEnabled(canEditInspector);
         if (inspectorTrack || inspectorClip)
             colour->setColour(ju::TextButton::buttonColourId,
@@ -5685,7 +5811,9 @@ private:
         syncMidi(inspectorTranspose, midiTransposeProperty, 0);
         clipMute.setVisible(inspectorClip != nullptr);
         clipMute.setEnabled(liveInspector && inspectorClip);
-        clipMute.setToggleState(inspectorClip && inspectorClip->isMuted(), ju::dontSendNotification);
+        const bool mutedClip = inspectorClip && inspectorClip->isMuted();
+        clipMute.setToggleState(mutedClip, ju::dontSendNotification);
+        clipMute.setButtonText(mutedClip ? "CLIP MUTED" : "CLIP MUTE");
         auto* audio = inspectedAudioClip();
         for (auto* label : { &clipGainLabel, &fadeInLabel, &fadeOutLabel })
             label->setVisible(audio != nullptr);

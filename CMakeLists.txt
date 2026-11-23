@@ -14,6 +14,7 @@ FetchContent_Declare(tracktion
 FetchContent_MakeAvailable(juce tracktion)
 include(cmake/JuceDeviceSelector.cmake)
 include(cmake/RestoreTracktionOverlap.cmake)
+include(cmake/TracktionLiveMidi.cmake)
 
 set(SIMPLEDAW_ASIO_SDK "" CACHE PATH "Optional directory containing iasiodrv.h")
 

@@ -20,7 +20,15 @@ Debian 13 x64 Release with Clang 19 and Xvfb passed all 13 CTests. The new Setup
 
 PR #20 adds live Inspector volume, pan, track EQ, clip gain and MIDI modifiers with one Undo transaction per slider gesture. Track EQ and inserts expose live bypass. Audio and MIDI Clip Mute follows clone-linked editing. SPLIT and ruler-range TRIM are available for independent clips. Ordinary clips inherit their current track color, and legacy REPLACE flags are ignored. The Inspector has explicit track and clip headings and audio slider labels. E1 supports live bypass on both native effects, closes on unrelated selection and switches instances on double-click. ADD EFFECT offers Reverb and Compressor.
 
-Debian 13 x64 Release with Clang 19 and Xvfb passed all 13 CTests. Updated tests cover audible hosted gain, pan, EQ and bypass, a complete fader gesture undo, Audio and MIDI SPLIT/TRIM, clone color and mute, mixed overlap with legacy flags, and editor focus and chain handling. MIDI modifiers were verified against the generated playback sequence. Hardware MIDI timing, Windows playback and the R01–R12 checks remain pending. Windows CI was not dispatched for this package. [Windows R01–R12 acceptance checklist](docs/testing/v0.23.1-live-test.md#r01r12-correction-retest)
+Debian 13 x64 Release with Clang 19 and Xvfb passed all 13 CTests. Updated tests cover audible hosted gain, pan, EQ and bypass, a complete fader gesture undo, Audio and MIDI SPLIT/TRIM, clone color and mute, mixed overlap with legacy flags, and editor focus and chain handling. MIDI modifiers were verified against the generated playback sequence. The 4475447 Windows x64 /MD run passed all 13 CTests. Live R01–R12 testing reported 9 PASS, 2 PARTIAL and 1 FAIL. [Windows build](https://github.com/mlzion/SimpleDAW/actions/runs/45115090327) [Windows R01–R12 acceptance checklist](docs/testing/v0.23.1-live-test.md#r01r12-correction-retest)
+
+## Follow-up to Windows live acceptance
+
+Live Transpose on 4475447 had rebuilt MIDI playback sequences while notes were sounding. The replacement could schedule a Note Off for the new pitch and leave the emitted pitch sounding. Playback now maps each Note On as it is emitted and uses the recorded pitch for its Note Off. Transpose and Velocity edits update the clip's live settings without rebuilding its sequence. Source notes and saved modifier values are preserved.
+
+Clip Mute now uses a yellow active state and a timeline badge. The Audio and MIDI Inspector Color menu offers Darker, Lighter and Track Color. The shared Undo/Redo rule requires a stopped transport for Clip Gain and other edit actions. Legacy REPLACE Windows compatibility remains pending. [Minimum Windows retest](docs/testing/v0.23.1-live-test.md#minimum-windows-retest)
+
+Debian 13 x64 Release with Clang 19 and Xvfb passed all 13 CTests. The hosted MIDI regression captures output with Tracktion's seconds and beats playback paths. It verifies that a held note ends at its original pitch, the next note uses the new transpose, and setting Velocity to 0% leaves the sounding note's Note Off intact. Three repeat runs passed. The MIDI Inspector test also verifies shade persistence, reset and Undo. Windows CI awaits separate authorization.
 
 ## Windows build policy
 
