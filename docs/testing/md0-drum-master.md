@@ -1,4 +1,6 @@
-# MD0 Master Drum Track
+# SimpleDAW v0.25.1 — Master Drum Track MD0 Integration
+
+Draft PR #27 holds the v0.25.1 integration artifact and its CI results. The package is `SimpleDAW-v0.25.1-Windows-x64.zip`. The accepted Piano Roll P0 release remains v0.24.1. [MD0 integration draft](https://github.com/mlzion/SimpleDAW/pull/27)
 
 The Master is a protected native audio track that owns the project's drum MIDI clips. The arrangement pins it above ordinary tracks and groups its child drum lanes beneath it. Each lane uses a native track and sampler. The Tracktion graph reads the Master's MIDI clips for each lane, then routes lane audio by Master track ID through the Master inserts, EQ, and fader. Each lane has an independent volume, pan, EQ, and effect chain. Collapsing the kit only changes the arrangement.
 
