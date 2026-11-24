@@ -837,6 +837,57 @@ public:
 
     #include "PianoRollTest.inc"
     #include "../tests/DrumGrid.inc"
+    static bool testPlaybackOutput(te::Engine& engine)
+    {
+        const ju::TemporaryFile project(".tracktionedit"), preferences(".settings"), wave(".wav");
+        MainGui gui(engine, preferences.getFile());
+        auto edit = te::createEmptyEdit(engine, project.getFile());
+        edit->ensureNumberOfAudioTracks(1);
+        if (!writeTestWave(wave.getFile()) || !insertAudio(*te::getAudioTracks(*edit).getFirst(), wave.getFile()))
+            return false;
+        gui.setProject(std::move(edit), project.getFile());
+        const auto clip = gui.trackAt(0)->getClips().getFirst()->itemID;
+        gui.actionSelection.clips = { clip };
+        gui.actionSelection.requestedArea = EditingArea::timeline;
+        auto& devices = engine.getDeviceManager();
+        auto& manager = devices.deviceManager;
+        const auto saved = manager.createStateXml();
+        auto& transport = gui.edit->getTransport();
+
+        gui.play();
+        if (!transport.isPlaying())
+            return false;
+        manager.closeAudioDevice();
+        gui.timerCallback();
+        if (transport.isPlaying() || gui.playButton->getToggleState())
+            return false;
+
+        gui.play();
+        if (transport.isPlaying() || gui.playButton->getToggleState()
+            || !gui.canDispatch(UniversalAction::remove) || !gui.status.getText().contains("No active audio output"))
+            return false;
+
+        if (!saved || manager.initialise(2, 2, saved.get(), false).isNotEmpty())
+            return false;
+        ju::MessageManager::getInstance()->runDispatchLoopUntil(100);
+        if (!gui.hasPlaybackOutput())
+            return false;
+        auto& host = devices.getHostedAudioDeviceInterface();
+        ju::AudioBuffer<float> buffer(2, manager.getCurrentAudioDevice()->getCurrentBufferSizeSamples());
+        ju::MidiBuffer midi;
+        gui.play();
+        float peak = 0.0f;
+        for (int i = 0; i < 24; ++i)
+        {
+            buffer.clear();
+            host.processBlock(buffer, midi);
+            peak = std::max(peak, buffer.getMagnitude(0, buffer.getNumSamples()));
+            ju::MessageManager::getInstance()->runDispatchLoopUntil(12);
+        }
+        return transport.isPlaying() && transport.getPosition().inSeconds() > 0.05 && peak > 0.01f
+            && gui.status.getText() != noPlaybackOutputMessage;
+    }
+
     static bool testDrumUi(te::Engine& engine)
     {
         const auto fail = [](int line) {
@@ -4918,11 +4969,15 @@ private:
         auto& transport = edit->getTransport();
         if (!transport.isPlaying())
         {
+            if (!hasPlaybackOutput())
+                return reportNoPlaybackOutput();
             pianoRoll.stopAudition();
             pianoRoll.cancelGesture();
             if (!paused)
                 transport.setPosition(editCursor);
             transport.play(false);
+            if (transport.isPlaying() && status.getText() == noPlaybackOutputMessage)
+                report({});
             paused = false;
             updateControls();
         }
@@ -6535,6 +6590,11 @@ private:
         if (edit)
         {
             auto& transport = edit->getTransport();
+            if (transport.isPlaying() && !transport.isRecording() && !hasPlaybackOutput())
+            {
+                stop();
+                reportNoPlaybackOutput();
+            }
             if (follow && transport.isPlaying())
                 reveal(transport.getPosition());
             pollMeters();

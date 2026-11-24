@@ -25,6 +25,13 @@
                 std::fprintf(stderr, "Piano Roll: %s\n", step);
             return passed;
         };
+        auto& devices = engine.getDeviceManager();
+        auto& hosted = devices.getHostedAudioDeviceInterface();
+        const te::HostedAudioDeviceInterface::Parameters parameters;
+        hosted.initialise(parameters);
+        hosted.prepareToPlay(parameters.sampleRate, parameters.blockSize);
+        devices.deviceManager.dispatchPendingMessages();
+        devices.dispatchPendingUpdates();
         const auto path = directory.getChildFile("notes.tracktionedit");
         MainGui gui(engine, directory.getChildFile("gui.settings"));
         gui.setProject(te::createEmptyEdit(engine, path), path);
@@ -159,8 +166,9 @@
                 return false;
             gesture(key, key);
             gui.play();
-            if (!check(listener.messages.size() == 6 && listener.messages.back().isNoteOff()
-                    && listener.messages.back().getChannel() == 5, "starting playback releases guide notes"))
+            if (!check(gui.edit->getTransport().isPlaying() && listener.messages.size() == 6
+                    && listener.messages.back().isNoteOff() && listener.messages.back().getChannel() == 5,
+                    "starting playback releases guide notes"))
                 return false;
             gui.stop();
             gui.updateControls();

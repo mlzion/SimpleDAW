@@ -49,3 +49,21 @@ The drum-grid regression uses wheel input with a small horizontal component and 
 2. **D28 and D48.** Set a recognizable timeline zoom and scroll position. Single-click and double-click a drum clip, check 16 and 32 visible steps, and scroll three- and four-bar patterns. Close with X and confirm view, focus, and selection. Move, duplicate, clone/unclone, loop, trim and resize. Edit linked and independent patterns, then Undo/Redo and save/reopen. Confirm ordinary MIDI clips still open Piano Roll.
 3. **D33 and D34.** Duplicate with the UAT and compare the recorded GM note, the independent sample and effects settings, and behavior at 16 lanes. Undo and redo. Open and confirm the readable GM note dialog.
 4. **D41, D57, and D58.** Remove one referenced sample, confirm the hatch affects only that lane's name, then restore or relink it. Expand, collapse, disable and re-enable the Master. Confirm ordinary numbering stays 1–24, and the child headers remain indented and selectable at MIN height.
+
+## D59 and D61 audio-device corrections
+
+**D59.** The Windows 11 retest confirmed that both endpoints were set to None and that choosing the devices restored playback. Tracktion can allocate a context and set its playing flag before a device supplies audio callbacks. In a local probe, selected output with callbacks withheld also left the flag true at zero seconds. SimpleDAW now checks that the selected output has an open, running device, configured and active channels, and valid stream parameters before changing the transport. Playback also stops if that output disappears mid-run. The status bar directs the user to Audio and MIDI Devices, and stopped transport controls remain available.
+
+**D61.** The JUCE selector previously rebuilt its controls from inside their setting-change handlers. Updating the rate and buffer lists used a notifying clear, which could queue another change during each refresh. The device dialog also ran a nested modal loop from its menu command. The selector now coalesces refreshes on the message thread after handlers return and uses silent control updates. The same modal dialog opens without a nested loop and uses its native title bar and close button. Device access still uses JUCE and Tracktion's existing setup paths.
+
+Tracktion writes JUCE's chosen configuration to `audio_device_setup` and reads it during startup, with its existing fallback for unavailable named endpoints. An explicitly saved None selection can persist. The corrections keep that preference and explain why Play is unavailable instead of silently selecting a device.
+
+The device regression drives repeated choices through the message queue with a live Edit context, verifies rate and buffer fallback without a second notification, closes the dialog through its close handler, and reinitializes from Tracktion's saved XML. With the old selector compiled into an otherwise identical test binary, the device regression timed out after 10 seconds. Playback tests exercise output loss, the stopped interlocks and warning, and non-silent ordinary WAV playback after reopening a hosted output. The routing regression exercises recording and monitoring through hosted callbacks.
+
+Linux x64 Release passed all 17 CTests under Xvfb. The device setup, GUI corrections, and Piano Roll suites also passed three consecutive runs each. Windows native device and dialog behavior awaits live verification.
+
+### Windows 11 retest for D59 and D61
+
+- Set the output to None, close Settings with X, and press Play. Verify the warning, a stopped transport, and usable UAT and Audio and MIDI Devices controls.
+- Reopen Settings and change the input, output, sample rate, buffer size, and enabled channels several times. Check that the displayed choice follows the device and that X closes the dialog each time.
+- Quit and reopen SimpleDAW. Verify that the selected endpoints and stream settings survive startup. Play an ordinary WAV, then verify recording and input monitoring with the selected interface.
