@@ -14,6 +14,8 @@ These PDFs are the shared reference set for specification reviews and phased dev
 
 ## Subsequent acceptance and change handoffs
 
+- [v0.24.1 Piano Roll P0 acceptance](../research/piano-roll-p0.md#acceptance) — **ACCEPTED and merged** in PR #24. The owner passed P01–P12 and F01–F05, and the final Windows x64 Release `/MD` run passed 14/14 CTests.
+
 - [v0.22 design decisions — Reviews 01–82](v0.22-design-decisions-reviews-01-82.md) — accepted UAT and later-phase recording design decisions; Review 83 pending. v0.22.1 is limited to the UAT foundation, not advanced recording features.
 - [v0.21 acceptance and v0.22 handoff](v0.21-acceptance-v0.22-handoff.md) — records accepted live testing, documented limitations and candidate v0.22 work. This supplement does not supersede the dated PDFs or approve pending designs.
 
@@ -44,7 +46,7 @@ All three original PDFs were parsed and all 14 pages rendered for visual inspect
 | `SimpleDAW_Universal_Actions_Integration_Spec.pdf` | `d1e19f22134f135be581438f6ac4e576fd5da9c24cc6fe850f74297ba613c04b` |
 | `SimpleDAW_Development_Phase_Plan_Draft_0_1.pdf` | `c58a7109b0c645a13c0016c07b5946376254f7ee19fffb1a6330b88a8df800b9` |
 
-## MD0 Drum Master — accepted design, pending implementation
+## MD0 Drum Master — accepted design, draft foundation
 
-- [MD0 Master Drum Track specification](md0-master-drum-track-2026-11-23.md) — accepted singleton MDT, Settings enable/disable, GM lane/sampler, packaged WAV library, inline pattern editing, shared MIDI Insert lengths and audio bus rules. Not implemented.
+- [MD0 Master Drum Track specification](md0-master-drum-track-2026-11-23.md) — accepted singleton MDT, Settings enable/disable, GM lane/sampler, packaged WAV library, inline pattern editing, shared MIDI Insert lengths and audio bus rules. The foundation is under review in draft PR #27. Inline step editing and the shared MIDI Insert length selector remain outside that draft. The MD0 implementation has yet to merge into `main`. [MD0 draft PR](https://github.com/mlzion/SimpleDAW/pull/27)
 - [MD0 Codex task sheet](../tasks/md0-master-drum-track-task-sheet.md) — prepared work packages and acceptance criteria; **not authorization** to code or run Windows CI. Normal Mixer precedes Drum Mixer; MDT recording/monitoring deferred to MD1.

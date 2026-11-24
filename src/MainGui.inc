@@ -13,7 +13,7 @@
     enum class UniversalAction
     {
         cut, remove, copy, paste, up, down, left, right,
-        startMinus, startPlus, endMinus, endPlus, split, trim, reserved
+        startMinus, startPlus, endMinus, endPlus, split, trim, duplicate, reserved
     };
 
     using ItemSelection = std::set<te::EditItemID>;
@@ -137,6 +137,7 @@
         void mouseDown(const ju::MouseEvent& event) override { owner.arrangementDown(event); }
         void mouseDrag(const ju::MouseEvent& event) override { owner.arrangementDrag(event); }
         void mouseUp(const ju::MouseEvent& event) override { owner.arrangementUp(event); }
+        void mouseDoubleClick(const ju::MouseEvent& event) override { owner.openPianoRoll(event); }
         void mouseWheelMove(const ju::MouseEvent&, const ju::MouseWheelDetails& wheel) override
         {
             if (wheel.deltaX != 0.0f)
@@ -236,12 +237,24 @@ public:
         addAndMakeVisible(arrangement);
         addAndMakeVisible(inspector);
         addAndMakeVisible(inspectorDivider);
-        addAndMakeVisible(effectsEditorArea);
-        effectsEditorArea.setInterceptsMouseClicks(false, true);
-        effectsEditorArea.addChildComponent(outgoingEffects);
-        effectsEditorArea.addChildComponent(effectsEditor);
-        outgoingEffects.setInterceptsMouseClicks(false, false);
+        addAndMakeVisible(editingPanelArea);
+        editingPanelArea.setInterceptsMouseClicks(false, true);
+        editingPanelArea.addChildComponent(outgoingEditor);
+        editingPanelArea.addChildComponent(effectsEditor);
+        outgoingEditor.setInterceptsMouseClicks(false, false);
         effectsEditor.addMouseListener(this, true);
+        editingPanelArea.addChildComponent(pianoRoll);
+        pianoRoll.addMouseListener(this, true);
+        pianoRoll.onFocus = [this] { focusPianoRoll(); };
+        pianoRoll.onChange = [this] { updateControls(); };
+        pianoRoll.onClose = [this] { closePianoRoll(); };
+        pianoRoll.linkedMembers = [this](te::MidiClip& clip) {
+            std::vector<te::MidiClip*> linked;
+            for (auto* member : cloneMembers(clip))
+                if (auto* midi = dynamic_cast<te::MidiClip*>(member); midi && midi != &clip)
+                    linked.push_back(midi);
+            return linked;
+        };
         for (ju::Label* label : { &position, &status, static_cast<ju::Label*>(&inspector) })
         {
             addAndMakeVisible(*label);
@@ -315,7 +328,7 @@ public:
                                                 { "←  LEFT", Action::left }, { "→  RIGHT", Action::right } });
         addActionGroup(2, "SIZE", 0xff30465a, { { "START −", Action::startMinus }, { "START +", Action::startPlus },
                                                 { "END −", Action::endMinus }, { "END +", Action::endPlus } });
-        addActionGroup(3, "MODIFY", 0xff354a5e, { { "SPLIT", Action::split }, { "", Action::reserved },
+        addActionGroup(3, "MODIFY", 0xff354a5e, { { "SPLIT", Action::split }, { "DUPLICATE", Action::duplicate },
                                                   { "TRIM", Action::trim }, { "", Action::reserved } });
         undoButton = &button(historyButtons, "UNDO", [this] { useHistory(false); });
         redoButton = &button(historyButtons, "REDO", [this] { useHistory(true); });
@@ -324,18 +337,28 @@ public:
         snap.onChange = [this] { updateControls(); };
         button(panelButtons, "INSPECTOR", [this] { panels.inspectorOpen = !panels.inspectorOpen; saveLayout(); });
 
-        navigationButton(Arrow::screenLeft, "Scroll left one screen", [this] { scrollTime(-visibleSeconds()); });
-        navigationButton(Arrow::screenRight, "Scroll right one screen", [this] { scrollTime(visibleSeconds()); });
-        navigationButton(Arrow::left, "Scroll left one bar", [this] { scrollBar(-1); });
-        navigationButton(Arrow::right, "Scroll right one bar", [this] { scrollBar(1); });
-        auto& zoomOut = button(navigation, "-", [this] { zoom(0.8); }, 0xff193c57);
+        navigationButton(Arrow::screenLeft, "Scroll left one screen", [this] { navigateTime(-1, true); });
+        navigationButton(Arrow::screenRight, "Scroll right one screen", [this] { navigateTime(1, true); });
+        navigationButton(Arrow::left, "Scroll left one bar", [this] { navigateTime(-1, false); });
+        navigationButton(Arrow::right, "Scroll right one bar", [this] { navigateTime(1, false); });
+        auto configureZoom = [](ju::Button& control) {
+            control.setWantsKeyboardFocus(false);
+            control.setRepeatSpeed(330, 110, 65);
+        };
+        auto& zoomOut = button(navigation, "-", [this] { navigateZoom(0.8); }, 0xff193c57);
         zoomOut.setTooltip("Zoom out horizontally");
-        zoomOut.setRepeatSpeed(330, 110, 65);
-        auto& zoomIn = button(navigation, "+", [this] { zoom(1.25); }, 0xff193c57);
+        configureZoom(zoomOut);
+        auto& zoomIn = button(navigation, "+", [this] { navigateZoom(1.25); }, 0xff193c57);
         zoomIn.setTooltip("Zoom in horizontally");
-        zoomIn.setRepeatSpeed(330, 110, 65);
-        navigationButton(Arrow::up, "Scroll up", [this] { scrollRows(-1); });
-        navigationButton(Arrow::down, "Scroll down", [this] { scrollRows(1); });
+        configureZoom(zoomIn);
+        navigationButton(Arrow::up, "Scroll up", [this] { navigateRows(-1); });
+        navigationButton(Arrow::down, "Scroll down", [this] { navigateRows(1); });
+        auto& pitchOut = button(pitchNavigation, "PITCH −", [this] { navigatePitchZoom(-2); }, 0xff193c57);
+        auto& pitchIn = button(pitchNavigation, "PITCH +", [this] { navigatePitchZoom(2); }, 0xff193c57);
+        configureZoom(pitchOut);
+        configureZoom(pitchIn);
+        pitchOut.setVisible(false);
+        pitchIn.setVisible(false);
         drumKitButton = std::make_unique<ju::TextButton>("DRUM LANES");
         inspectorControls.addChildComponent(*drumKitButton);
         drumKitButton->onClick = [this] { showDrumLanes(); };
@@ -617,7 +640,12 @@ public:
             panels.tallTracks = !panels.tallTracks;
             saveLayout();
         });
-        followButton = &button(navigation, "FOLLOW", [this] { follow = !follow; });
+        followButton = &button(navigation, "FOLLOW", [this] {
+            follow = !follow;
+            pianoRoll.followResumeTime = 0.0;
+            updateControls();
+        });
+        followButton->setWantsKeyboardFocus(false);
         report("Create or open a project to begin");
         setSize(1440, 850);
         updateControls();
@@ -627,6 +655,7 @@ public:
     ~MainGui() override
     {
         stopTimer();
+        pianoRoll.clearProject();
         if (shortcutHost != nullptr)
             shortcutHost->removeKeyListener(commandManager.getKeyMappings());
         setApplicationCommandManagerToWatch(nullptr);
@@ -639,21 +668,24 @@ public:
     bool openEffectsEditor(te::EditItemID trackID, te::EditItemID pluginID)
     {
         const auto outgoing = effectsSnapshot();
-        if (!effectsEditor.open(trackID, pluginID))
+        const bool sameTarget = effectsEditor.target && effectsEditor.target->track == trackID
+            && effectsEditor.target->plugin == pluginID;
+        if (!(sameTarget ? effectsEditor.refresh() : effectsEditor.open(trackID, pluginID)))
         {
             report("This effect editor is unavailable");
             return false;
         }
+        hidePianoRoll();
         actionSelection.requestedArea = EditingArea::window;
         effectsEditor.setVisible(true);
         effectsEditor.toFront(false);
         resized();
-        slideEffectsOut(outgoing);
+        slideEditorOut(outgoing);
         if (effectsEditor.isShowing())
         {
-            const auto destination = effectsEditorArea.getLocalBounds();
+            const auto destination = editingPanelArea.getLocalBounds();
             effectsEditor.setBounds(destination.translated(0, destination.getHeight()));
-            effectsAnimator.animateComponent(&effectsEditor, destination, 1.0f, 220, false, 1.0, 0.0);
+            editorAnimator.animateComponent(&effectsEditor, destination, 1.0f, 220, false, 1.0, 0.0);
         }
         updateControls();
         return true;
@@ -706,7 +738,8 @@ public:
         }
         area.removeFromTop(4);
         status.setBounds(area.removeFromBottom(26));
-        layoutRow(navigation, area.removeFromBottom(40), { 8, 8, 8, 8, 8, 8, 8, 8, 13, 13 }, { 4, 6, 8 });
+        navigationBounds = area.removeFromBottom(40);
+        layoutNavigation(navigationBounds);
 
         inspector.setVisible(panels.inspectorOpen);
         inspectorDivider.setVisible(panels.inspectorOpen);
@@ -764,16 +797,19 @@ public:
         }
 
         arrangement.setBounds(area);
-        if (effectsEditor.isOpen())
+        if (effectsEditor.isVisible() || pianoRoll.isVisible())
         {
             auto timeline = area.withTrimmedLeft(headerWidth);
-            effectsAnimator.cancelAnimation(&effectsEditor, false);
-            effectsEditorArea.setBounds(timeline.removeFromBottom(ju::roundToInt(0.8 * timeline.getHeight())));
-            effectsEditor.setBounds(effectsEditorArea.getLocalBounds());
+            ju::Component& editor = pianoRoll.isVisible() ? static_cast<ju::Component&>(pianoRoll)
+                                                         : static_cast<ju::Component&>(effectsEditor);
+            editorAnimator.cancelAnimation(&editor, false);
+            editingPanelArea.setBounds(timeline.removeFromBottom(ju::roundToInt(0.8 * timeline.getHeight())));
+            editor.setBounds(editingPanelArea.getLocalBounds());
         }
         scrollRows(0);
     }
 
+    #include "PianoRollTest.inc"
     static bool testDrumUi(te::Engine& engine)
     {
         const ju::TemporaryFile file(".tracktionedit"), settings(".settings");
@@ -2380,11 +2416,54 @@ private:
         auto& control = *buttons.add(new ArrowButton(arrow));
         control.setTitle(title);
         control.setTooltip(title);
+        control.setWantsKeyboardFocus(false);
         control.setColour(ju::TextButton::buttonColourId, ju::Colour(0xff292929));
         control.setRepeatSpeed(330, 110, 65);
         control.onClick = std::move(action);
         addAndMakeVisible(control);
         navigation.push_back(&control);
+    }
+
+    void layoutNavigation(ju::Rectangle<int> bounds)
+    {
+        if (!pianoRollHasFocus())
+            return layoutRow(navigation, bounds, { 8, 8, 8, 8, 8, 8, 8, 8, 13, 13 }, { 4, 6, 8 });
+
+        auto controls = navigation;
+        controls.insert(controls.end() - 2, pitchNavigation.begin(), pitchNavigation.end());
+        layoutRow(controls, bounds, { 8, 8, 8, 8, 8, 8, 8, 8, 10, 10, 13, 13 }, { 4, 6, 8, 10 });
+    }
+
+    void navigateTime(int direction, bool byScreen)
+    {
+        if (pianoRollHasFocus() && pianoRoll.clip)
+            pianoRoll.scrollTime(direction * (byScreen ? pianoRoll.visibleBeats() : pianoRoll.beatsPerBar()));
+        else if (byScreen)
+            scrollTime(direction * visibleSeconds());
+        else
+            scrollBar(direction);
+    }
+
+    void navigateRows(int direction)
+    {
+        if (pianoRollHasFocus())
+            pianoRoll.scrollPitch(direction);
+        else
+            scrollRows(direction);
+    }
+
+    void navigateZoom(double factor)
+    {
+        if (pianoRollHasFocus())
+            pianoRoll.zoomTime(factor);
+        else
+            zoom(factor);
+    }
+
+    void navigatePitchZoom(int delta)
+    {
+        if (pianoRollHasFocus())
+            pianoRoll.zoomPitch(delta);
     }
 
     void combo(ju::ComboBox& control, std::vector<ju::Component*>& row,
@@ -2526,7 +2605,7 @@ private:
             case undo: info.setActive(canUseHistory(false)); break;
             case redo: info.setActive(canUseHistory(true)); break;
             case cut: info.setActive(canDispatch(UniversalAction::cut)); break;
-            case duplicate: info.setActive(false); break;
+            case duplicate: info.setActive(canDispatch(UniversalAction::duplicate)); break;
             case copy: info.setActive(canDispatch(UniversalAction::copy)); break;
             case paste: info.setActive(canDispatch(UniversalAction::paste)
                 || incompatiblePlacement(UniversalAction::paste).isNotEmpty()); break;
@@ -2579,6 +2658,7 @@ private:
             case cut: dispatchAction(UniversalAction::cut); break;
             case copy: dispatchAction(UniversalAction::copy); break;
             case paste: dispatchAction(UniversalAction::paste); break;
+            case duplicate: dispatchAction(UniversalAction::duplicate); break;
             case deleteItem:
                 if (canClearTimeSelection())
                     clearTimeSelection();
@@ -2706,7 +2786,7 @@ private:
 
     EditingArea activeEditingArea() const
     {
-        return actionSelection.activeArea(effectsEditor.isOpen(),
+        return actionSelection.activeArea(effectsEditor.isVisible() || pianoRoll.isVisible(),
                                           panels.inspectorOpen);
     }
 
@@ -3981,10 +4061,46 @@ private:
         updateControls();
     }
 
+    static std::optional<PianoRoll::Action> noteAction(UniversalAction action)
+    {
+        using UAT = UniversalAction;
+        using Note = PianoRoll::Action;
+        switch (action)
+        {
+            case UAT::cut: return Note::cut;
+            case UAT::remove: return Note::remove;
+            case UAT::copy: return Note::copy;
+            case UAT::paste: return Note::paste;
+            case UAT::duplicate: return Note::duplicate;
+            case UAT::up: return Note::up;
+            case UAT::down: return Note::down;
+            case UAT::left: return Note::left;
+            case UAT::right: return Note::right;
+            case UAT::startMinus: return Note::startMinus;
+            case UAT::startPlus: return Note::startPlus;
+            case UAT::endMinus: return Note::endMinus;
+            case UAT::endPlus: return Note::endPlus;
+            case UAT::split: case UAT::trim: case UAT::reserved: return {};
+        }
+        return {};
+    }
+
+    bool pianoRollHasFocus() const
+    {
+        return pianoRoll.isVisible() && activeEditingArea() == EditingArea::window;
+    }
+
     bool canDispatch(UniversalAction action) const
     {
         using Action = UniversalAction;
         if (!editingStopped())
+            return false;
+        if (pianoRollHasFocus())
+        {
+            const auto note = noteAction(action);
+            return note && pianoRoll.canApply(*note);
+        }
+        if (action == Action::duplicate)
             return false;
         if (activeEditingArea() == EditingArea::tracks)
         {
@@ -4100,6 +4216,11 @@ private:
         {
             if (auto reason = incompatiblePlacement(action); reason.isNotEmpty())
                 warnPlacement(reason);
+            return;
+        }
+        if (pianoRollHasFocus())
+        {
+            pianoRoll.apply(*noteAction(action));
             return;
         }
         const bool tracks = activeEditingArea() == EditingArea::tracks;
@@ -4329,27 +4450,43 @@ private:
         return {};
     }
 
-    void slideEffectsOut(const ju::Image& snapshot)
+    void slideEditorIn(ju::Component& editor)
     {
-        effectsAnimator.cancelAnimation(&outgoingEffects, false);
-        outgoingEffects.setVisible(snapshot.isValid());
+        if (!editor.isShowing())
+            return;
+        const auto bounds = editingPanelArea.getLocalBounds();
+        editor.setBounds(bounds.translated(0, bounds.getHeight()));
+        editorAnimator.animateComponent(&editor, bounds, 1.0f, 220, false, 1.0f, 0.0f);
+    }
+
+    void slideEditorOut(const ju::Image& snapshot)
+    {
+        editorAnimator.cancelAnimation(&outgoingEditor, false);
+        outgoingEditor.setVisible(snapshot.isValid());
         if (!snapshot.isValid())
             return;
-        const auto bounds = effectsEditorArea.getLocalBounds();
-        outgoingEffects.setImage(snapshot);
-        outgoingEffects.setBounds(bounds);
-        outgoingEffects.setAlpha(1.0f);
-        effectsAnimator.animateComponent(&outgoingEffects, bounds.translated(0, bounds.getHeight()),
+        const auto bounds = editingPanelArea.getLocalBounds();
+        outgoingEditor.setImage(snapshot);
+        outgoingEditor.setBounds(bounds);
+        outgoingEditor.setAlpha(1.0f);
+        editorAnimator.animateComponent(&outgoingEditor, bounds.translated(0, bounds.getHeight()),
                                          0.0f, 220, false, 0.0, 1.0);
+    }
+
+    void suspendEffectsEditor()
+    {
+        if (!effectsEditor.isVisible())
+            return;
+        editorAnimator.cancelAnimation(&effectsEditor, false);
+        effectsEditor.setVisible(false);
+        if (actionSelection.requestedArea == EditingArea::window)
+            actionSelection.requestedArea.reset();
     }
 
     void hideEffectsEditor()
     {
-        effectsAnimator.cancelAnimation(&effectsEditor, false);
+        suspendEffectsEditor();
         effectsEditor.close();
-        effectsEditor.setVisible(false);
-        if (actionSelection.requestedArea == EditingArea::window)
-            actionSelection.requestedArea.reset();
         resized();
     }
 
@@ -4357,15 +4494,50 @@ private:
     {
         const auto outgoing = effectsSnapshot();
         hideEffectsEditor();
-        slideEffectsOut(outgoing);
+        slideEditorOut(outgoing);
         updateControls();
+    }
+
+    void hidePianoRoll()
+    {
+        if (!pianoRoll.isVisible())
+            return;
+        editorAnimator.cancelAnimation(&pianoRoll, false);
+        pianoRoll.setVisible(false);
+        if (actionSelection.requestedArea == EditingArea::window)
+            actionSelection.requestedArea.reset();
+    }
+
+    void closePianoRoll()
+    {
+        const auto outgoing = pianoRoll.createComponentSnapshot(pianoRoll.getLocalBounds());
+        hidePianoRoll();
+        slideEditorOut(outgoing);
+        updateControls();
+    }
+
+    void focusPianoRoll()
+    {
+        if (pianoRoll.isVisible())
+        {
+            actionSelection.requestedArea = EditingArea::window;
+            if (inspectorContext != EditingArea::timeline)
+            {
+                inspectorContext = EditingArea::timeline;
+                resized();
+            }
+            updateControls();
+        }
     }
 
     void setProject(std::unique_ptr<te::Edit> next, const ju::File& file)
     {
+        hidePianoRoll();
+        pianoRoll.clearProject();
+        pianoRollClip = {};
         if (effectsEditor.isOpen())
             hideEffectsEditor();
-        slideEffectsOut({});
+        slideEditorOut({});
         meters.clear();
         arrangement.waves.clear();
         parameterGesture = nullptr;
@@ -4472,7 +4644,7 @@ private:
     {
         selection = index;
         auto* track = trackAt(index);
-        if (effectsEditor.target && track && effectsEditor.target->track != track->itemID)
+        if (effectsEditor.isVisible() && effectsEditor.target && track && effectsEditor.target->track != track->itemID)
             closeEffectsEditor();
         actionSelection.track = track ? track->itemID : te::EditItemID{};
         actionSelection.requestedArea = EditingArea::tracks;
@@ -4570,10 +4742,13 @@ private:
         auto& transport = edit->getTransport();
         if (!transport.isPlaying())
         {
+            pianoRoll.stopAudition();
+            pianoRoll.cancelGesture();
             if (!paused)
                 transport.setPosition(editCursor);
             transport.play(false);
             paused = false;
+            updateControls();
         }
     }
 
@@ -4917,12 +5092,23 @@ private:
         return {};
     }
 
-    std::optional<float> inspectorPulse(te::EditItemID item, double milliseconds) const
+    static std::optional<float> selectionPulse(te::EditItemID item, te::EditItemID target, double milliseconds)
     {
-        if (!item.isValid() || item != inspectorPulseTarget())
+        if (!item.isValid() || item != target)
             return {};
         const auto phase = milliseconds * ju::MathConstants<double>::twoPi / 1000.0;
         return static_cast<float>(0.5 - 0.5 * std::cos(phase));
+    }
+
+    std::optional<float> inspectorPulse(te::EditItemID item, double milliseconds) const
+    {
+        return selectionPulse(item, inspectorPulseTarget(), milliseconds);
+    }
+
+    std::optional<float> clipPulse(te::EditItemID item, double milliseconds) const
+    {
+        const auto target = pianoRollHasFocus() ? pianoRollClip : inspectorPulseTarget();
+        return selectionPulse(item, target, milliseconds);
     }
 
     bool trackIsHighlighted(const te::AudioTrack& track) const
@@ -5239,7 +5425,7 @@ private:
         const auto* missing = missingWave(&clip);
         if (missing)
             colour = ju::Colours::grey;
-        const auto pulse = inspectorPulse(clip.itemID, ju::Time::getMillisecondCounterHiRes());
+        const auto pulse = clipPulse(clip.itemID, ju::Time::getMillisecondCounterHiRes());
         const auto fill = pulse ? ju::jmap(*pulse, 0.44f, 0.82f) : selected ? 0.56f : 0.27f;
         g.setColour(colour.withMultipliedBrightness(fill));
         g.setOpacity(0.8f);
@@ -5495,13 +5681,15 @@ private:
             const auto contains = [component](ju::Component* control) {
                 return control == component || control->isParentOf(component);
             };
-            if (effectsEditor.isOpen() && !contains(&inspectorEffects)
+            if (effectsEditor.isVisible() && !contains(&inspectorEffects)
                 && !std::any_of(effectButtons.begin(), effectButtons.end(), contains))
                 closeEffectsEditor();
             actionSelection.requestedArea = EditingArea::inspector;
         }
         else if (event.eventComponent == &effectsEditor || effectsEditor.isParentOf(event.eventComponent))
             actionSelection.requestedArea = EditingArea::window;
+        else if (event.eventComponent == &pianoRoll || pianoRoll.isParentOf(event.eventComponent))
+            return focusPianoRoll();
         updateControls();
     }
 
@@ -5563,6 +5751,41 @@ private:
                         g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 4.0f, 2.0f);
     }
 
+    void openPianoRoll(const ju::MouseEvent& event)
+    {
+        if (!edit || !event.mods.isLeftButtonDown() || event.mods.isShiftDown()
+            || event.x < headerWidth || event.y < rulerHeight)
+            return;
+        const auto row = rowAt(event.y);
+        auto* track = trackAt(row);
+        if (!track)
+            return;
+        const auto clips = track->getClips();
+        for (int index = clips.size(); --index >= 0;)
+        {
+            auto* clip = clips[index];
+            if (!clipBounds(clip->getPosition().time, rowTop(row), rowHeight(row)).contains(event.getPosition()))
+                continue;
+            auto* midi = dynamic_cast<te::MidiClip*>(clip);
+            if (!midi)
+                return;
+
+            suspendEffectsEditor();
+            slideEditorOut({});
+            const bool entering = !pianoRoll.isVisible();
+            selection = row;
+            actionSelection.clips = { midi->itemID };
+            pianoRollClip = midi->itemID;
+            pianoRoll.setVisible(true);
+            pianoRoll.toFront(false);
+            resized();
+            focusPianoRoll();
+            if (entering)
+                slideEditorIn(pianoRoll);
+            return;
+        }
+    }
+
     void arrangementDown(const ju::MouseEvent& event)
     {
         if (!edit || (!event.mods.isLeftButtonDown() && !event.mods.isRightButtonDown()))
@@ -5618,8 +5841,17 @@ private:
                     auto* clip = clips[index];
                     if (!clipBounds(clip->getPosition().time, y, rowHeight(row)).contains(event.getPosition()))
                         continue;
-                    if (effectsEditor.isOpen())
-                        closeEffectsEditor();
+                    if (effectsEditor.isVisible())
+                    {
+                        if (dynamic_cast<te::MidiClip*>(clip))
+                        {
+                            const auto outgoing = effectsSnapshot();
+                            suspendEffectsEditor();
+                            slideEditorOut(outgoing);
+                        }
+                        else
+                            closeEffectsEditor();
+                    }
                     selection = row;
                     // Keep an existing group until a click resolves or a drag starts.
                     const bool draggable = dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip);
@@ -5656,7 +5888,7 @@ private:
             for (auto* clip : tracks[row]->getClips())
                 if (clipBounds(clip->getPosition().time, y, rowHeight(row)).intersects(selectionBox))
                     items.insert(clip->itemID);
-        if (!items.empty() && effectsEditor.isOpen())
+        if (!items.empty() && effectsEditor.isVisible())
             closeEffectsEditor();
     }
 
@@ -5779,10 +6011,28 @@ private:
             if (!actionTrack())
                 actionSelection.track = {};
         }
+        auto* editedMidiClip = edit && pianoRollClip.isValid()
+            ? dynamic_cast<te::MidiClip*>(te::findClipForID(*edit, pianoRollClip)) : nullptr;
+        if (!editedMidiClip)
+        {
+            hidePianoRoll();
+            pianoRollClip = {};
+        }
         const auto active = activeEditingArea();
+        const bool pianoFocused = pianoRollHasFocus();
+        pianoRoll.refresh(editedMidiClip, pianoRoll.isVisible() && editingStopped(), pianoFocused);
+        if (pitchNavigation.front()->isVisible() != pianoFocused)
+        {
+            for (auto* control : pitchNavigation)
+                control->setVisible(pianoFocused);
+            layoutNavigation(navigationBounds);
+        }
+        const auto playing = edit && edit->getTransport().isPlaying();
+        pianoRoll.updatePlayback(playing ? std::optional { edit->getTransport().getPosition() } : std::nullopt,
+                                 follow, ju::Time::getMillisecondCounterHiRes());
         if (actionSelection.requestedArea && actionSelection.requestedArea != active)
             actionSelection.requestedArea = active;
-        if (active != EditingArea::inspector && !(active == EditingArea::window && effectsEditor.isOpen()))
+        if (active != EditingArea::inspector && active != EditingArea::window)
         {
             const auto oldContext = inspectorContext;
             inspectorContext = active;
@@ -6015,7 +6265,7 @@ private:
         inspectorButtons[0]->setEnabled(editingStopped() && inspectorTrack);
         inspectorButtons[1]->setEnabled(editingStopped() && inspectorTrack && canApplyInspectorSettings(*inspectorTrack));
         inspector.setActive(edit && active == EditingArea::inspector);
-        effectsEditor.setActive(edit && active == EditingArea::window);
+        effectsEditor.setActive(edit && effectsEditor.isVisible() && active == EditingArea::window);
         for (const auto& slot : actionButtons)
         {
             const bool enabled = canDispatch(slot.action) || incompatiblePlacement(slot.action).isNotEmpty();
@@ -6150,10 +6400,12 @@ private:
     std::vector<ju::Component*> clipInspectorButtons, trackInspectorToggles, loopInspectorButtons;
     ju::Slider inspectorVolume, inspectorPan, inspectorGain, inspectorFadeIn, inspectorFadeOut;
     ju::Slider inspectorVelocity, inspectorTranspose;
-    ju::Component effectsEditorArea;
-    ju::ImageComponent outgoingEffects;
+    ju::Component editingPanelArea;
+    ju::ImageComponent outgoingEditor;
     EffectsEditor effectsEditor { [this] { return edit.get(); }, [this] { closeEffectsEditor(); } };
-    ju::ComponentAnimator effectsAnimator;
+    PianoRoll pianoRoll;
+    te::EditItemID pianoRollClip;
+    ju::ComponentAnimator editorAnimator;
     ju::TooltipWindow tooltips { this };
     ju::TextEditor tempo;
     ju::ComboBox signature, recordMode, snap;
@@ -6161,7 +6413,8 @@ private:
     ju::TextButton *playButton = nullptr, *pauseButton = nullptr, *loopButton = nullptr,
         *clickButton = nullptr, *countButton = nullptr, *heightButton = nullptr, *followButton = nullptr;
     ju::TextButton *undoButton = nullptr, *redoButton = nullptr;
-    std::vector<ju::Component*> first, second, panelButtons, historyButtons, inspectorButtons, navigation;
+    std::vector<ju::Component*> first, second, panelButtons, historyButtons, inspectorButtons, navigation, pitchNavigation;
+    ju::Rectangle<int> navigationBounds;
     std::array<ActionGroup, 4> actionGroups;
     std::vector<ActionButton> actionButtons;
     ActionSelection actionSelection;

@@ -60,8 +60,8 @@ bool MainGui::testEffectsEditor(te::Engine& engine)
             && editor.title.getText().contains(first->getName()), "show saved values and track name")
         || !check(gui.activeEditingArea() == EditingArea::window && !gui.canDispatch(UniversalAction::remove)
             && gui.actionSelection.track == firstID && editor.isVisible()
-            && gui.effectsEditorArea.getX() == gui.arrangement.getX() + headerWidth
-            && gui.effectsEditorArea.getRight() == gui.inspectorDivider.getX(), "overlay bounds and Universal Actions ownership"))
+            && gui.editingPanelArea.getX() == gui.arrangement.getX() + headerWidth
+            && gui.editingPanelArea.getRight() == gui.inspectorDivider.getX(), "overlay bounds and Universal Actions ownership"))
         return false;
 
     gui.actionSelection.track = secondID;
@@ -329,13 +329,13 @@ bool MainGui::testEffectsEditor(te::Engine& engine)
         return false;
     auto* messages = ju::MessageManager::getInstance();
     messages->runDispatchLoopUntil(300);
-    if (!check(editor.getBounds() == gui.effectsEditorArea.getLocalBounds()
+    if (!check(editor.getBounds() == gui.editingPanelArea.getLocalBounds()
             && control("wet level").slider.getHeight() >= 28 && gui.inspector.isVisible(),
                "fixed slide-up layout at minimum window size"))
         return false;
     gui.closeEffectsEditor();
     messages->runDispatchLoopUntil(300);
-    return check(!editor.isVisible() && gui.outgoingEffects.getAlpha() == 0.0f
+    return check(!editor.isVisible() && gui.outgoingEditor.getAlpha() == 0.0f
                      && gui.arrangement.getBottom() + 2 == gui.navigation.front()->getY(),
                  "close animation leaves the full-height timeline");
 }

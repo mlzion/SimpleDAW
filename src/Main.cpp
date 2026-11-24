@@ -18,6 +18,7 @@ bool runEffectsFoundationTest(te::Engine&);
 
 namespace
 {
+#include "PianoRoll.h"
 
 constexpr int maxTracks = 24;
 constexpr const char* applicationTitle = "SimpleDAW v" SIMPLEDAW_RELEASE_VERSION;
@@ -562,7 +563,10 @@ private:
                 }
         if (armed)
         {
+            pianoRoll.stopAudition();
+            pianoRoll.cancelGesture();
             edit->getTransport().record(false);
+            updateControls();
             report(edit->getTransport().isRecording() ? "Recording" : "Could not start recording");
             return;
         }
@@ -800,7 +804,7 @@ public:
             || command == "--midi-import-test" || command == "--midi-inspector-test"
             || command == "--inspector-loop-test" || command == "--inspector-clone-test"
             || command == "--inspector-effects-test" || command == "--audio-overlap-test"
-            || command == "--device-setup-test" || command == "--drum-master-test";
+            || command == "--device-setup-test" || command == "--drum-master-test" || command == "--piano-roll-test";
         engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW",
             std::make_unique<SimpleDawUIBehaviour>(), std::make_unique<SimpleDawEngineBehaviour>(testing));
         engine->getPluginManager().createBuiltInType<drumMaster::Sampler>();
@@ -831,6 +835,8 @@ public:
                 passed = MainGui::testMidiImport(*engine);
             else if (command == "--effects-editor-test")
                 passed = MainGui::testEffectsEditor(*engine);
+            else if (command == "--piano-roll-test")
+                passed = MainGui::testPianoRoll(*engine);
             else if (command == "--effects-foundation-test")
                 passed = runEffectsFoundationTest(*engine);
             else
