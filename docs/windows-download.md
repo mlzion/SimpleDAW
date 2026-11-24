@@ -1,7 +1,7 @@
 # SimpleDAW for Windows x64
 
 1. Install the [Microsoft Visual C++ v14 x64 Redistributable](https://aka.ms/vc14/vc_redist.x64.exe) if a compatible version is absent. Microsoft requires a version at least as recent as the build tools used for the app. [Microsoft support and version information](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist/)
-2. Download the Windows x64 ZIP for the version you want to test and extract it. For v0.22.1, open `SimpleDAW-v0.22.1-Windows-x64.zip` and double-click `SimpleDAW-v0.22.1.exe`. SimpleDAW has no installer. Microsoft runtime files are supplied by Windows and the separately installed Microsoft package.
+2. Download and extract the accepted Windows x64 ZIP, then open `SimpleDAW-v0.24.1.exe`. [SimpleDAW-v0.24.1-Windows-x64.zip](https://github.com/mlzion/SimpleDAW/actions/runs/45291914568/artifacts/14875361245) SimpleDAW has no installer. Microsoft runtime files are supplied by Windows and the separately installed Microsoft package.
 
 The ZIP comes from the explicitly authorized Windows x64 `/MD` workflow. [Windows build policy](build/windows-build-policy.md)
 

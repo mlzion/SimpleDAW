@@ -12,7 +12,7 @@ The Windows CTest runs the executable in smoke-test mode. It generates a short i
 
 ## MIDI routing and Setup
 
-The approved [MIDI track routing amendment](specifications/midi-track-routing.md) puts device selection and input/output channels on the track. The Clip Inspector edits clip properties, and the Piano Roll uses track routing for audition.
+In v0.24.1, Piano Roll audition uses the MIDI clip’s effective channel and the containing track’s instrument path. The Clip Inspector edits clip properties. Track-owned MIDI device selection and input/output channels are deferred under the approved routing amendment. [MIDI track routing amendment](specifications/midi-track-routing.md)
 
 Setup uses JUCE’s device selector and lists OS-visible MIDI inputs. The selector enumerates on open and re-enumerates on AudioDeviceManager change notifications. Tracktion maintains its own hardware MIDI list, polling every four seconds by default and disabling automatic scans if an input or output enumeration exceeds 200 ms. Reopening Setup refreshes its list independently of Tracktion’s list. See the [branch and Setup inspection](research/midi-track-routing-review.md) for implementation findings.
 
