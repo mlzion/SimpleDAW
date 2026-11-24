@@ -1,5 +1,13 @@
 # SimpleDAW project status
 
+## v0.24.1 — Piano Roll P0 integration
+
+The integration branch ports the reusable editor from foundation commit `6486a5f`. MIDI clips open by double-click in the slide-up area shared with E1. The active editor owns UAT commands, with independent Timeline and Track selections. Note Duplicate, right-drag velocity, and remembered draw velocity are included. Note edits use Tracktion's Edit UndoManager and propagate across linked MIDI clips. Audition uses the current effective clip channel and existing instrument path. Track-owned MIDI routing remains deferred. [Editing and acceptance notes](docs/research/piano-roll-p0.md)
+
+**Accepted baseline `73b9554`.** Linux and Windows x64 Release `/MD` passed 14/14 CTests. Windows live acceptance P01–P12 passed, as reported by the owner. [Windows run](https://github.com/mlzion/SimpleDAW/actions/runs/45196843591) · [Baseline ZIP](https://github.com/mlzion/SimpleDAW/actions/runs/45196843591/artifacts/14829881549)
+
+**Pending refinements in draft PR #24.** Separate edit and playback cursors, live velocity readouts, focus-sensitive bottom navigation, and a Timeline pulse for the edited clip. Debian 13 x64 Release (GCC 14, `-O1`, Xvfb) passed all 14 CTests. Piano Roll and E1 each passed three additional consecutive runs. Windows x64 Release `/MD` and focused live retesting await separate authorization. [Retest procedure](docs/research/piano-roll-p0.md#focused-windows-retest-for-the-refinements)
+
 ## Inspector v0.23.1 and Effects Editor E1 — ACCEPTED
 
 Windows live acceptance is **COMPLETE**. The original R01–R12 cycle on `4475447` recorded 9 PASS, 2 PARTIAL and 1 FAIL. On final accepted commit `69359da16e7b327a09cd8c1c97054832987eac52`, all four focused retests passed: live MIDI note termination, Clip Mute indicators, MIDI clip color controls and legacy REPLACE overlap compatibility. Clip Gain Undo follows the intentional global Undo/Redo restriction during playback and recording. No acceptance defects remain. [Acceptance record](docs/testing/v0.23.1-live-test.md)
@@ -8,7 +16,7 @@ PR #20 integrated Inspector and E1 into `main` in merge commit `8d9c7e796e166246
 
 On the accepted commit, Windows x64 Release `/MD` passed 13/13 CTests, runtime dependency verification and isolated startup. Debian 13 x64 Release with Clang 19 and Xvfb passed 13/13 CTests. [Windows workflow run](https://github.com/mlzion/SimpleDAW/actions/runs/45129466466) · [Acceptance ZIP and matching source](https://github.com/mlzion/SimpleDAW/actions/runs/45129466466/artifacts/14797247592)
 
-Piano Roll P0 remains on `feature/piano-roll-p0` as a separate workstream. MIDI track routing, channel controls, lossless multichannel import and project migration await separate implementation authorization. Pattern Editor, Master Drum Track, Automation Editor, Bus 1/Bus 2, Mixer, clip time-stretch and parent/child routing remain deferred. The proposed next phase is a scoped Piano Roll P0 integration review, with the MIDI routing amendment tracked as a separate decision. [Piano Roll P0 branch](https://github.com/mlzion/SimpleDAW/tree/feature/piano-roll-p0) · [Phase plan](docs/specifications/README.md)
+The original Piano Roll P0 foundation remains on `feature/piano-roll-p0` at `6486a5f`. MIDI track routing, channel controls, lossless multichannel import and project migration await separate implementation authorization. Pattern Editor, Master Drum Track, Automation Editor, Bus 1/Bus 2, Mixer, clip time-stretch and parent/child routing remain deferred. [Piano Roll P0 branch](https://github.com/mlzion/SimpleDAW/tree/feature/piano-roll-p0) · [Phase plan](docs/specifications/README.md)
 
 ## MIDI track routing amendment
 
