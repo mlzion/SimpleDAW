@@ -1,12 +1,14 @@
 # SimpleDAW project status
 
-## v0.24.1 — Piano Roll P0 integration
+## v0.24.1 — Piano Roll P0 — ACCEPTED
 
-The integration branch ports the reusable editor from foundation commit `6486a5f`. MIDI clips open by double-click in the slide-up area shared with E1. The active editor owns UAT commands, with independent Timeline and Track selections. Note Duplicate, right-drag velocity, and remembered draw velocity are included. Note edits use Tracktion's Edit UndoManager and propagate across linked MIDI clips. Audition uses the current effective clip channel and existing instrument path. Track-owned MIDI routing remains deferred. [Editing and acceptance notes](docs/research/piano-roll-p0.md)
+This release integrates the reusable editor from foundation commit `6486a5f`. MIDI clips open by double-click in the slide-up area shared with E1. The active editor owns UAT commands, with independent Timeline and Track selections. Note Duplicate, right-drag velocity, and remembered draw velocity are included. Note edits use Tracktion's Edit UndoManager and propagate across linked MIDI clips. Audition uses the current effective clip channel and existing instrument path. Track-owned MIDI routing remains deferred. [Editing and acceptance notes](docs/research/piano-roll-p0.md)
 
 **Accepted baseline `73b9554`.** Linux and Windows x64 Release `/MD` passed 14/14 CTests. Windows live acceptance P01–P12 passed, as reported by the owner. [Windows run](https://github.com/mlzion/SimpleDAW/actions/runs/45196843591) · [Baseline ZIP](https://github.com/mlzion/SimpleDAW/actions/runs/45196843591/artifacts/14829881549)
 
-**Pending refinements in draft PR #24.** Separate edit and playback cursors, live velocity readouts, focus-sensitive bottom navigation, and a Timeline pulse for the edited clip. Debian 13 x64 Release (GCC 14, `-O1`, Xvfb) passed all 14 CTests. Piano Roll and E1 each passed three additional consecutive runs. Windows x64 Release `/MD` and focused live retesting await separate authorization. [Retest procedure](docs/research/piano-roll-p0.md#focused-windows-retest-for-the-refinements)
+**Final acceptance `885631e`.** All 14 Windows x64 Release `/MD` CTests passed. Runtime dependency verification, isolated startup, and ZIP integrity checks passed. The owner reported F01–F05 live checks passed, with no outstanding acceptance defects. Debian 13 x64 Release (GCC 14, `-O1`, Xvfb) passed 14/14 CTests, with three additional passes each for Piano Roll and E1. [Final Windows run](https://github.com/mlzion/SimpleDAW/actions/runs/45291914568) · [Accepted ZIP](https://github.com/mlzion/SimpleDAW/actions/runs/45291914568/artifacts/14875361245) · [Acceptance record](docs/research/piano-roll-p0.md#acceptance)
+
+[PR #24](https://github.com/mlzion/SimpleDAW/pull/24) merged into `main` at `05d2c37`. The application, tests, and build configuration match the accepted commit.
 
 ## Inspector v0.23.1 and Effects Editor E1 — ACCEPTED
 
