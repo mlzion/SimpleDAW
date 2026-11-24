@@ -23,10 +23,11 @@ Branch: `design-sandbox`
 | IDEA-001 | Clip locking | Timeline / Clip Inspector; post-v0.23.1 timeline/clip-editing polish | APPROVED | Total editing lockdown; Inspector-only unlock; gray clip presentation. Specification promotion and implementation not yet authorized. |
 | IDEA-002 | Audio Quantization Editor | Advanced Audio Editing; late-stage, post core-feature completion | APPROVED | Guitar, piano, vocals; automatic/manual timing correction, pitch preservation, non-destructive; technical feasibility investigation required. |
 | IDEA-003 | Shapeable Automation Clips for Tremolo / Vibrato | Automation Editor / audio and MIDI modulation; after core DAW operational | PROPOSED | Place movable, resizable modulation clips on automation lane; shape rate and depth over time; design details pending. |
+| IDEA-004 | MIDI Step Sequencer / Arpeggiator | MIDI editing / post-core DAW | PROPOSED | Reuse Drum Pattern Editor concepts; manual and automatic sequencing; capture to MIDI clip. |
 
 ## Implementation phase index
 
-This index groups sandbox-approved ideas by **recommended** phase for future planning. A recommendation is not a release commitment or implementation authorization. Update this index whenever an idea changes status, phase, or promotion state.
+This index groups sandbox ideas by **recommended** phase for future planning. A recommendation is not a release commitment or implementation authorization. Update this index whenever an idea changes status, phase, or promotion state.
 
 ### Post-v0.23.1 — Timeline & Clip Editing Polish
 
@@ -46,6 +47,12 @@ This index groups sandbox-approved ideas by **recommended** phase for future pla
 | --- | --- | --- | --- |
 | [IDEA-003 — Shapeable Automation Clips](#idea-003--shapeable-automation-clips-for-tremolo--vibrato-2026-11-22) | PROPOSED | Not promoted | Not authorized; revisit after SimpleDAW fully operational |
 
+### Post-core DAW — MIDI Step Sequencer / Arpeggiator
+
+| Idea | Sandbox status | Canonical spec | Implementation |
+| --- | --- | --- | --- |
+| [IDEA-004 — MIDI Step Sequencer / Arpeggiator](#idea-004--midi-step-sequencer--arpeggiator-2026-11-24) | PROPOSED | Not promoted | Not authorized; revisit after core DAW completion |
+
 ### Unscheduled / awaiting phase assignment
 
 No ideas currently assigned.
@@ -59,6 +66,7 @@ Use the same idea ID throughout discussion, specification promotion, implementat
 | IDEA-001 | Not promoted | Not authorized | — | — | Sandbox approved |
 | IDEA-002 | Not promoted | Not authorized | — | — | Sandbox approved; late-stage feasibility review pending |
 | IDEA-003 | Not promoted | Not authorized | — | — | Proposed; revisit after core DAW completion |
+| IDEA-004 | Not promoted | Not authorized | — | — | Proposed; post-core design and reuse review pending |
 
 When an idea progresses, record the canonical spec document and section, promotion PR/commit, explicit implementation authorization, implementation PR/commit, release version, and acceptance result. Never label an idea implemented solely because its sandbox status is APPROVED. Preserve history after delivery rather than removing completed ideas.
 
@@ -138,6 +146,28 @@ Add an entry for each idea with its ID, date, status, scope, behavior, tradeoffs
 **Open decisions for later:** Exact lane structure; destinations and parameter ownership; overlap rules; modulation phase and clip boundaries; MIDI note continuation and CC/pitch-bend resets; audio pitch quality; curve editing and resize semantics; whether/how to reuse existing canonical track LFOs. Keep this separate from the already-documented track-level LFO feature.
 
 **Authority:** PROPOSED sandbox idea only. No canonical spec changes, Codex notification, code changes, or implementation authorization.
+
+### IDEA-004 — MIDI Step Sequencer / Arpeggiator (2026-11-24)
+
+**Status:** PROPOSED  
+**Subsystem:** MIDI instrument tracks / pop-up editors / Drum Pattern Editor component reuse  
+**Recommended phase:** After SimpleDAW is fully operational; no release commitment.
+
+**Intent:** Provide an approachable programmable melodic step sequencer and chord arpeggiator for ordinary MIDI instrument tracks, using the Drum Pattern Editor as a potential architectural foundation.
+
+**Proposed concept:**
+- Separate pop-up editor with musical pitch rows, rhythmic step columns (16-step example), and velocity display below.
+- Manual mode: activate individual notes or multiple pitches per step to program melodic or polyphonic patterns.
+- Arpeggiator mode: automatically sequence notes of a held chord; candidate directions up, down, up/down and random, with octave range.
+- Per-step pitch, velocity, note duration/gate and rhythmic subdivision; reuse existing grid, selection, velocity and subdivision controls where practical.
+- Capture generated notes into an ordinary MIDI clip for subsequent Piano Roll editing.
+- Optional future input: use chords already recorded in a MIDI clip, following chord changes across a progression rather than requiring a held keyboard chord. This is a design option, not a settled requirement.
+
+**Architecture rationale:** Another reason to consider retaining the separate Drum Pattern Editor window and reusable editor components. Evaluate actual component reuse after the drum editor is complete; do not assume code reuse is straightforward or mandate refactoring during MD0.
+
+**Open decisions:** Pattern length, pitch range and scrolling, gate/subdivision semantics, chord source and capture workflow, live versus offline generation, timing and note termination, and exact shared editor architecture. Detailed design and acceptance criteria deferred.
+
+**Authority:** PROPOSED sandbox idea only. No changes to current MD0 requirements, canonical specs, application code, or implementation authorization. No Codex notification needed now.
 
 ## Promotion log
 
