@@ -19,6 +19,7 @@ bool runEffectsFoundationTest(te::Engine&);
 namespace
 {
 #include "PianoRoll.h"
+#include "DrumPattern.h"
 
 constexpr int maxTracks = 24;
 constexpr const char* applicationTitle = "SimpleDAW v" SIMPLEDAW_RELEASE_VERSION;
@@ -804,7 +805,7 @@ public:
             || command == "--midi-import-test" || command == "--midi-inspector-test"
             || command == "--inspector-loop-test" || command == "--inspector-clone-test"
             || command == "--inspector-effects-test" || command == "--audio-overlap-test"
-            || command == "--device-setup-test" || command == "--drum-master-test" || command == "--piano-roll-test";
+            || command == "--device-setup-test" || command == "--drum-master-test" || command == "--piano-roll-test" || command == "--drum-grid-test";
         engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW",
             std::make_unique<SimpleDawUIBehaviour>(), std::make_unique<SimpleDawEngineBehaviour>(testing));
         engine->getPluginManager().createBuiltInType<drumMaster::Sampler>();
@@ -817,6 +818,8 @@ public:
                 passed = MainGui::testCorrections(*engine);
             else if (command == "--uat-test")
                 passed = MainGui::testUniversalActions(*engine);
+            else if (command == "--drum-grid-test")
+                passed = MainGui::testDrumGrid(*engine);
             else if (command == "--drum-master-test")
                 passed = runDrumMasterTest(*engine) && MainGui::testDrumUi(*engine);
             else if (command == "--device-setup-test")

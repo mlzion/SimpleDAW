@@ -138,8 +138,19 @@
         void mouseDrag(const ju::MouseEvent& event) override { owner.arrangementDrag(event); }
         void mouseUp(const ju::MouseEvent& event) override { owner.arrangementUp(event); }
         void mouseDoubleClick(const ju::MouseEvent& event) override { owner.openPianoRoll(event); }
-        void mouseWheelMove(const ju::MouseEvent&, const ju::MouseWheelDetails& wheel) override
+        bool keyPressed(const ju::KeyPress& key) override
         {
+            if (key == ju::KeyPress::escapeKey && owner.drumPopupStep)
+            {
+                owner.closeDrumPopup();
+                return true;
+            }
+            return false;
+        }
+        void mouseWheelMove(const ju::MouseEvent& event, const ju::MouseWheelDetails& wheel) override
+        {
+            if (wheel.deltaX == 0.0f && owner.adjustDrumVelocity(event.getPosition(), wheel.deltaY))
+                return;
             if (wheel.deltaX != 0.0f)
                 owner.scrollTime(-wheel.deltaX * getWidth() / owner.pixelsPerSecond);
             else if (wheel.deltaY != 0.0f)
@@ -362,6 +373,24 @@ public:
         drumKitButton = std::make_unique<ju::TextButton>("DRUM LANES");
         inspectorControls.addChildComponent(*drumKitButton);
         drumKitButton->onClick = [this] { showDrumLanes(); };
+        arrangement.addChildComponent(drumPopup);
+        for (size_t i = 0; i < drumSubdivisionButtons.size(); ++i)
+        {
+            auto& control = drumSubdivisionButtons[i];
+            drumPopup.addAndMakeVisible(control);
+            control.setButtonText(ju::String(static_cast<int>(i + 1)));
+            control.setTooltip("Toggle this 64th-note subdivision");
+            control.setBounds(static_cast<int>(i * 28), 0, 28, 30);
+            control.setWantsKeyboardFocus(false);
+            control.onClick = [this, i] {
+                if (auto* clip = selectedDrumPattern(); clip && drumPopupStep && editingStopped())
+                {
+                    auto editor = makeDrumEditor(*clip);
+                    DrumPattern(*clip, editor).toggleSubdivision(*drumPopupStep, static_cast<int>(i), drumPopupVelocity);
+                    updateControls();
+                }
+            };
+        }
         button(inspectorButtons, "COPY SETTINGS", [this] { useInspectorSettings(false); });
         button(inspectorButtons, "APPLY SETTINGS", [this] { useInspectorSettings(true); });
         inspector.setInterceptsMouseClicks(true, true);
@@ -797,6 +826,8 @@ public:
         }
 
         arrangement.setBounds(area);
+        if (drumPatternID.isValid())
+            fitDrumViewport(viewStart);
         if (effectsEditor.isVisible() || pianoRoll.isVisible())
         {
             auto timeline = area.withTrimmedLeft(headerWidth);
@@ -810,6 +841,7 @@ public:
     }
 
     #include "PianoRollTest.inc"
+    #include "../tests/DrumGrid.inc"
     static bool testDrumUi(te::Engine& engine)
     {
         const ju::TemporaryFile file(".tracktionedit"), settings(".settings");
@@ -2516,6 +2548,7 @@ private:
     }
 
 #include "DrumInspector.inc"
+#include "DrumGrid.inc"
 
     ju::StringArray getMenuBarNames() override { return { "FILE", "EDIT", "INSERT", "OPTIONS", "HELP", "SETTINGS" }; }
 
@@ -2529,7 +2562,19 @@ private:
         {
             case 0: add({ newProject, openProject, saveProject, saveProjectAs, importAudio, importMidiFile, exportAudio, exitApp }); break;
             case 1: add({ undo, redo, cut, copy, paste, duplicate, deleteItem, locateFile }); break;
-            case 2: add({ audioTrack, midiTrack, midiItem, synth, reverb, vst3 }); break;
+            case 2:
+            {
+                add({ audioTrack, midiTrack });
+                ju::PopupMenu lengths;
+                auto* track = selectedTrack();
+                const bool canInsertMidi = editingStopped() && track && placementError(TrackType::midi, *track).isEmpty();
+                for (int bars = 1; bars <= 4; ++bars)
+                    lengths.addItem(midiLengthMenuBase + bars, ju::String(bars) + (bars == 1 ? " bar" : " bars"),
+                                    true, bars == midiInsertBars);
+                menu.addSubMenu("MIDI Clip", lengths, canInsertMidi);
+                add({ synth, reverb, vst3 });
+                break;
+            }
             case 3: add({ devices, armAudio, armMidi, monitoringReport }); break;
             case 4: add({ about }); break;
             case 5:
@@ -2544,10 +2589,16 @@ private:
         return menu;
     }
 
-    static constexpr int enableDrumMasterMenuItem = 10001;
+    static constexpr int enableDrumMasterMenuItem = 10001, midiLengthMenuBase = 10010;
 
     void menuItemSelected(int item, int menu) override
     {
+        if (menu == 2 && ju::isPositiveAndBelow(item - midiLengthMenuBase - 1, 4))
+        {
+            if (insertMidi(item - midiLengthMenuBase))
+                updateControls();
+            return;
+        }
         if (menu != 5 || item != enableDrumMasterMenuItem || !editingStopped())
             return;
         auto* master = drumMaster::find(*edit);
@@ -4100,6 +4151,15 @@ private:
             const auto note = noteAction(action);
             return note && pianoRoll.canApply(*note);
         }
+        if (drumGridHasFocus())
+        {
+            if (action != Action::remove || drumSteps.empty())
+                return false;
+            auto editor = makeDrumEditor(*selectedDrumPattern());
+            const DrumPattern pattern(*selectedDrumPattern(), editor);
+            return std::any_of(drumSteps.begin(), drumSteps.end(),
+                [&](auto step) { return !pattern.hits(step).empty(); });
+        }
         if (action == Action::duplicate)
             return false;
         if (activeEditingArea() == EditingArea::tracks)
@@ -4223,6 +4283,14 @@ private:
             pianoRoll.apply(*noteAction(action));
             return;
         }
+        if (drumGridHasFocus())
+        {
+            auto editor = makeDrumEditor(*selectedDrumPattern());
+            if (DrumPattern(*selectedDrumPattern(), editor).remove(drumSteps))
+                drumSteps.clear();
+            updateControls();
+            return;
+        }
         const bool tracks = activeEditingArea() == EditingArea::tracks;
         auto& history = edit->getUndoManager();
         if (action == Action::remove || action == Action::cut)
@@ -4288,7 +4356,7 @@ private:
 
     bool canClearTimeSelection() const
     {
-        return canEditTimeline() && actionSelection.clips.empty() && timeSelection.has_value();
+        return !drumGridHasFocus() && canEditTimeline() && actionSelection.clips.empty() && timeSelection.has_value();
     }
 
     void clearTimeSelection()
@@ -4553,6 +4621,16 @@ private:
             if (type == TrackType::mixed)
                 mixedTracks.add(track->getName());
         }
+        closeDrumPopup();
+        if (drumPatternID.isValid())
+            pixelsPerSecond = ordinaryTimelineScale;
+        drumPatternID = {};
+        drumSteps.clear();
+        drumPendingClicks.clear();
+        drumAnchor.reset();
+        drumSelectionBox = {};
+        drumGridFocused = false;
+        midiInsertBars = 1;
         projectFile = file;
         selection = trackCount() == 0 ? -1 : 0;
         actionSelection = {};
@@ -4604,7 +4682,17 @@ private:
                 if (!te::EditFileOperations(*edit).saveAs(file))
                     return report("Could not save project copy");
                 edit->editFileRetriever = [file] { return file; };
-                projectFile = file;
+                closeDrumPopup();
+        if (drumPatternID.isValid())
+            pixelsPerSecond = ordinaryTimelineScale;
+        drumPatternID = {};
+        drumSteps.clear();
+        drumPendingClicks.clear();
+        drumAnchor.reset();
+        drumSelectionBox = {};
+        drumGridFocused = false;
+        midiInsertBars = 1;
+        projectFile = file;
                 if (auto* window = findParentComponentOfClass<ju::DocumentWindow>())
                     window->setName(ju::String(applicationTitle) + " - " + file.getFileName());
                 report("Project saved");
@@ -4663,21 +4751,37 @@ private:
             midi->setMidiChannel(te::MidiChannel(drumMaster::midiChannel));
     }
 
-    void insertMidi()
+    bool insertMidi(int requestedBars = 0)
     {
-        if (auto* track = selectedTrack())
+        auto* track = selectedTrack();
+        if (!track || !editingStopped())
+            return false;
+        if (const auto error = placementError(TrackType::midi, *track); error.isNotEmpty())
         {
-            if (const auto error = placementError(TrackType::midi, *track); error.isNotEmpty())
-                return warnPlacement(error);
-            const auto nextBar = barTime(edit->tempoSequence.toBarsAndBeats(editCursor).bars + 1);
-            edit->getUndoManager().beginNewTransaction("Insert MIDI item");
-            if (auto clip = te::insertMIDIClip(*track, "MIDI item", { editCursor, nextBar }))
-            {
-                setDrumClipChannel(*clip);
-                actionSelection.clips = { clip->itemID };
-                actionSelection.requestedArea = EditingArea::timeline;
-            }
+            warnPlacement(error);
+            return false;
         }
+        const auto bars = requestedBars == 0 ? midiInsertBars : requestedBars;
+        if (bars < 1 || bars > 4)
+            return false;
+        auto& tempo = edit->tempoSequence;
+        const auto start = te::TimePosition::fromSeconds(snapSeconds(editCursor.inSeconds()));
+        const auto bar = tempo.toBarsAndBeats(start).bars;
+        const auto length = tempo.toBeats(barTime(bar + bars)) - tempo.toBeats(barTime(bar));
+        const auto end = tempo.toTime(tempo.toBeats(start) + length);
+        if (end <= start || end > te::Edit::getMaximumEditEnd())
+            return false;
+        edit->getUndoManager().beginNewTransaction("Insert MIDI clip");
+        if (auto clip = te::insertMIDIClip(*track, drumMaster::isMaster(*track) ? "Drum pattern" : "MIDI item", { start, end }))
+        {
+            midiInsertBars = bars;
+            drumGridFocused = false;
+            setDrumClipChannel(*clip);
+            actionSelection.clips = { clip->itemID };
+            actionSelection.requestedArea = EditingArea::timeline;
+            return true;
+        }
+        return false;
     }
 
     void applyTempo()
@@ -4862,7 +4966,8 @@ private:
 
     void setViewStart(double seconds)
     {
-        viewStart = ju::jlimit(0.0, ju::jmax(0.0, totalSeconds() - visibleSeconds()), seconds);
+        if (!fitDrumViewport(seconds))
+            viewStart = ju::jlimit(0.0, ju::jmax(0.0, totalSeconds() - visibleSeconds()), seconds);
         arrangement.repaint();
     }
 
@@ -4889,6 +4994,8 @@ private:
 
     void zoom(double factor)
     {
+        if (selectedDrumPattern())
+            return;
         const auto offset = (editCursor.inSeconds() - viewStart) * pixelsPerSecond;
         const auto anchor = ju::jlimit(0.0, static_cast<double>(ju::jmax(0, arrangement.getWidth() - headerWidth)), offset);
         pixelsPerSecond = ju::jlimit(8.0, 1200.0, pixelsPerSecond * factor);
@@ -5622,6 +5729,14 @@ private:
                            20, 62, 21, ju::Justification::centredLeft);
             }
         }
+        auto* drumClip = selectedDrumPattern();
+        std::optional<MidiNoteEditor> drumEditor;
+        std::optional<DrumPattern> drumPattern;
+        if (drumClip)
+        {
+            drumEditor.emplace(makeDrumEditor(*drumClip));
+            drumPattern.emplace(*drumClip, *drumEditor);
+        }
         const auto tracks = visibleTracks();
         for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < arrangement.getHeight(); y += rowHeight(row), ++row)
         {
@@ -5629,7 +5744,11 @@ private:
             const auto colour = track.getColour().isTransparent() ? palette(row) : track.getColour();
             paintTrack(g, track, row, y, colour);
             if (drumMaster::isLane(track))
+            {
                 paintDrumLane(g, track, y, rowHeight(row), colour);
+                if (drumPattern)
+                    paintDrumGrid(g, *drumClip, *drumPattern, track, y, rowHeight(row), colour);
+            }
             for (auto* clip : track.getClips())
             {
                 const auto target = dragPreview && actionSelection.clips.contains(clip->itemID) ? row + dragRowDelta : row;
@@ -5742,6 +5861,14 @@ private:
             || actionSelection.clips.empty())
             return;
 
+        if (!drumSelectionBox.isEmpty())
+        {
+            g.setColour(ju::Colours::white.withAlpha(0.2f));
+            g.fillRect(drumSelectionBox);
+            g.setColour(ju::Colours::white);
+            g.drawRect(drumSelectionBox);
+        }
+
         // Keep selection outlines visible above the ruler range and overlapping clips.
         const auto tracks = visibleTracks();
         for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < arrangement.getHeight(); y += rowHeight(row), ++row)
@@ -5792,6 +5919,8 @@ private:
             return;
         if (arrangement.isShowing())
             arrangement.grabKeyboardFocus();
+        if (drumMouseDown(event))
+            return;
         const bool toggle = event.mods.isRightButtonDown();
         const auto area = event.x < headerWidth ? EditingArea::tracks : EditingArea::timeline;
         actionSelection.requestedArea = area;
@@ -5928,6 +6057,12 @@ private:
 
     void arrangementDrag(const ju::MouseEvent& event)
     {
+        if (drumGridFocused)
+        {
+            if (event.getDistanceFromDragStart() >= 5)
+                drumDrag(event.getPosition());
+            return;
+        }
         if (!edit)
             return;
         if (boxAnchor && event.getDistanceFromDragStart() >= 5)
@@ -5967,6 +6102,8 @@ private:
 
     void arrangementUp(const ju::MouseEvent& event)
     {
+        if (drumMouseUp(event))
+            return;
         if (edit && boxAnchor)
         {
             if (event.getDistanceFromDragStart() >= 5 || !selectionBox.isEmpty())
@@ -6011,6 +6148,7 @@ private:
             if (!actionTrack())
                 actionSelection.track = {};
         }
+        refreshDrumGrid();
         auto* editedMidiClip = edit && pianoRollClip.isValid()
             ? dynamic_cast<te::MidiClip*>(te::findClipForID(*edit, pianoRollClip)) : nullptr;
         if (!editedMidiClip)
@@ -6404,6 +6542,19 @@ private:
     ju::ImageComponent outgoingEditor;
     EffectsEditor effectsEditor { [this] { return edit.get(); }, [this] { closeEffectsEditor(); } };
     PianoRoll pianoRoll;
+    te::EditItemID drumPatternID;
+    std::set<DrumStep> drumSteps;
+    std::map<DrumStep, unsigned> drumPendingClicks;
+    ju::Component drumPopup;
+    std::array<ju::TextButton, 4> drumSubdivisionButtons;
+    std::optional<DrumStep> drumPopupStep;
+    std::optional<ju::Point<int>> drumAnchor;
+    ju::Rectangle<int> drumSelectionBox;
+    te::TimeRange drumViewportClipRange;
+    double ordinaryTimelineScale = 100.0;
+    unsigned drumClickSequence = 0;
+    int midiInsertBars = 1, drumPopupVelocity = DrumPattern::defaultVelocity;
+    bool drumGridFocused = false;
     te::EditItemID pianoRollClip;
     ju::ComponentAnimator editorAnimator;
     ju::TooltipWindow tooltips { this };

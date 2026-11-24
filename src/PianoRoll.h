@@ -67,8 +67,11 @@ public:
         return ids;
     }
 
-    bool change(const std::vector<GridNote>& changes, const ju::String& label)
+    bool change(const std::vector<GridNote>& changes, const ju::String& label,
+                const std::vector<GridNote>& additions = {})
     {
+        if (!std::all_of(additions.begin(), additions.end(), [this](const auto& note) { return valid(note); }))
+            return false;
         auto& sequence = clip.getSequence();
         std::vector<std::pair<te::MidiNote*, GridNote>> pending;
         for (const auto& change : changes)
@@ -90,12 +93,18 @@ public:
                     pending.emplace_back(match, change);
             }
         }
-        if (pending.empty())
+        if (pending.empty() && additions.empty())
             return false;
         auto& history = clip.edit.getUndoManager();
         history.beginNewTransaction(label);
         for (const auto& [note, value] : pending)
             write(*note, value, history);
+        for (const auto& note : additions)
+        {
+            add(sequence, note, history);
+            for (auto* member : linkedClips)
+                add(member->getSequence(), note, history);
+        }
         finish(history);
         return true;
     }

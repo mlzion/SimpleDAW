@@ -98,11 +98,12 @@ if(BUILD_TESTING)
     add_test(NAME inspector_effects COMMAND SimpleDAW --inspector-effects-test)
     add_test(NAME audio_overlap COMMAND SimpleDAW --audio-overlap-test)
     add_test(NAME effects_editor COMMAND SimpleDAW --effects-editor-test)
+    add_test(NAME drum_grid COMMAND SimpleDAW --drum-grid-test)
     add_test(NAME drum_master COMMAND SimpleDAW --drum-master-test)
     add_test(NAME device_setup COMMAND SimpleDAW --device-setup-test)
     add_test(NAME piano_roll COMMAND SimpleDAW --piano-roll-test)
     set_tests_properties(project_round_trip main_gui gui_corrections universal_actions
         effects_foundation effects_editor midi_import midi_inspector inspector_loop inspector_clone
-        inspector_effects audio_overlap device_setup drum_master piano_roll
+        inspector_effects audio_overlap device_setup drum_master drum_grid piano_roll
         PROPERTIES TIMEOUT 60)
 endif()
