@@ -1,5 +1,11 @@
 # SimpleDAW project status
 
+## MX0 Mixer Foundation — READY FOR DRAFT REVIEW
+
+The full-width mixer is implemented on `feature/mixer-mx0`. It shares Tracktion controls and stereo meter taps with the existing project, adds undoable relative fader gestures, and restores the Inspector and editor workspaces after closing. Master is functional. FX1 and FX2 show their unavailable status pending MX1. The branch recognizes the MD0 Drum Master metadata and reserves lane expansion for MX2. [Approved scope](docs/MIXER_MX0_FOUNDATION.md) · [Implementation and live acceptance](docs/testing/mixer-mx0.md)
+
+Debian 13 x64 Release with Clang 19, `-O1` and Xvfb passed all 15 CTests, including `mixer_foundation`. Windows x64 `/MD` CI and live acceptance are pending separate authorization. Live testing of the Drum Master strip with an MD0 kit follows integration.
+
 ## v0.24.1 — Piano Roll P0 — ACCEPTED
 
 This release integrates the reusable editor from foundation commit `6486a5f`. MIDI clips open by double-click in the slide-up area shared with E1. The active editor owns UAT commands, with independent Timeline and Track selections. Note Duplicate, right-drag velocity, and remembered draw velocity are included. Note edits use Tracktion's Edit UndoManager and propagate across linked MIDI clips. Audition uses the current effective clip channel and existing instrument path. Track-owned MIDI routing remains deferred. [Editing and acceptance notes](docs/research/piano-roll-p0.md)

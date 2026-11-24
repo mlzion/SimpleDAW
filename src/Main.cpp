@@ -791,7 +791,7 @@ public:
             || command == "--midi-import-test" || command == "--midi-inspector-test"
             || command == "--inspector-loop-test" || command == "--inspector-clone-test"
             || command == "--inspector-effects-test" || command == "--audio-overlap-test"
-            || command == "--device-setup-test" || command == "--piano-roll-test";
+            || command == "--device-setup-test" || command == "--piano-roll-test" || command == "--mixer-test";
         engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW",
             std::make_unique<SimpleDawUIBehaviour>(), std::make_unique<SimpleDawEngineBehaviour>(testing));
         if (testing)
@@ -819,6 +819,8 @@ public:
                 passed = MainGui::testMidiImport(*engine);
             else if (command == "--effects-editor-test")
                 passed = MainGui::testEffectsEditor(*engine);
+            else if (command == "--mixer-test")
+                passed = MainGui::testMixer(*engine);
             else if (command == "--piano-roll-test")
                 passed = MainGui::testPianoRoll(*engine);
             else if (command == "--effects-foundation-test")

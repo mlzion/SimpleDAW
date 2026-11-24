@@ -15,6 +15,7 @@ FetchContent_MakeAvailable(juce tracktion)
 include(cmake/JuceDeviceSelector.cmake)
 include(cmake/RestoreTracktionOverlap.cmake)
 include(cmake/TracktionLiveMidi.cmake)
+include(cmake/TracktionInputMonitor.cmake)
 
 set(SIMPLEDAW_ASIO_SDK "" CACHE PATH "Optional directory containing iasiodrv.h")
 
@@ -89,8 +90,9 @@ if(BUILD_TESTING)
     add_test(NAME effects_editor COMMAND SimpleDAW --effects-editor-test)
     add_test(NAME device_setup COMMAND SimpleDAW --device-setup-test)
     add_test(NAME piano_roll COMMAND SimpleDAW --piano-roll-test)
+    add_test(NAME mixer_foundation COMMAND SimpleDAW --mixer-test)
     set_tests_properties(project_round_trip main_gui gui_corrections universal_actions
         effects_foundation effects_editor midi_import midi_inspector inspector_loop inspector_clone
-        inspector_effects audio_overlap device_setup piano_roll
+        inspector_effects audio_overlap device_setup piano_roll mixer_foundation
         PROPERTIES TIMEOUT 60)
 endif()

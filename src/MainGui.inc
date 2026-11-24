@@ -9,7 +9,7 @@
         locateFile, monitoringReport, playStop, startRecording, importMidiFile
     };
 
-    enum class EditingArea { window, inspector, timeline, tracks };
+    enum class EditingArea { window, inspector, timeline, tracks, mixer };
     enum class UniversalAction
     {
         cut, remove, copy, paste, up, down, left, right,
@@ -83,19 +83,23 @@
         explicit PanelState(ju::PropertiesFile& settings)
             : props(settings), inspectorWidth(ju::jlimit(200, 600, props.getIntValue("inspectorWidth", 270))),
               inspectorOpen(props.getBoolValue("inspectorOpen", true)),
-              tallTracks(props.getBoolValue("tallTracks", false)) {}
+              tallTracks(props.getBoolValue("tallTracks", false)),
+              mixerOpen(props.getBoolValue("mixerOpen", false)),
+              tallMixer(props.getBoolValue("tallMixer", false)) {}
 
         void save() const
         {
             props.setValue("inspectorWidth", inspectorWidth);
             props.setValue("inspectorOpen", inspectorOpen);
             props.setValue("tallTracks", tallTracks);
+            props.setValue("mixerOpen", mixerOpen);
+            props.setValue("tallMixer", tallMixer);
             props.saveIfNeeded();
         }
 
         ju::PropertiesFile& props;
         int inspectorWidth;
-        bool inspectorOpen, tallTracks;
+        bool inspectorOpen, tallTracks, mixerOpen, tallMixer;
     };
 
     static ju::PropertiesFile::Options settingsOptions()
@@ -217,10 +221,24 @@
 
     struct Meter
     {
-        explicit Meter(te::LevelMeterPlugin& plugin) : source(&plugin.measurer) { source->addClient(client); }
+        explicit Meter(te::LevelMeasurer& measurer) : source(&measurer) { source->addClient(client); }
+        explicit Meter(te::LevelMeterPlugin& plugin) : Meter(plugin.measurer) {}
         ~Meter() { if (source != nullptr) source->removeClient(client); }
+
+        void poll()
+        {
+            const auto channels = client.getNumChannelsUsed();
+            for (size_t ch = 0; ch < levels.size(); ++ch)
+            {
+                const auto db = int(ch) < channels ? client.getAndClearAudioLevel(static_cast<int>(ch)).dB : -100.0f;
+                levels[ch] = ju::jmax(levels[ch] - 0.035f, ju::jlimit(0.0f, 1.0f, (db + 60.0f) / 60.0f));
+            }
+            level = *std::max_element(levels.begin(), levels.end());
+        }
+
         ju::WeakReference<te::LevelMeasurer> source;
         te::LevelMeasurer::Client client;
+        std::array<float, 2> levels {};
         float level = 0.0f;
     };
 
@@ -238,6 +256,21 @@ public:
         addAndMakeVisible(inspector);
         addAndMakeVisible(inspectorDivider);
         addAndMakeVisible(editingPanelArea);
+        addChildComponent(mixerPanel);
+        mixerPanel.setName("Mixer workspace");
+        mixerPanel.setWantsKeyboardFocus(true);
+        mixerPanel.addAndMakeVisible(mixerViewport);
+        mixerViewport.setViewedComponent(&mixerTracks, false);
+        mixerViewport.setScrollBarsShown(false, true);
+        mixerPanel.addAndMakeVisible(mixerHeight);
+        mixerHeight.onClick = [this] { panels.tallMixer = !panels.tallMixer; saveLayout(); };
+        mixerFX1.name = "FX1";
+        mixerFX2.name = "FX2";
+        mixerFX1.detail = mixerFX2.detail = "Unavailable";
+        mixerMaster.name = "Master";
+        mixerPanel.addAndMakeVisible(mixerFX1);
+        mixerPanel.addAndMakeVisible(mixerFX2);
+        mixerPanel.addAndMakeVisible(mixerMaster);
         editingPanelArea.setInterceptsMouseClicks(false, true);
         editingPanelArea.addChildComponent(outgoingEditor);
         editingPanelArea.addChildComponent(effectsEditor);
@@ -335,7 +368,12 @@ public:
         for (auto* control : historyButtons)
             control->setWantsKeyboardFocus(false);
         snap.onChange = [this] { updateControls(); };
-        button(panelButtons, "INSPECTOR", [this] { panels.inspectorOpen = !panels.inspectorOpen; saveLayout(); });
+        button(panelButtons, "INSPECTOR", [this] {
+            panels.inspectorOpen = panels.mixerOpen || !panels.inspectorOpen;
+            setMixerOpen(false);
+            saveLayout();
+        });
+        mixerButton = &button(panelButtons, "MIXER", [this] { setMixerOpen(!panels.mixerOpen); });
 
         navigationButton(Arrow::screenLeft, "Scroll left one screen", [this] { navigateTime(-1, true); });
         navigationButton(Arrow::screenRight, "Scroll right one screen", [this] { navigateTime(1, true); });
@@ -418,20 +456,17 @@ public:
         };
         auto& mute = button(trackInspectorToggles, "MUTE", [this] {
             if (auto* track = actionTrack())
-            {
-                edit->getUndoManager().beginNewTransaction("Mute track");
-                track->setMute(!track->isMuted(false));
-                updateControls();
-            }
+                toggleTrackMute(*track);
         });
         auto& solo = button(trackInspectorToggles, "SOLO", [this] {
             if (auto* track = actionTrack())
-            {
-                edit->getUndoManager().beginNewTransaction("Solo track");
-                track->setSolo(!track->isSolo(false));
-                updateControls();
-            }
+                toggleTrackSolo(*track);
         });
+        auto& monitor = button(trackInspectorToggles, "MONITOR", [this] {
+            if (auto* track = actionTrack())
+                toggleTrackMonitor(*track);
+        });
+        inspectorControls.addChildComponent(monitor);
         inspectorControls.addChildComponent(mute);
         inspectorControls.addChildComponent(solo);
         for (auto* slider : { &inspectorVolume, &inspectorPan, &inspectorGain,
@@ -452,20 +487,7 @@ public:
         inspectorVolume.setSliderStyle(ju::Slider::LinearVertical);
         inspectorVolume.setRange(-60, 6, 0.1);
         inspectorVolume.setTextValueSuffix(" dB");
-        inspectorPan.setRange(-100, 100, 1);
-        inspectorPan.setDoubleClickReturnValue(true, 0);
-        inspectorPan.textFromValueFunction = [](double value) {
-            return value == 0 ? ju::String("Center")
-                : ju::String(value < 0 ? "L" : "R") + ju::String(static_cast<int>(std::abs(value)));
-        };
-        inspectorPan.valueFromTextFunction = [](const ju::String& text) {
-            const auto value = text.trim().toUpperCase();
-            if (value.startsWithChar('L'))
-                return -value.substring(1).getDoubleValue();
-            if (value.startsWithChar('R'))
-                return value.substring(1).getDoubleValue();
-            return value.getDoubleValue();
-        };
+        configureTrackPan(inspectorPan);
         inspectorGain.setRange(-60, 24, 0.1);
         inspectorGain.setTextValueSuffix(" dB");
         inspectorGain.setDoubleClickReturnValue(true, 0);
@@ -659,6 +681,7 @@ public:
         menuBar.setModel(nullptr);
         stop();
         meters.clear();
+        masterMeter.reset();
     }
 
     // Inspector calls this on an explicit open request. Selection changes use their usual path.
@@ -672,6 +695,7 @@ public:
             report("This effect editor is unavailable");
             return false;
         }
+        setMixerOpen(false);
         hidePianoRoll();
         actionSelection.requestedArea = EditingArea::window;
         effectsEditor.setVisible(true);
@@ -738,15 +762,29 @@ public:
         navigationBounds = area.removeFromBottom(40);
         layoutNavigation(navigationBounds);
 
-        inspector.setVisible(panels.inspectorOpen);
-        inspectorDivider.setVisible(panels.inspectorOpen);
-        if (panels.inspectorOpen)
+        mixerPanel.setVisible(panels.mixerOpen);
+        editingPanelArea.setVisible(!panels.mixerOpen);
+        mixerButton->setToggleState(panels.mixerOpen, ju::dontSendNotification);
+        mixerHeight.setButtonText(panels.tallMixer ? "MAX" : "MIN");
+        mixerHeight.setTooltip("Toggle mixer height");
+        if (panels.mixerOpen)
+        {
+            const int available = area.getHeight();
+            const int minimum = ju::jmin(200, ju::jmax(0, available - 100));
+            const int height = panels.tallMixer ? ju::jmax(minimum, ju::jmin(410, available - 64)) : minimum;
+            mixerPanel.setBounds(area.removeFromBottom(height));
+            layoutMixer();
+        }
+
+        inspector.setVisible(panels.inspectorOpen && !panels.mixerOpen);
+        inspectorDivider.setVisible(inspector.isVisible());
+        if (inspector.isVisible())
         {
             inspector.setBounds(area.removeFromRight(ju::jmin(panels.inspectorWidth, maxInspector())));
             inspectorDivider.setBounds(area.removeFromRight(8));
             inspectorViewport.setBounds(inspector.getLocalBounds().withTrimmedTop(inspectorContext == EditingArea::tracks ? 66 : 110));
             inspectorControls.setSize(std::max(0, inspectorViewport.getWidth() - inspectorViewport.getScrollBarThickness()),
-                                      inspectorContext == EditingArea::tracks ? 830 : 310);
+                                      inspectorContext == EditingArea::tracks ? 866 : 310);
             auto controls = inspectorControls.getLocalBounds().reduced(8);
             auto identity = controls.removeFromTop(32);
             colourInspectorButtons.front()->setBounds(identity.removeFromRight(62).reduced(2));
@@ -756,6 +794,7 @@ public:
             trackInputButtons[0]->setBounds(trackControls.removeFromTop(36).reduced(2));
             layoutRow({ trackInspectorToggles[0], trackInspectorToggles[1], trackInputButtons[1] },
                       trackControls.removeFromTop(38));
+            trackInspectorToggles[2]->setBounds(trackControls.removeFromTop(36).reduced(2));
             auto fader = trackControls.removeFromTop(120);
             inspectorMeter.setBounds(fader.removeFromLeft(14).reduced(2));
             inspectorVolume.setBounds(fader);
@@ -793,7 +832,7 @@ public:
         }
 
         arrangement.setBounds(area);
-        if (effectsEditor.isVisible() || pianoRoll.isVisible())
+        if (!panels.mixerOpen && (effectsEditor.isVisible() || pianoRoll.isVisible()))
         {
             auto timeline = area.withTrimmedLeft(headerWidth);
             ju::Component& editor = pianoRoll.isVisible() ? static_cast<ju::Component&>(pianoRoll)
@@ -806,6 +845,7 @@ public:
     }
 
     #include "PianoRollTest.inc"
+    #include "../tests/Mixer.inc"
 
     static bool test(te::Engine& engine)
     {
@@ -2691,8 +2731,10 @@ private:
 
     EditingArea activeEditingArea() const
     {
-        return actionSelection.activeArea(effectsEditor.isVisible() || pianoRoll.isVisible(),
-                                          panels.inspectorOpen);
+        if (panels.mixerOpen && mixerPanel.hasKeyboardFocus(true))
+            return EditingArea::mixer;
+        return actionSelection.activeArea(!panels.mixerOpen && (effectsEditor.isVisible() || pianoRoll.isVisible()),
+                                          inspector.isVisible());
     }
 
     bool editingStopped() const
@@ -3031,6 +3073,24 @@ private:
                 }
         }
         updateControls();
+    }
+
+    static void configureTrackPan(ju::Slider& slider)
+    {
+        slider.setRange(-100, 100, 1);
+        slider.setDoubleClickReturnValue(true, 0);
+        slider.textFromValueFunction = [](double value) {
+            return value == 0 ? ju::String("Center")
+                : ju::String(value < 0 ? "L" : "R") + ju::String(static_cast<int>(std::abs(value)));
+        };
+        slider.valueFromTextFunction = [](const ju::String& text) {
+            const auto value = text.trim().toUpperCase();
+            if (value.startsWithChar('L'))
+                return -value.substring(1).getDoubleValue();
+            if (value.startsWithChar('R'))
+                return value.substring(1).getDoubleValue();
+            return value.getDoubleValue();
+        };
     }
 
     void configureLiveSlider(ju::Slider& slider)
@@ -4421,8 +4481,13 @@ private:
             hideEffectsEditor();
         slideEditorOut({});
         meters.clear();
-        arrangement.waves.clear();
+        masterMeter.reset();
         parameterGesture = nullptr;
+        mixerStrips.clear();
+        mixerSelection.clear();
+        mixerFaderStart.clear();
+        mixerViewport.setViewPosition(0, 0);
+        arrangement.waves.clear();
         edit = std::move(next);
         edit->playInStopEnabled = true;
         ju::StringArray mixedTracks;
@@ -4523,7 +4588,7 @@ private:
     {
         selection = index;
         auto* track = trackAt(index);
-        if (effectsEditor.isVisible() && effectsEditor.target && track && effectsEditor.target->track != track->itemID)
+        if (!panels.mixerOpen && effectsEditor.isVisible() && effectsEditor.target && track && effectsEditor.target->track != track->itemID)
             closeEffectsEditor();
         actionSelection.track = track ? track->itemID : te::EditItemID{};
         actionSelection.requestedArea = EditingArea::tracks;
@@ -4891,23 +4956,83 @@ private:
         updateControls();
     }
 
+    static inline const ju::Identifier monitorOverride { "simpleDawMonitorOverride" };
+
+    struct TrackInputState
+    {
+        bool assigned = false, armed = false, monitoring = false;
+    };
+
+    static te::InputDeviceInstance::Destination* trackInputDestination(te::InputDeviceInstance& input,
+                                                                      const te::AudioTrack& track)
+    {
+        const auto& device = input.getInputDevice();
+        return device.isEnabled() && !device.isTrackDevice() ? te::getDestination(input, track, 0) : nullptr;
+    }
+
+    TrackInputState trackInputState(const te::AudioTrack& track) const
+    {
+        TrackInputState state;
+        for (auto* input : edit->getAllInputDevices())
+            if (trackInputDestination(*input, track))
+            {
+                state.assigned = true;
+                state.armed |= input->isRecordingEnabled(track.itemID);
+                state.monitoring |= input->isLivePlayEnabled(track);
+            }
+        return state;
+    }
+
+    void toggleTrackMute(te::AudioTrack& track)
+    {
+        if (!mixerLive())
+            return;
+        edit->getUndoManager().beginNewTransaction("Mute track");
+        track.setMute(!track.isMuted(false));
+        updateControls();
+    }
+
+    void toggleTrackSolo(te::AudioTrack& track)
+    {
+        if (!mixerLive())
+            return;
+        edit->getUndoManager().beginNewTransaction("Solo track");
+        track.setSolo(!track.isSolo(false));
+        updateControls();
+    }
+
     void armInspectorInput()
     {
-        auto* track = inspectorContext == EditingArea::tracks ? actionTrack() : nullptr;
-        if (!editingStopped() || !track)
+        if (auto* track = inspectorContext == EditingArea::tracks ? actionTrack() : nullptr)
+            armTrackInput(*track);
+    }
+
+    void armTrackInput(te::AudioTrack& track)
+    {
+        const auto state = trackInputState(track);
+        if (!editingStopped() || !state.assigned)
             return;
-        const auto id = track->itemID;
-        const bool armed = inputBadges(*track).armed;
         auto& undo = edit->getUndoManager();
-        undo.beginNewTransaction(armed ? "Disarm track" : "Arm track");
+        undo.beginNewTransaction(state.armed ? "Disarm track" : "Arm track");
         for (auto* input : edit->getAllInputDevices())
-            if (input->getTargets().contains(id) && input->getInputDevice().isEnabled())
-            {
-                input->getInputDevice().setMonitorMode(te::InputDevice::MonitorMode::automatic);
-                input->setRecordingEnabled(id, !armed);
-            }
+            if (auto* destination = trackInputDestination(*input, track))
+                destination->state.setProperty(te::IDs::armed, !state.armed, &undo);
         edit->markAsChanged();
         edit->restartPlayback();
+        updateControls();
+    }
+
+    void toggleTrackMonitor(te::AudioTrack& track)
+    {
+        const auto state = trackInputState(track);
+        if (!editingStopped() || !state.assigned)
+            return;
+        auto& undo = edit->getUndoManager();
+        undo.beginNewTransaction(state.monitoring ? "Disable track monitoring" : "Enable track monitoring");
+        for (auto* input : edit->getAllInputDevices())
+            if (auto* destination = trackInputDestination(*input, track))
+                destination->state.setProperty(monitorOverride, !state.monitoring, &undo);
+        edit->markAsChanged();
         updateControls();
     }
 
@@ -4942,11 +5067,18 @@ private:
                 auto& meter = meters[track->itemID];
                 if (!meter || meter->source.get() != &plugin->measurer)
                     meter = std::make_unique<Meter>(*plugin);
-                auto db = -100.0f;
-                for (int ch = 0; ch < meter->client.getNumChannelsUsed(); ++ch)
-                    db = ju::jmax(db, meter->client.getAndClearAudioLevel(ch).dB);
-                meter->level = ju::jmax(meter->level - 0.035f, ju::jlimit(0.0f, 1.0f, (db + 60.0f) / 60.0f));
+                meter->poll();
             }
+
+        auto* context = edit->getTransport().getCurrentPlaybackContext();
+        if (!panels.mixerOpen || !context)
+            masterMeter.reset();
+        else
+        {
+            if (!masterMeter || masterMeter->source.get() != &context->masterLevels)
+                masterMeter = std::make_unique<Meter>(context->masterLevels);
+            masterMeter->poll();
+        }
     }
 
     te::EditItemID inspectorPulseTarget() const
@@ -5605,6 +5737,7 @@ private:
             if (!midi)
                 return;
 
+            setMixerOpen(false);
             suspendEffectsEditor();
             slideEditorOut({});
             const bool entering = !pianoRoll.isVisible();
@@ -5646,7 +5779,7 @@ private:
         {
             if (track && trackBounds(y, rowHeight(row)).contains(event.getPosition()))
             {
-                if (effectsEditor.target && effectsEditor.target->track != track->itemID)
+                if (!panels.mixerOpen && effectsEditor.target && effectsEditor.target->track != track->itemID)
                     closeEffectsEditor();
                 actionSelection.track = track->itemID;
                 selection = row;
@@ -5676,7 +5809,7 @@ private:
                     auto* clip = clips[index];
                     if (!clipBounds(clip->getPosition().time, y, rowHeight(row)).contains(event.getPosition()))
                         continue;
-                    if (effectsEditor.isVisible())
+                    if (!panels.mixerOpen && effectsEditor.isVisible())
                     {
                         if (dynamic_cast<te::MidiClip*>(clip))
                         {
@@ -5723,7 +5856,7 @@ private:
             for (auto* clip : tracks[row]->getClips())
                 if (clipBounds(clip->getPosition().time, y, rowHeight(row)).intersects(selectionBox))
                     items.insert(clip->itemID);
-        if (!items.empty() && effectsEditor.isVisible())
+        if (!panels.mixerOpen && !items.empty() && effectsEditor.isVisible())
             closeEffectsEditor();
     }
 
@@ -5855,7 +5988,7 @@ private:
         }
         const auto active = activeEditingArea();
         const bool pianoFocused = pianoRollHasFocus();
-        pianoRoll.refresh(editedMidiClip, pianoRoll.isVisible() && editingStopped(), pianoFocused);
+        pianoRoll.refresh(editedMidiClip, !panels.mixerOpen && pianoRoll.isVisible() && editingStopped(), pianoFocused);
         if (pitchNavigation.front()->isVisible() != pianoFocused)
         {
             for (auto* control : pitchNavigation)
@@ -5865,9 +5998,9 @@ private:
         const auto playing = edit && edit->getTransport().isPlaying();
         pianoRoll.updatePlayback(playing ? std::optional { edit->getTransport().getPosition() } : std::nullopt,
                                  follow, ju::Time::getMillisecondCounterHiRes());
-        if (actionSelection.requestedArea && actionSelection.requestedArea != active)
+        if (!panels.mixerOpen && actionSelection.requestedArea && actionSelection.requestedArea != active)
             actionSelection.requestedArea = active;
-        if (active != EditingArea::inspector && active != EditingArea::window)
+        if (active == EditingArea::timeline || active == EditingArea::tracks)
         {
             const auto oldContext = inspectorContext;
             inspectorContext = active;
@@ -5974,9 +6107,13 @@ private:
                     assigned.add(input->getInputDevice().getName());
             static_cast<ju::Button*>(trackInputButtons[0])->setButtonText(
                 assigned.isEmpty() ? ju::String("INPUT") : assigned.joinIntoString(", "));
-            static_cast<ju::Button*>(trackInputButtons[1])->setToggleState(inputBadges(*inspectorTrack).armed,
-                                                                           ju::dontSendNotification);
-            trackInputButtons[1]->setEnabled(canEditInspector && !assigned.isEmpty());
+            const auto input = trackInputState(*inspectorTrack);
+            static_cast<ju::Button*>(trackInputButtons[1])->setToggleState(input.armed, ju::dontSendNotification);
+            trackInputButtons[1]->setEnabled(canEditInspector && input.assigned);
+            trackInspectorToggles[0]->setEnabled(liveInspector);
+            trackInspectorToggles[1]->setEnabled(liveInspector);
+            trackInspectorToggles[2]->setEnabled(canEditInspector && input.assigned);
+            static_cast<ju::Button*>(trackInspectorToggles[2])->setToggleState(input.monitoring, ju::dontSendNotification);
         }
         const auto* eq = trackEQ(inspectorTrack);
         const std::array<double, 3> gains { eq ? eq->loGainValue.get() : 0.0, eq ? eq->midGainValue1.get() : 0.0,
@@ -6128,6 +6265,7 @@ private:
             signature.setText("4/4", ju::dontSendNotification);
             recordMode.setSelectedId(1, ju::dontSendNotification);
         }
+        refreshMixer();
         arrangement.repaint();
     }
 
@@ -6145,6 +6283,8 @@ private:
         }
         updateControls();
     }
+
+    #include "Mixer.inc"
 
     te::Engine& engine;
     std::unique_ptr<te::Edit> edit;
@@ -6235,7 +6375,7 @@ private:
     ju::OwnedArray<ju::TextButton> buttons;
     ju::TextButton *playButton = nullptr, *pauseButton = nullptr, *loopButton = nullptr,
         *clickButton = nullptr, *countButton = nullptr, *heightButton = nullptr, *followButton = nullptr;
-    ju::TextButton *undoButton = nullptr, *redoButton = nullptr;
+    ju::TextButton *undoButton = nullptr, *redoButton = nullptr, *mixerButton = nullptr;
     std::vector<ju::Component*> first, second, panelButtons, historyButtons, inspectorButtons, navigation, pitchNavigation;
     ju::Rectangle<int> navigationBounds;
     std::array<ActionGroup, 4> actionGroups;
