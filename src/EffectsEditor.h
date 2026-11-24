@@ -131,10 +131,11 @@ public:
             }
             if (dynamic_cast<te::VolumeAndPanPlugin*>(plugin.get()))
             {
+                const bool isMaster = plugin.get() == project.getMasterVolumePlugin().get();
                 if (property == te::IDs::volume)
-                    parameterID = "volume";
+                    parameterID = isMaster ? "master volume" : "volume";
                 else if (property == te::IDs::pan)
-                    parameterID = "pan";
+                    parameterID = isMaster ? "master pan" : "pan";
             }
             if (parameterID.isEmpty())
                 continue;
