@@ -13,17 +13,37 @@
         {
             setWantsKeyboardFocus(true);
             addAndMakeVisible(close);
-            addAndMakeVisible(velocity);
+            addChildComponent(horizontal);
+            addChildComponent(vertical);
+            horizontal.onMove = [this](double quarter) {
+                if (owner.selectedDrumPattern())
+                    owner.fitDrumViewport(DrumPattern::timeAtQuarter(owner.edit->tempoSequence, quarter).inSeconds());
+            };
+            vertical.onMove = [this](double row) {
+                owner.scrollDrumRows(ju::roundToInt(row) - owner.drumFirstLane);
+            };
+            horizontal.setSingleStepSize(DrumPattern::step);
+            vertical.setSingleStepSize(1.0);
             close.setTooltip("Close Drum Pattern Editor");
             close.onClick = [this] { owner.closeDrumEditor(); };
-            velocity.setJustificationType(ju::Justification::centredRight);
-            velocity.setInterceptsMouseClicks(false, false);
         }
 
         void resized() override
         {
             close.setBounds(getWidth() - 36, 3, 32, 26);
-            velocity.setBounds(getWidth() / 2, 2, getWidth() / 2 - 42, 28);
+            horizontal.setBounds(drumNameWidth, getHeight() - NoteGrid::scroll, gridRight() - drumNameWidth, NoteGrid::scroll);
+            vertical.setBounds(gridRight(), drumHeaderHeight, NoteGrid::scroll, rowBottom() - drumHeaderHeight);
+        }
+
+        int gridRight() const { return ju::jmax(drumNameWidth + 1, getWidth() - NoteGrid::scroll); }
+        int velocityBottom() const { return ju::jmax(drumHeaderHeight + NoteGrid::lane, getHeight() - NoteGrid::scroll); }
+        int rowBottom() const { return velocityBottom() - NoteGrid::lane; }
+        int visibleRows() const { return ju::jmax(1, (rowBottom() - drumHeaderHeight) / drumRowHeight); }
+
+        void showVelocityAt(ju::Point<int> pointer)
+        {
+            velocityAnchor = pointer;
+            velocityUntil = ju::Time::getMillisecondCounterHiRes() + 1100.0;
         }
 
         void paint(ju::Graphics& g) override { owner.paintDrumEditor(g); }
@@ -35,18 +55,29 @@
         }
         void mouseDrag(const ju::MouseEvent& event) override
         {
+            if (velocityStep)
+            {
+                owner.previewDrumVelocity(event.getPosition());
+                return;
+            }
             if (event.getDistanceFromDragStart() >= 5)
                 owner.drumDrag(event.getPosition());
         }
-        void mouseUp(const ju::MouseEvent& event) override { owner.drumMouseUp(event); }
-        void mouseWheelMove(const ju::MouseEvent&, const ju::MouseWheelDetails& wheel) override
+        void mouseUp(const ju::MouseEvent& event) override
+        {
+            if (velocityStep)
+                owner.finishDrumVelocity();
+            else
+                owner.drumMouseUp(event);
+        }
+        void mouseWheelMove(const ju::MouseEvent& event, const ju::MouseWheelDetails& wheel) override
         {
             owner.focusDrumEditor();
             // Precision wheels can report both axes for an ordinary vertical
             // gesture. Give the dominant axis to the intended operation.
             if (std::abs(wheel.deltaX) > std::abs(wheel.deltaY))
                 owner.scrollDrumTime(-wheel.deltaX);
-            else if (wheel.deltaY != 0.0f && !owner.adjustDrumVelocity(wheel.deltaY))
+            else if (wheel.deltaY != 0.0f && !owner.adjustDrumVelocity(wheel.deltaY, event.getPosition()))
                 owner.scrollDrumRows(wheel.deltaY > 0 ? -1 : 1);
         }
         bool keyPressed(const ju::KeyPress& key) override
@@ -62,8 +93,17 @@
 
         MainGui& owner;
         ju::TextButton close { "X" };
-        ju::Label velocity;
+        ju::String velocityFeedback;
+        EditorScrollBar horizontal { false }, vertical { true };
+        std::optional<DrumStep> velocityStep;
+        ju::Point<int> velocityAnchor;
+        double velocityUntil = 0.0;
+        int previewVelocity = 0;
     };
+
+    te::EditItemID drumLaneID;
+    std::vector<GridNote> drumClipboard;
+    std::optional<int> drumPasteStep;
 
     static constexpr int drumNameWidth = 136, drumHeaderHeight = 52, drumRowHeight = 44;
 
@@ -98,9 +138,12 @@
         actionSelection.clips = { clip.itemID };
         inspectorContext = EditingArea::timeline;
         drumFirstLane = 0;
+        const auto lanes = drumEditorLanes();
+        drumLaneID = lanes.isEmpty() ? te::EditItemID{} : lanes.getFirst()->itemID;
         drumEditor.setVisible(true);
         drumEditor.toFront(false);
         resized();
+        selectDrumVelocityLane(actionTrack());
         fitDrumViewport(clip.getPosition().getStart().inSeconds());
         focusDrumEditor();
         if (entering)
@@ -115,6 +158,9 @@
         drumEditor.setVisible(false);
         drumPatternID = {};
         drumSteps.clear();
+        drumPasteStep.reset();
+        drumEditor.velocityStep.reset();
+        drumEditor.velocityUntil = 0.0;
         drumPendingClicks.clear();
         drumAnchor.reset();
         drumSelectionBox = {};
@@ -179,12 +225,21 @@
         if (!editingStopped())
         {
             closeDrumPopup();
+            drumEditor.velocityStep.reset();
             drumPendingClicks.clear();
             drumAnchor.reset();
             drumSelectionBox = {};
         }
         else if (drumPopupStep)
             refreshDrumPopup();
+
+        const auto lanes = drumEditorLanes();
+        if (std::none_of(lanes.begin(), lanes.end(), [this](auto* lane) { return lane->itemID == drumLaneID; }))
+            drumLaneID = lanes.isEmpty() ? te::EditItemID{} : lanes.getFirst()->itemID;
+        const auto firstLane = ju::jlimit(0, drumLastFirstLane(), drumFirstLane);
+        if (firstLane != drumFirstLane)
+            scrollDrumRows(0);
+        syncDrumScrollbars();
 
         ju::String feedback;
         if (!drumSteps.empty())
@@ -202,7 +257,7 @@
                 feedback = lowest == highest ? "Velocity " + ju::String(highest)
                     : "Velocity " + ju::String(lowest) + " - " + ju::String(highest);
         }
-        drumEditor.velocity.setText(feedback, ju::dontSendNotification);
+        drumEditor.velocityFeedback = feedback;
         drumEditor.repaint();
     }
 
@@ -223,9 +278,10 @@
         const auto steps = std::clamp(std::round((requested - start) / DrumPattern::step), 0.0, std::max(0.0, maxSteps));
         drumLeftQuarter = start + steps * DrumPattern::step;
         drumViewStart = DrumPattern::timeAtQuarter(tempo, drumLeftQuarter).inSeconds();
-        drumPixelsPerSecond = ju::jmax(1, drumEditor.getWidth() - drumNameWidth)
+        drumPixelsPerSecond = (drumEditor.gridRight() - drumNameWidth)
             / std::max(0.000001, DrumPattern::timeAtQuarter(tempo, drumLeftQuarter + drumVisibleQuarters).inSeconds() - drumViewStart);
         closeDrumPopup();
+        syncDrumScrollbars();
         drumEditor.repaint();
     }
 
@@ -246,11 +302,52 @@
         return track ? drumMaster::lanes(*track) : ju::Array<te::AudioTrack*>{};
     }
 
+    void selectDrumVelocityLane(te::AudioTrack* track)
+    {
+        if (!track || !drumEditor.isVisible())
+            return;
+        const auto row = drumEditorLanes().indexOf(track);
+        if (row < 0)
+            return;
+        drumLaneID = track->itemID;
+        const auto visible = drumEditor.visibleRows();
+        if (row < drumFirstLane)
+            scrollDrumRows(row - drumFirstLane);
+        else if (row >= drumFirstLane + visible)
+            scrollDrumRows(row - (drumFirstLane + visible) + 1);
+    }
+
+    int drumLastFirstLane() const
+    {
+        return ju::jmax(0, drumEditorLanes().size() - drumEditor.visibleRows());
+    }
+
+    void syncDrumScrollbars()
+    {
+        auto* clip = selectedDrumPattern();
+        if (!clip)
+            return;
+        const auto& tempo = edit->tempoSequence;
+        const auto start = DrumPattern::quarterAtTime(tempo, clip->getPosition().getStart());
+        const auto length = DrumPattern::quarterAtTime(tempo, clip->getPosition().getEnd()) - start;
+        const auto scroll = std::max(0.0, std::ceil((length - drumVisibleQuarters) / DrumPattern::step - 1.0e-8))
+            * DrumPattern::step;
+        auto& horizontal = drumEditor.horizontal;
+        horizontal.setRangeLimits(start, start + drumVisibleQuarters + scroll, ju::dontSendNotification);
+        horizontal.setCurrentRange(drumLeftQuarter, drumVisibleQuarters, ju::dontSendNotification);
+        horizontal.setVisible(scroll > 0.0);
+        auto& vertical = drumEditor.vertical;
+        const auto rows = drumEditor.visibleRows();
+        vertical.setRangeLimits(0.0, rows + drumLastFirstLane(), ju::dontSendNotification);
+        vertical.setCurrentRange(drumFirstLane, rows, ju::dontSendNotification);
+        vertical.setVisible(drumLastFirstLane() > 0);
+    }
+
     void scrollDrumRows(int delta)
     {
-        const int visible = ju::jmax(1, (drumEditor.getHeight() - drumHeaderHeight) / drumRowHeight);
-        drumFirstLane = ju::jlimit(0, ju::jmax(0, drumEditorLanes().size() - visible), drumFirstLane + delta);
+        drumFirstLane = ju::jlimit(0, drumLastFirstLane(), drumFirstLane + delta);
         closeDrumPopup();
+        syncDrumScrollbars();
         drumEditor.repaint();
     }
 
@@ -276,7 +373,7 @@
         const auto leftX = drumX(clip.getPosition().getStart());
         const auto rightX = drumX(clip.getPosition().getEnd());
         const auto bounds = ju::Rectangle<int>(leftX, y, rightX - leftX, height)
-            .getIntersection({ drumNameWidth, y, drumEditor.getWidth() - drumNameWidth, height });
+            .getIntersection({ drumNameWidth, y, drumEditor.gridRight() - drumNameWidth, height });
         if (bounds.isEmpty())
             return;
         const auto origin = clip.getContentStartBeat().inBeats();
@@ -334,6 +431,191 @@
         });
     }
 
+    void paintDrumRuler(ju::Graphics& g, const te::MidiClip& clip) const
+    {
+        const ju::Graphics::ScopedSaveState state(g);
+        g.reduceClipRegion({ drumNameWidth, 32, drumEditor.gridRight() - drumNameWidth,
+                             drumEditor.velocityBottom() - 32 });
+        const auto& tempo = edit->tempoSequence;
+        const auto end = DrumPattern::timeAtQuarter(tempo, drumLeftQuarter + drumVisibleQuarters);
+        const auto firstBar = tempo.toBarsAndBeats(te::TimePosition::fromSeconds(drumViewStart)).bars;
+        const auto lastBar = tempo.toBarsAndBeats(end).bars;
+        const auto clipBar = tempo.toBarsAndBeats(clip.getPosition().getStart()).bars;
+        const auto bottom = static_cast<float>(drumEditor.velocityBottom());
+        g.setColour(ju::Colour(0xff3d4a58));
+        for (int step = 0; step <= DrumPattern::maxVisibleSteps
+             && step * DrumPattern::step <= drumVisibleQuarters; ++step)
+            g.drawVerticalLine(drumX(DrumPattern::timeAtQuarter(tempo, drumLeftQuarter + step * DrumPattern::step)),
+                               drumHeaderHeight - 4, bottom);
+        g.setFont(ju::FontOptions(12.0f));
+        for (int bar = firstBar; bar <= lastBar; ++bar)
+        {
+            const auto start = barTime(bar);
+            const auto beat = tempo.toBeats(start);
+            const auto beats = tempo.getTimeSigAt(start).numerator.get();
+            for (int i = 1; i < beats; ++i)
+            {
+                g.setColour(ju::Colour(0xff536475));
+                g.drawVerticalLine(drumX(tempo.toTime(beat + te::BeatDuration::fromBeats(i))), 44, bottom);
+            }
+            const int x = drumX(start);
+            g.setColour(ju::Colour(0xff8296ac));
+            g.drawVerticalLine(x, 32, bottom);
+            if (bar == clipBar || x >= drumNameWidth)
+            {
+                g.setColour(ju::Colours::white);
+                g.drawText(ju::String(bar - clipBar + 1), std::max(x, drumNameWidth) + 4, 32, 35, 20,
+                           ju::Justification::centredLeft);
+            }
+        }
+    }
+
+    int drumVelocityY(int velocity) const
+    {
+        return drumEditor.velocityBottom() - 4 - ju::roundToInt((velocity - 1) * (NoteGrid::lane - 8) / 126.0);
+    }
+
+    void paintDrumVelocity(ju::Graphics& g, te::MidiClip& clip, const DrumPattern& pattern)
+    {
+        const int top = drumEditor.rowBottom();
+        const int bottom = drumEditor.velocityBottom();
+        g.setColour(ju::Colour(0xff192028));
+        g.fillRect(0, top, drumEditor.gridRight(), bottom - top);
+        auto* lane = trackForID(drumLaneID);
+        if (!lane)
+            return;
+        g.setColour(ju::Colours::lightgrey);
+        g.drawFittedText("Velocity / " + lane->getName(), { 8, top, drumNameWidth - 12, bottom - top },
+                         ju::Justification::centredLeft, 2);
+        forDrumCells(clip, pattern, *lane, top, bottom - top, [&](const DrumCell& cell) {
+            const auto& hits = pattern.hits(cell.step);
+            if (hits.empty())
+                return;
+            const auto velocity = drumEditor.velocityStep == cell.step ? drumEditor.previewVelocity : hits.front().velocity;
+            const auto x = cell.bounds.getCentreX();
+            const auto y = drumVelocityY(velocity);
+            g.setColour(drumSteps.contains(cell.step) ? ju::Colours::white : ju::Colour(0xff68b9ee));
+            g.drawVerticalLine(x, static_cast<float>(y), static_cast<float>(bottom - 3));
+            g.fillRect(x - 3, y - 2, 7, 4);
+        });
+    }
+
+    bool beginDrumVelocity(ju::Point<int> point)
+    {
+        auto* clip = selectedDrumPattern();
+        auto* lane = trackForID(drumLaneID);
+        if (!clip || !lane)
+            return false;
+        auto model = makeDrumEditor(*clip);
+        const DrumPattern pattern(*clip, model);
+        forDrumCells(*clip, pattern, *lane, drumEditor.rowBottom(), NoteGrid::lane, [&](const DrumCell& cell) {
+            if (cell.bounds.contains(point) && !pattern.hits(cell.step).empty())
+                drumEditor.velocityStep = cell.step;
+        });
+        if (!drumEditor.velocityStep)
+            return false;
+        previewDrumVelocity(point);
+        return true;
+    }
+
+    void previewDrumVelocity(ju::Point<int> point)
+    {
+        const auto fraction = (drumEditor.velocityBottom() - 4 - point.y) / static_cast<double>(NoteGrid::lane - 8);
+        drumEditor.previewVelocity = ju::jlimit(1, 127, ju::roundToInt(1.0 + 126.0 * fraction));
+        drumEditor.showVelocityAt(point);
+        drumEditor.repaint();
+    }
+
+    void finishDrumVelocity()
+    {
+        if (auto* clip = selectedDrumPattern(); clip && editingStopped())
+        {
+            auto model = makeDrumEditor(*clip);
+            DrumPattern(*clip, model).velocity({ *drumEditor.velocityStep }, drumEditor.previewVelocity, true);
+        }
+        drumEditor.velocityStep.reset();
+        drumEditor.velocityUntil = 0.0;
+        updateControls();
+    }
+
+    std::vector<GridNote> drumPasteNotes(const DrumPattern& pattern, const MidiNoteEditor& model) const
+    {
+        if (drumClipboard.empty() || pattern.count() == 0)
+            return {};
+        std::set<int> pitches;
+        for (auto* lane : drumEditorLanes())
+            if (auto* sampler = drumMaster::sampler(*lane))
+                pitches.insert(static_cast<int>(sampler->state.getChildWithName(drumMaster::laneType)
+                                                       .getProperty(drumMaster::noteProperty, -1)));
+        const DrumStep target { 0, drumPasteStep.value_or(0) };
+        const auto base = pattern.quarterForSource(pattern.start(target));
+        auto result = drumClipboard;
+        for (auto& note : result)
+        {
+            const auto end = pattern.sourceAtQuarter(base + note.end());
+            note.start = pattern.sourceAtQuarter(base + note.start);
+            note.length = end - note.start;
+            if (!pitches.contains(note.pitch) || !model.valid(note))
+                return {};
+        }
+        return result;
+    }
+
+    bool canDispatchDrumEdit(UniversalAction action) const
+    {
+        const bool paste = action == UniversalAction::paste;
+        const bool selectionCommand = action == UniversalAction::cut || action == UniversalAction::copy
+            || action == UniversalAction::remove;
+        if (paste ? drumClipboard.empty() : !selectionCommand || drumSteps.empty())
+            return false;
+        auto* clip = selectedDrumPattern();
+        auto model = makeDrumEditor(*clip);
+        const DrumPattern pattern(*clip, model);
+        if (paste)
+            return !drumPasteNotes(pattern, model).empty();
+        return std::any_of(drumSteps.begin(), drumSteps.end(), [&](auto step) { return !pattern.hits(step).empty(); });
+    }
+
+    void dispatchDrumEdit(UniversalAction action)
+    {
+        auto* clip = selectedDrumPattern();
+        auto model = makeDrumEditor(*clip);
+        DrumPattern pattern(*clip, model);
+        if (action == UniversalAction::copy || action == UniversalAction::cut)
+        {
+            drumClipboard.clear();
+            double first = std::numeric_limits<double>::infinity();
+            for (auto step : drumSteps)
+                if (!pattern.hits(step).empty())
+                    first = std::min(first, pattern.quarterForSource(pattern.start(step)));
+            for (auto step : drumSteps)
+                for (auto note : pattern.hits(step))
+                {
+                    const auto start = pattern.quarterForSource(note.start);
+                    note.length = pattern.quarterForSource(note.end()) - start;
+                    note.start = start - first;
+                    note.id = note.id.createCopy();
+                    drumClipboard.push_back(std::move(note));
+                }
+        }
+        if (action == UniversalAction::cut || action == UniversalAction::remove)
+        {
+            if (pattern.remove(drumSteps))
+                drumSteps.clear();
+        }
+        else if (action == UniversalAction::paste)
+        {
+            const auto notes = drumPasteNotes(pattern, model);
+            if (!model.insert(notes, "Paste drum hits").empty())
+            {
+                drumSteps.clear();
+                for (const auto& note : notes)
+                    drumSteps.insert({ note.pitch, pattern.indexAt(note.start) });
+            }
+        }
+        updateControls();
+    }
+
     void paintDrumEditor(ju::Graphics& g)
     {
         g.fillAll(ju::Colour(0xff23262a));
@@ -349,26 +631,48 @@
         const auto lanes = drumEditorLanes();
         const ju::Graphics::ScopedSaveState state(g);
         g.reduceClipRegion(drumEditor.getLocalBounds().withTrimmedTop(32));
-        // The editor's ruler uses the same time scale as the cells.
-        const auto& tempo = edit->tempoSequence;
-        const double start = DrumPattern::quarterAtTime(tempo, clip->getPosition().getStart());
-        int step = ju::roundToInt((drumLeftQuarter - start) / DrumPattern::step);
-        for (double beat = drumLeftQuarter; beat < drumLeftQuarter + drumVisibleQuarters - 1.0e-8;
-             beat += DrumPattern::step, ++step)
+        const auto activeRows = ju::Rectangle<int>(0, drumHeaderHeight, drumEditor.gridRight(),
+                                                    drumEditor.rowBottom() - drumHeaderHeight);
         {
-            const auto x = drumX(DrumPattern::timeAtQuarter(tempo, beat));
-            const auto next = drumX(DrumPattern::timeAtQuarter(tempo, beat + DrumPattern::step));
-            g.setFont(ju::FontOptions(11.0f));
-            g.setColour(ju::Colours::lightgrey);
-            g.drawText(ju::String(step + 1), x, 32, next - x, 20, ju::Justification::centred);
+            const ju::Graphics::ScopedSaveState rows(g);
+            g.reduceClipRegion(activeRows);
+            for (int i = drumFirstLane, y = drumHeaderHeight;
+                 i < lanes.size() && y < drumEditor.rowBottom(); ++i, y += drumRowHeight)
+            {
+                if (lanes[i]->itemID == drumLaneID)
+                {
+                    g.setColour(ju::Colour(0xff35485a));
+                    g.fillRect(0, y, drumNameWidth, drumRowHeight);
+                }
+                g.setColour(ju::Colours::white);
+                g.setFont(ju::FontOptions(14.0f));
+                g.drawFittedText(lanes[i]->getName(), { 8, y, drumNameWidth - 12, drumRowHeight },
+                                 ju::Justification::centredLeft, 1);
+                paintDrumGrid(g, *clip, pattern, *lanes[i], y, drumRowHeight, trackColour(*lanes[i]));
+            }
         }
-        for (int i = drumFirstLane, y = drumHeaderHeight; i < lanes.size() && y < drumEditor.getHeight(); ++i, y += drumRowHeight)
+        paintDrumVelocity(g, *clip, pattern);
+        paintDrumRuler(g, *clip);
+        if (drumPasteStep && !lanes.isEmpty())
+            forDrumCells(*clip, pattern, *lanes.getFirst(), 32, 5, [&](const DrumCell& cell) {
+                if (cell.step.index == *drumPasteStep)
+                {
+                    g.setColour(ju::Colour(0xffacc3d8));
+                    g.fillRect(cell.bounds.getX(), cell.bounds.getY(), ju::jmin(7, cell.bounds.getWidth()), 4);
+                }
+            });
+        if (drumEditor.velocityStep || ju::Time::getMillisecondCounterHiRes() < drumEditor.velocityUntil)
         {
+            const auto text = drumEditor.velocityStep ? ju::String(drumEditor.previewVelocity)
+                : drumEditor.velocityFeedback.fromFirstOccurrenceOf(" ", false, false);
+            const auto point = drumEditor.velocityAnchor;
+            const auto feedbackY = point.y >= 59 ? point.y - 27 : point.y + 6;
+            const auto bounds = ju::Rectangle<int>(point.x + 6, feedbackY, 74, 21)
+                .constrainedWithin(drumEditor.getLocalBounds().withTrimmedTop(32));
+            g.setColour(ju::Colour(0xff141b24));
+            g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
             g.setColour(ju::Colours::white);
-            g.setFont(ju::FontOptions(14.0f));
-            g.drawFittedText(lanes[i]->getName(), { 8, y, drumNameWidth - 12, drumRowHeight },
-                             ju::Justification::centredLeft, 1);
-            paintDrumGrid(g, *clip, pattern, *lanes[i], y, drumRowHeight, trackColour(*lanes[i]));
+            g.drawText(text, bounds, ju::Justification::centred);
         }
         if (!drumSelectionBox.isEmpty())
         {
@@ -384,7 +688,8 @@
     std::optional<DrumCell> drumCellAt(ju::Point<int> point)
     {
         auto* clip = selectedDrumPattern();
-        if (!clip || point.x < drumNameWidth || point.y < drumHeaderHeight)
+        if (!clip || point.x < drumNameWidth || point.x >= drumEditor.gridRight()
+            || point.y < drumHeaderHeight || point.y >= drumEditor.rowBottom())
             return {};
         const auto row = (point.y - drumHeaderHeight) / drumRowHeight;
         auto* lane = drumEditorLanes()[drumFirstLane + row];
@@ -439,12 +744,45 @@
         refreshDrumPopup();
     }
 
+    void setDrumPastePosition(int x)
+    {
+        auto* clip = selectedDrumPattern();
+        if (!clip || x < drumNameWidth || x >= drumEditor.gridRight())
+            return;
+        auto model = makeDrumEditor(*clip);
+        const DrumPattern pattern(*clip, model);
+        const auto absolute = edit->tempoSequence.toBeats(te::TimePosition::fromSeconds(drumTimeAt(x)));
+        auto source = (absolute - clip->getContentStartBeat()).inBeats();
+        if (clip->isLooping() && pattern.range.getLength() > 0.0)
+            source = pattern.range.getStart() + std::fmod(std::max(0.0, source), pattern.range.getLength());
+        const auto index = pattern.indexAt(source);
+        if (ju::isPositiveAndBelow(index, pattern.count()))
+            drumPasteStep = index;
+    }
+
     void drumMouseDown(const ju::MouseEvent& event)
     {
         closeDrumPopup();
+        const auto point = event.getPosition();
+        if (editingStopped() && event.mods.isLeftButtonDown() && point.y >= 32 && point.y < drumHeaderHeight)
+        {
+            setDrumPastePosition(point.x);
+            updateControls();
+            return;
+        }
+        if (point.y >= drumHeaderHeight && point.y < drumEditor.rowBottom())
+            if (auto* lane = drumEditorLanes()[drumFirstLane + (point.y - drumHeaderHeight) / drumRowHeight])
+                drumLaneID = lane->itemID;
+        if (editingStopped() && event.mods.isLeftButtonDown() && point.y >= drumEditor.rowBottom()
+            && point.y < drumEditor.velocityBottom() && beginDrumVelocity(point))
+            return;
         const auto cell = editingStopped() && !event.mods.isShiftDown() ? drumCellAt(event.getPosition()) : std::nullopt;
         if (!cell)
+        {
+            drumEditor.repaint();
             return;
+        }
+        drumPasteStep = cell->step.index;
         auto* clip = selectedDrumPattern();
         auto editor = makeDrumEditor(*clip);
         const DrumPattern pattern(*clip, editor);
@@ -469,12 +807,13 @@
         if (!clip || !drumAnchor)
             return;
         drumSelectionBox = ju::Rectangle<int>(*drumAnchor, point).expanded(1)
-            .getIntersection(drumEditor.getLocalBounds().withTrimmedLeft(drumNameWidth).withTrimmedTop(drumHeaderHeight));
+            .getIntersection(ju::Rectangle<int>(drumNameWidth, drumHeaderHeight, drumEditor.gridRight() - drumNameWidth,
+                                                 drumEditor.rowBottom() - drumHeaderHeight));
         drumSteps.clear();
         auto editor = makeDrumEditor(*clip);
         const DrumPattern pattern(*clip, editor);
         const auto tracks = drumEditorLanes();
-        for (int row = drumFirstLane, y = drumHeaderHeight; row < tracks.size() && y < drumEditor.getHeight(); y += drumRowHeight, ++row)
+        for (int row = drumFirstLane, y = drumHeaderHeight; row < tracks.size() && y < drumEditor.rowBottom(); y += drumRowHeight, ++row)
                 forDrumCells(*clip, pattern, *tracks[row], y, drumRowHeight, [&](const DrumCell& cell) {
                     if (cell.bounds.intersects(drumSelectionBox) && !pattern.hits(cell.step).empty())
                         drumSteps.insert(cell.step);
@@ -534,17 +873,18 @@
         updateControls();
     }
 
-    bool adjustDrumVelocity(float delta)
+    bool adjustDrumVelocity(float delta, ju::Point<int> pointer)
     {
         auto* clip = selectedDrumPattern();
         if (!clip || !editingStopped() || drumSteps.empty() || delta == 0.0f
-            || drumEditor.velocity.getText().isEmpty())
+            || drumEditor.velocityFeedback.isEmpty())
             return false;
 
         // Normalize precision-wheel input and detents to a useful MIDI change.
         const auto amount = ju::jlimit(4, 16, ju::roundToInt(std::abs(delta) * 12.0f));
         auto editor = makeDrumEditor(*clip);
         DrumPattern(*clip, editor).velocity(drumSteps, delta > 0 ? amount : -amount);
+        drumEditor.showVelocityAt(pointer);
         updateControls();
         return true;
     }

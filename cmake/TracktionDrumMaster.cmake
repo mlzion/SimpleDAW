@@ -54,3 +54,34 @@ OutputDevice* TrackOutput::getOutputDevice (bool traceThroughDestTracks) const
     }
 
     auto& dm = owner.edit.engine.getDeviceManager();]=])
+
+# A lane solo filters its kit locally. Only the master participates in global solo.
+simpledaw_patch_midi("model/edit/tracktion_Edit.cpp" [=[
+    return findTrackForPredicate (*this, [] (Track& t) { return t.isSolo (true); }) != nullptr;]=] [=[
+    return findTrackForPredicate (*this, [] (Track& t)
+    {
+        return ! t.state.hasProperty ("simpleDawDrumSource") && t.isSolo (true);
+    }) != nullptr;]=])
+
+simpledaw_patch_midi("model/tracks/tracktion_AudioTrack.cpp" [=[
+    if (areAnyTracksSolo && isInputTrackSolo (*this))
+        return true;]=] [=[
+    if (state.hasProperty ("simpleDawDrumSource"))
+    {
+        if (auto* master = output->getDestinationTrack())
+        {
+            const auto inputs = master->getInputTracks();
+            const bool hasLaneSolo = std::any_of (inputs.begin(), inputs.end(), [] (auto* lane)
+            {
+                return lane->state.hasProperty ("simpleDawDrumSource") && lane->isSolo (false);
+            });
+            if ((hasLaneSolo && ! isSolo (false))
+                || (areAnyTracksSolo && ! master->isSolo (true) && ! master->isSoloIsolate (true)))
+                return false;
+        }
+        return ! isMuted (true);
+    }
+
+    if (areAnyTracksSolo && ! state.hasProperty ("simpleDawDrumMaster") && isInputTrackSolo (*this))
+        return true;]=]
+)

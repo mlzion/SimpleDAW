@@ -217,10 +217,21 @@ struct NoteGrid
     }
 };
 
+struct EditorScrollBar final : ju::ScrollBar, private ju::ScrollBar::Listener
+{
+    explicit EditorScrollBar(bool vertical) : ju::ScrollBar(vertical) { addListener(this); }
+    std::function<void(double)> onMove;
+    void scrollBarMoved(ju::ScrollBar*, double start) override
+    {
+        if (onMove)
+            onMove(start);
+    }
+};
+
 class PianoRoll final : public ju::Component, private ju::Timer
 {
 public:
-    enum class Action { cut, remove, copy, paste, duplicate, up, down, left, right, startMinus, startPlus, endMinus, endPlus };
+    enum class Action { cut, remove, copy, paste };
 
     PianoRoll()
     {
@@ -325,19 +336,7 @@ public:
     {
         if (!editable || !clip)
             return false;
-        const auto notes = selectedNotes();
-        if (action == Action::paste)
-            return !pasteNotes().empty();
-        if (action == Action::duplicate)
-            return !duplicateNotes(notes).empty();
-        if (action == Action::copy || action == Action::cut || action == Action::remove)
-            return !notes.empty();
-        auto changes = actionChanges(action, notes);
-        return !changes.empty() && changes != notes
-            && std::all_of(changes.begin(), changes.end(), [&](const auto& note) {
-                return action == Action::up || action == Action::down
-                    ? note.pitch >= 0 && note.pitch <= 127 : MidiNoteEditor(*clip).valid(note);
-            });
+        return action == Action::paste ? !pasteNotes().empty() : !selectedNotes().empty();
     }
 
     void apply(Action action)
@@ -362,10 +361,6 @@ public:
         }
         else if (action == Action::paste)
             selected = model.insert(pasteNotes(), "Paste MIDI notes");
-        else if (action == Action::duplicate)
-            selected = model.insert(duplicateNotes(notes), "Duplicate MIDI notes");
-        else if (action != Action::copy)
-            model.change(actionChanges(action, notes), "Adjust MIDI notes");
         notify();
     }
 
@@ -374,17 +369,6 @@ public:
 
 private:
     friend class MainGui;
-
-    struct ScrollBar final : ju::ScrollBar, private ju::ScrollBar::Listener
-    {
-        explicit ScrollBar(bool vertical) : ju::ScrollBar(vertical) { addListener(this); }
-        std::function<void(double)> onMove;
-        void scrollBarMoved(ju::ScrollBar*, double start) override
-        {
-            if (onMove)
-                onMove(start);
-        }
-    };
 
     enum class Gesture { none, draw, move, resize, box, addBox, velocity, rightVelocity };
     using G = NoteGrid;
@@ -431,45 +415,6 @@ private:
             if (!MidiNoteEditor(*clip).valid(note))
                 return {};
         }
-        return notes;
-    }
-
-    std::vector<GridNote> duplicateNotes(std::vector<GridNote> notes) const
-    {
-        if (notes.empty())
-            return {};
-        const auto first = std::min_element(notes.begin(), notes.end(),
-            [](const auto& a, const auto& b) { return a.start < b.start; })->start;
-        const auto last = std::max_element(notes.begin(), notes.end(),
-            [](const auto& a, const auto& b) { return a.end() < b.end(); })->end();
-        const auto model = MidiNoteEditor(*clip);
-        for (auto& note : notes)
-        {
-            note.start += last - first;
-            if (!model.valid(note))
-                return {};
-        }
-        return notes;
-    }
-
-    std::vector<GridNote> actionChanges(Action action, std::vector<GridNote> notes) const
-    {
-        if (action >= Action::startMinus && notes.size() != 1)
-            return {};
-        const auto increment = step() > 0 ? step() : 1.0 / 96.0;
-        for (auto& note : notes)
-            switch (action)
-            {
-                case Action::up: ++note.pitch; break;
-                case Action::down: --note.pitch; break;
-                case Action::left: note.start -= increment; break;
-                case Action::right: note.start += increment; break;
-                case Action::startMinus: note.start -= increment; note.length += increment; break;
-                case Action::startPlus: note.start += increment; note.length -= increment; break;
-                case Action::endMinus: note.length -= increment; break;
-                case Action::endPlus: note.length += increment; break;
-                default: break;
-            }
         return notes;
     }
 
@@ -1051,5 +996,5 @@ private:
     ju::TextButton close { "×" }, mode { "DRAW" }, quantize { "QUANTIZE" };
     ju::ComboBox snap;
     ju::Slider velocity;
-    ScrollBar horizontal { false }, vertical { true };
+    EditorScrollBar horizontal { false }, vertical { true };
 };

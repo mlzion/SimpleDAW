@@ -112,7 +112,7 @@ public:
         return model.change(changes, "Add drum subdivision", { added });
     }
 
-    bool velocity(const std::set<DrumStep>& selected, int delta)
+    bool velocity(const std::set<DrumStep>& selected, int amount, bool absolute = false)
     {
         std::vector<GridNote> updates;
         for (auto cell : selected)
@@ -120,7 +120,7 @@ public:
             auto group = hits(cell);
             if (group.empty())
                 continue;
-            const auto value = ju::jlimit(1, 127, group.front().velocity + delta);
+            const auto value = ju::jlimit(1, 127, absolute ? amount : group.front().velocity + amount);
             for (auto& note : group)
             {
                 note.velocity = value;
@@ -141,17 +141,22 @@ public:
 
     const ju::Range<double> range;
 
+    double quarterForSource(double beat) const
+    {
+        return quarterAtTime(tempo, tempo.toTime(te::BeatPosition::fromBeats(origin + beat)));
+    }
+
+    double sourceAtQuarter(double quarter) const
+    {
+        return tempo.toBeats(timeAtQuarter(tempo, quarter)).inBeats() - origin;
+    }
+
 private:
     bool insert(DrumStep cell, int velocity)
     {
         const auto at = start(cell);
         const auto length = std::min(start(cell, 4), range.getEnd()) - at;
         return !model.insert({ { {}, at, length, cell.pitch, velocity } }, "Add drum hit").empty();
-    }
-
-    double quarterForSource(double beat) const
-    {
-        return quarterAtTime(tempo, tempo.toTime(te::BeatPosition::fromBeats(origin + beat)));
     }
 
     static constexpr double epsilon = 1.0e-8;

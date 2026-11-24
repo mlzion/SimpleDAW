@@ -117,6 +117,13 @@
         edit->restartPlayback();
     }
 
+    void toggleDrumOverlap(ju::ValueTree lane)
+    {
+        auto& history = edit->getUndoManager();
+        history.beginNewTransaction("Set drum overlap");
+        lane.setProperty(drumMaster::overlapProperty, !static_cast<bool>(lane[drumMaster::overlapProperty]), &history);
+    }
+
     void showDrumLaneControls(te::AudioTrack& track, drumMaster::Sampler& sampler)
     {
         using namespace drumMaster;
@@ -131,7 +138,6 @@
         menu.addItem(2, "Overlap", true, static_cast<bool>(lane[overlapProperty]));
         menu.addItem(3, "Audition", file.existsAsFile());
         menu.addItem(4, "Locate WAV");
-        menu.addItem(5, "Duplicate lane", canDuplicateDrumLane(track));
 
         drumLibrary = scanLibrary();
         const auto& files = drumLibrary;
@@ -169,10 +175,7 @@
             lane.setProperty(noteProperty, note, &history);
         }
         else if (choice == 2)
-        {
-            history.beginNewTransaction("Set drum overlap");
-            lane.setProperty(overlapProperty, !static_cast<bool>(lane[overlapProperty]), &history);
-        }
+            toggleDrumOverlap(lane);
         else if (choice == 3)
         {
             edit->getTransport().ensureContextAllocated();
@@ -194,8 +197,6 @@
                 }
             });
         }
-        else if (choice == 5)
-            duplicateDrumLane(track);
         else if (ju::isPositiveAndBelow(choice - 100, files.size()))
         {
             history.beginNewTransaction("Select drum sample");

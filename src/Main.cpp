@@ -914,7 +914,7 @@ public:
             else if (command == "--drum-grid-test")
                 passed = MainGui::testDrumGrid(*engine);
             else if (command == "--drum-master-test")
-                passed = runDrumMasterTest(*engine) && MainGui::testDrumUi(*engine);
+                passed = runDrumMasterTest(*engine) && MainGui::testDrumUi(*engine) && MainGui::testDrumPlayback(*engine);
             else if (command == "--device-setup-test")
                 passed = DeviceSetup::test(*engine) && MainGui::testPlaybackOutput(*engine);
             else if (command == "--audio-overlap-test")

@@ -89,7 +89,15 @@
         if (!check(visible.size() == 32 && visible.front().step.index == 0 && visible.back().step.index == 31,
                    "four bars initially display 32 steps aligned to the timeline"))
             return false;
-        gui.navigateTime(1, true);
+        gui.setSize(gui.getWidth(), 700);
+        if (!check(gui.drumEditor.horizontal.isVisible() && gui.drumEditor.vertical.isVisible()
+            && gui.clipPulse(clip->itemID, 500.0) == 1.0f, "scrollbars and timeline pulse are active"))
+            return false;
+        gui.drumEditor.vertical.onMove(1);
+        if (!check(gui.drumFirstLane == 1, "vertical scrollbar scrolls the lanes"))
+            return false;
+        gui.drumEditor.vertical.onMove(0);
+        gui.drumEditor.horizontal.onMove(gui.drumLeftQuarter + 8.0);
         visible = cells(*clip);
         if (!check(visible.size() == 32 && visible.front().step.index == 32 && visible.back().step.index == 63,
                    "horizontal page scroll reveals the remaining 32 steps"))
@@ -132,19 +140,19 @@
         wheel.deltaX = 0.05f;
         wheel.deltaY = 1.0f;
         gui.drumEditor.mouseWheelMove(event(next, next, 0), wheel);
-        if (!check(gui.drumEditor.velocity.getText() == "Velocity 112"
+        if (!check(gui.drumEditor.velocityFeedback == "Velocity 112"
             && hitState()[0].velocity == 112 && hitState()[1].velocity == 112
             && clip->getSequence().getNotes().getLast()->getVelocity() == 100,
             "wheel adjusts only the selected step and all its subdivisions, with numeric feedback"))
             return false;
         gui.useHistory(false);
-        if (!check(gui.drumEditor.velocity.getText() == "Velocity 100", "velocity undo restores numeric feedback"))
+        if (!check(gui.drumEditor.velocityFeedback == "Velocity 100", "velocity undo restores numeric feedback"))
             return false;
         gui.useHistory(true);
         gesture(cell, next, left);
         wheel.deltaY = -0.1f;
         gui.drumEditor.mouseWheelMove(event(next, next, 0), wheel);
-        if (!check(gui.drumSteps.size() == 2 && gui.drumEditor.velocity.getText() == "Velocity 96 - 108"
+        if (!check(gui.drumSteps.size() == 2 && gui.drumEditor.velocityFeedback == "Velocity 96 - 108"
             && hitState()[0].velocity == 108 && hitState()[1].velocity == 108
             && clip->getSequence().getNotes().getLast()->getVelocity() == 96, "box and wheel adjust the selected group"))
             return false;
@@ -158,14 +166,45 @@
         gui.useHistory(false);
         if (!check(clip->getSequence().getNotes().size() == 3, "single-click removal is undoable"))
             return false;
-        const auto laneHeader = ju::Point<int>(15, gui.rowTop(1) + gui.rowHeight(1) / 2);
+        const ju::Point<int> velocityPoint(cell.x, gui.drumVelocityY(82));
+        const auto previous = velocityPoint.withY(gui.drumVelocityY(108));
+        gui.drumEditor.mouseDown(event(previous, previous, left));
+        gui.drumEditor.mouseDrag(event(velocityPoint, previous, left));
+        if (!check(gui.drumEditor.velocityStep.has_value() && gui.drumEditor.velocityAnchor == velocityPoint
+            && hitState().front().velocity == 108, "velocity drag previews the value beside the cursor"))
+            return false;
+        gui.drumEditor.mouseUp(event(velocityPoint, previous, left));
+        if (!check(std::abs(hitState().front().velocity - 82) <= 2
+            && hitState()[0].velocity == hitState()[1].velocity, "velocity panel changes all subdivisions"))
+            return false;
+        gui.useHistory(false);
+        if (!check(hitState().front().velocity == 108, "one Undo restores the velocity panel edit"))
+            return false;
+        if (!check(!gui.canDispatch(UniversalAction::duplicate) && !gui.canDispatch(UniversalAction::trim)
+            && gui.canDispatch(UniversalAction::copy), "drum editor offers only applicable content commands"))
+            return false;
+        gui.dispatchAction(UniversalAction::cut);
+        if (!check(hitState().empty() && gui.canDispatch(UniversalAction::paste), "Cut captures the subdivided hit"))
+            return false;
+        const auto pastePoint = cell.withY(38);
+        gesture(pastePoint, pastePoint, left);
+        gui.dispatchAction(UniversalAction::paste);
+        if (!check(hitState().size() == 2 && hitState().front().velocity == 108, "Paste preserves subdivisions and velocity"))
+            return false;
+        gui.dispatchAction(UniversalAction::remove);
+        if (!check(hitState().empty(), "Delete removes the pasted selection"))
+            return false;
+        gui.useHistory(false);
+        const auto laneHeader = ju::Point<int>(15, gui.rowTop(2) + gui.rowHeight(2) / 2);
         arrangerClick(laneHeader, 1);
-        if (!check(gui.selectedDrumPattern() == clip && gui.actionTrack() == lane, "lane Inspector preserves the pattern target"))
+        if (!check(gui.selectedDrumPattern() == clip && gui.actionTrack() == gui.trackAt(2)
+            && gui.drumLaneID == gui.trackAt(2)->itemID && gui.clipPulse(clip->itemID, 500.0) == 1.0f,
+            "track selection changes the velocity lane while the pattern and its pulse stay open"))
             return false;
 
         gui.drumEditor.close.onClick();
         if (!check(!gui.drumEditor.isVisible() && gui.selectedClip() == clip && gui.viewStart == savedView
-            && gui.pixelsPerSecond == savedScale && gui.activeEditingArea() == EditingArea::timeline,
+            && gui.pixelsPerSecond == savedScale && gui.activeEditingArea() == EditingArea::timeline && !gui.clipPulse(clip->itemID, 500.0),
             "X returns focus and the selected clip to the unchanged arrangement viewport"))
             return false;
         const auto originalPosition = clip->getPosition();
@@ -184,7 +223,7 @@
         gui.useHistory(false);
         gui.inspectorContext = EditingArea::timeline;
         gui.editCursor = gui.barTime(8);
-        gui.copyInspectedClip(true);
+        correctionAction(UniversalAction::clone);
         auto* clone = dynamic_cast<te::MidiClip*>(gui.selectedClip());
         if (!check(clone && clone != clip && gui.cloneMembers(*clip).size() == 2, "clone retains a linked drum source"))
             return false;
@@ -199,7 +238,7 @@
         if (!check(hitState().front().velocity == 109, "redo re-applies the linked edit"))
             return false;
 
-        gui.toggleInspectorClone();
+        correctionAction(UniversalAction::unclone);
         if (!check(gui.cloneMembers(*clip).size() == 1 && gui.cloneMembers(*clone).size() == 1,
                    "Unclone separates the linked source"))
             return false;
@@ -208,7 +247,7 @@
             return false;
         gui.useHistory(true);
         gui.editCursor = gui.barTime(14);
-        gui.copyInspectedClip(false);
+        correctionAction(UniversalAction::duplicate);
         auto* independent = dynamic_cast<te::MidiClip*>(gui.selectedClip());
         if (!check(independent && independent != clone && gui.cloneMembers(*independent).size() == 1,
                    "Duplicate creates an independent drum pattern"))
@@ -228,8 +267,12 @@
         if (!check(independent->getPosition().getEnd() > trimmed.getEnd(), "timeline Resize extends the drum clip"))
             return false;
         gui.useHistory(false);
-        if (!check(independent->getPosition().time == trimmed && gui.setClipLoop(*independent, true, 2),
-                   "Resize undo and drum Loop"))
+        if (!check(independent->getPosition().time == trimmed, "Resize Undo restores the trimmed clip"))
+            return false;
+        independent->state.setProperty(loopCountProperty, 2, nullptr);
+        correctionAction(UniversalAction::loop);
+        if (!check(independent->isLooping() && independent->getLoopLengthBeats().inBeats() > 0,
+                   "Resize undo and UAT drum Loop"))
             return false;
         if (!check(independent->isLooping() && independent->getLengthInBeats() > independent->getLoopLengthBeats(),
                    "loop repeats one source"))

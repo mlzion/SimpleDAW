@@ -1,6 +1,6 @@
 # SimpleDAW v0.25.1 — Master Drum Track MD0 Integration
 
-Draft PR #27 links to the v0.25.1 artifact used for the initial Windows 11 D01–D58 acceptance pass. The acceptance corrections below require a separately authorized Windows build and retest. The accepted Piano Roll P0 release remains v0.24.1. [MD0 integration draft](https://github.com/mlzion/SimpleDAW/pull/27)
+Draft PR #27 contains the v0.25.1 MD0 integration. The owner reported that the prior corrective Windows retest passed except for the inconclusive D44 listening check. The final correction pass below awaits a separately authorized Windows build and live retest. The accepted Piano Roll P0 release remains v0.24.1. [MD0 integration draft](https://github.com/mlzion/SimpleDAW/pull/27)
 
 The Master is a protected native audio track that owns the project's drum MIDI clips. The arrangement pins it above ordinary tracks and groups its child drum lanes beneath it. Each lane uses a native track and sampler. The Tracktion graph reads the Master's MIDI clips for each lane, then routes lane audio by Master track ID through the Master inserts, EQ, and fader. Each lane has an independent volume, pan, EQ, and effect chain. Collapsing the kit only changes the arrangement.
 
@@ -16,7 +16,7 @@ Single-click selects a Master Drum Track clip in the arrangement. Double-click o
 
 The editor fits a one-bar 4/4 pattern to 16 steps and caps the visible span at 32 steps. Use the horizontal navigation buttons or horizontal scrolling to reach later steps. The editor has its own grid and ruler time transform. Musical-grid positions use the tempo map's quarter-note coordinates, including in meters such as 7/8, where one bar has 14 sixteenth notes.
 
-Left-click adds or removes a step, right-click toggles selection, and dragging a selection box selects occupied steps. While stopped, use the vertical wheel anywhere in the focused editor after selecting hits, or use UAT Delete to remove them. Replay the pattern to hear the edited velocity. The editor header displays the selected velocity or range. A wheel event makes an undoable 4–16 point change, subject to the MIDI range of 1–127. Group adjustments preserve each parent step’s velocity relationship and apply its resulting value to every active subdivision. Double-click an occupied step to open its four 64th-note cells. All active subdivisions inherit the step velocity. The grid uses the Piano Roll MIDI mutation model for linked clips and Undo/Redo, and loops keep a shared source.
+Left-click adds or removes a step, right-click toggles selection, and dragging a selection box selects occupied steps. While stopped, use the vertical wheel anywhere in the focused editor after selecting hits, or use UAT Delete to remove them. Replay the pattern to hear the edited velocity. The editor displays the selected velocity or range beside the pointer. A wheel event makes an undoable 4–16 point change, subject to the MIDI range of 1–127. Group adjustments preserve each parent step’s velocity relationship and apply its resulting value to every active subdivision. Double-click an occupied step to open its four 64th-note cells. All active subdivisions inherit the step velocity. The grid uses the Piano Roll MIDI mutation model for linked clips and Undo/Redo, and loops keep a shared source.
 
 Choose **Insert > MIDI Clip** and a length of 1–4 bars on either the Master or an ordinary MIDI track. The menu checks the most recently used length in the current project session. Insertion uses the existing snap setting and the musical lengths of the selected bars. Import and recording retain their existing length behavior.
 
@@ -38,10 +38,10 @@ D09 and D44 use a deterministic 500 ms constant WAV at 48 kHz and two MIDI trigg
 The drum-grid regression uses wheel input with a small horizontal component and checks visible numeric feedback, selected and unselected hits, parent velocity across active subdivisions, and linked Undo/Redo. It also covers one-, three-, and four-bar viewport behavior, the X focus handoff, independent duplicates, and save/reopen.
 
 
-- D33 and D34 share the existing lane-copy path between UAT Duplicate and the Drum Samples popup. Lane copy keeps the GM note and makes a separate copy of the lane state. The GM note dialog uses plain ASCII for the input range.
+- D33 uses the existing lane-copy implementation through UAT Duplicate. Lane copy keeps the GM note and makes a separate copy of the lane state. The GM note dialog uses plain ASCII for the input range.
 - D41 uses the missing audio clip’s gray diagonal hatch in the lane name area only. The indicator checks the existing sample reference during painting, so a restored WAV or manual relink clears it.
 - D57 and D58 use the underlying ordinary-track order for numbering, excluding the Master and child lanes. The Track List draws child headers 18 pixels to the right with their original row height, right-aligned controls, and hit target.
-- D48 regressions exercise established timeline and Inspector operations on drum clips, including conversion from ordinary MIDI channel 3 to channel 10 with pitch, onset, duration, and velocity preserved on Move and Paste. Move Undo restores the original channel. Cross-track moves resolve the clip again by ID before applying destination edits because Tracktion can replace the clip object as its parent changes.
+- D48 regressions exercise established timeline operations on drum clips, including conversion from ordinary MIDI channel 3 to channel 10 with pitch, onset, duration, and velocity preserved on Move and Paste. Move Undo restores the original channel. Cross-track moves resolve the clip again by ID before applying destination edits because Tracktion can replace the clip object as its parent changes.
 
 ## Targeted Windows 11 retest
 
@@ -67,3 +67,14 @@ Linux x64 Release passed all 17 CTests under Xvfb. The device setup, GUI correct
 - Set the output to None, close Settings with X, and press Play. Verify the warning, a stopped transport, and usable UAT and Audio and MIDI Devices controls.
 - Reopen Settings and change the input, output, sample rate, buffer size, and enabled channels several times. Check that the displayed choice follows the device and that X closes the dialog each time.
 - Quit and reopen SimpleDAW. Verify that the selected endpoints and stream settings survive startup. Play an ordinary WAV, then verify recording and input monitoring with the selected interface.
+
+## Final correction pass
+
+- **D44** exercises the lane Inspector Overlap action and renders the same channel-10 pattern through the lane sampler, Drum Master bus, and Tracktion WAV renderer. Two notes trigger 10 ms apart on a constant 250 ms sample at 48 kHz. The test compares amplitudes at retrigger and throughout both the interrupted and natural releases. The sampler implementation is unchanged.
+- **D60** keeps the slide-up editor and its 32-step viewport. The ruler distinguishes bars, beats, and sixteenth notes. Scrollbars appear when the clip or kit exceeds the viewport. The bottom velocity panel follows the chosen lane and previews its value beside the pointer. A drag commits one undoable edit across the hit’s subdivisions. The arrangement clip pulses while its editor is visible, including while inspecting a lane.
+- **D62** scopes lane solos to the kit. Master solo isolates the kit from ordinary tracks. With both enabled, only soloed lanes play. Lane and master mute still take precedence. The regression renders separate kick, snare, and ordinary WAV passages to check the mix, including disabled-kit isolation.
+- **D63** puts Duplicate, Clone, Unclone, Split, Trim, and Loop in the timeline UAT. Loop count remains a clip parameter in the Inspector. The Track List UAT duplicates ordinary tracks or drum lanes. Both note editors offer Cut, Copy, Paste, and Delete through the UAT and keep their mouse gestures. In the Drum Pattern Editor, click the ruler to set the paste position while retaining selection. Paste retains the copied pitches, timing, velocities, and subdivisions.
+
+D44 measured a single-voice output of `0.088493`. Overlap ON held at `0.176986` through the retrigger and until the original voice’s natural release. Overlap OFF measured `0.176986`, `0.132740`, and `0.088493` at 0, 1.5, and 3 ms after retrigger. At 48 kHz that is 144 samples. Both renders retained the final voice’s natural fade and reached silence at its end.
+
+Linux x64 Release passed all 17 CTests under Xvfb. The drum grid, drum master, drum voices, Inspector clone, Inspector loop, Piano Roll, and UAT suites each passed three consecutive runs. Windows live validation of the final correction pass remains pending.
