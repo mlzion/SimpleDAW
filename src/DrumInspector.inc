@@ -81,6 +81,42 @@
         updateControls();
     }
 
+    bool canDuplicateDrumLane(const te::AudioTrack& track) const
+    {
+        if (!edit || !drumMaster::isLane(track))
+            return false;
+        auto* master = drumMaster::find(*edit);
+        return master && drumMaster::lanes(*master).size() < drumMaster::maxLanes;
+    }
+
+    void duplicateDrumLane(te::AudioTrack& track)
+    {
+        using namespace drumMaster;
+        if (!editingStopped() || !canDuplicateDrumLane(track))
+            return;
+        auto* master = drumMaster::find(*edit);
+        auto& history = edit->getUndoManager();
+        track.flushStateToValueTree();
+        auto copy = track.state.createCopy();
+        te::EditItemID::remapIDs(copy, nullptr, *edit);
+        copy.setProperty(sourceProperty, master->itemID, nullptr);
+        const auto base = track.getName() + " Copy";
+        auto name = base;
+        const auto children = lanes(*master);
+        for (int suffix = 2; std::any_of(children.begin(), children.end(), [&](auto* child) {
+                 return child->getName().equalsIgnoreCase(name);
+             }); ++suffix)
+            name = base + " " + ju::String(suffix);
+        copy.setProperty(te::IDs::name, name, nullptr);
+        const auto id = te::EditItemID::fromID(copy);
+        auto parent = track.state.getParent();
+        history.beginNewTransaction("Duplicate drum lane");
+        parent.addChild(copy, parent.indexOf(track.state) + 1, &history);
+        selectTrack(visibleTracks().indexOf(trackForID(id)));
+        revealTrack(selection);
+        edit->restartPlayback();
+    }
+
     void showDrumLaneControls(te::AudioTrack& track, drumMaster::Sampler& sampler)
     {
         using namespace drumMaster;
@@ -95,8 +131,7 @@
         menu.addItem(2, "Overlap", true, static_cast<bool>(lane[overlapProperty]));
         menu.addItem(3, "Audition", file.existsAsFile());
         menu.addItem(4, "Locate WAV");
-        auto* master = drumMaster::find(*edit);
-        menu.addItem(5, "Duplicate lane", master && lanes(*master).size() < maxLanes);
+        menu.addItem(5, "Duplicate lane", canDuplicateDrumLane(track));
 
         drumLibrary = scanLibrary();
         const auto& files = drumLibrary;
@@ -119,7 +154,7 @@
         auto& history = edit->getUndoManager();
         if (choice == 1)
         {
-            ju::AlertWindow dialog("GM drum note", "Enter 35–81, or -1 to leave the lane unassigned.",
+            ju::AlertWindow dialog("GM drum note", "Enter a note from 35 to 81, or -1 to leave the lane unassigned.",
                                    ju::MessageBoxIconType::NoIcon);
             dialog.addTextEditor("note", lane[noteProperty].toString());
             dialog.addButton("Apply", 1);
@@ -159,28 +194,8 @@
                 }
             });
         }
-        else if (choice == 5 && master && lanes(*master).size() < maxLanes)
-        {
-            track.flushStateToValueTree();
-            auto copy = track.state.createCopy();
-            te::EditItemID::remapIDs(copy, nullptr, *edit);
-            copy.setProperty(sourceProperty, master->itemID, nullptr);
-            const auto base = track.getName() + " Copy";
-            auto name = base;
-            const auto children = lanes(*master);
-            for (int suffix = 2; std::any_of(children.begin(), children.end(), [&](auto* child) {
-                     return child->getName().equalsIgnoreCase(name);
-                 }); ++suffix)
-                name = base + " " + ju::String(suffix);
-            copy.setProperty(te::IDs::name, name, nullptr);
-            const auto id = te::EditItemID::fromID(copy);
-            auto parent = track.state.getParent();
-            history.beginNewTransaction("Duplicate drum lane");
-            parent.addChild(copy, parent.indexOf(track.state) + 1, &history);
-            selectTrack(visibleTracks().indexOf(trackForID(id)));
-            revealTrack(selection);
-            edit->restartPlayback();
-        }
+        else if (choice == 5)
+            duplicateDrumLane(track);
         else if (ju::isPositiveAndBelow(choice - 100, files.size()))
         {
             history.beginNewTransaction("Select drum sample");

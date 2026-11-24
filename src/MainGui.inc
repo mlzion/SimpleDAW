@@ -137,20 +137,9 @@
         void mouseDown(const ju::MouseEvent& event) override { owner.arrangementDown(event); }
         void mouseDrag(const ju::MouseEvent& event) override { owner.arrangementDrag(event); }
         void mouseUp(const ju::MouseEvent& event) override { owner.arrangementUp(event); }
-        void mouseDoubleClick(const ju::MouseEvent& event) override { owner.openPianoRoll(event); }
-        bool keyPressed(const ju::KeyPress& key) override
+        void mouseDoubleClick(const ju::MouseEvent& event) override { owner.openClipEditor(event); }
+        void mouseWheelMove(const ju::MouseEvent&, const ju::MouseWheelDetails& wheel) override
         {
-            if (key == ju::KeyPress::escapeKey && owner.drumPopupStep)
-            {
-                owner.closeDrumPopup();
-                return true;
-            }
-            return false;
-        }
-        void mouseWheelMove(const ju::MouseEvent& event, const ju::MouseWheelDetails& wheel) override
-        {
-            if (wheel.deltaX == 0.0f && owner.adjustDrumVelocity(event.getPosition(), wheel.deltaY))
-                return;
             if (wheel.deltaX != 0.0f)
                 owner.scrollTime(-wheel.deltaX * getWidth() / owner.pixelsPerSecond);
             else if (wheel.deltaY != 0.0f)
@@ -255,6 +244,8 @@ public:
         outgoingEditor.setInterceptsMouseClicks(false, false);
         effectsEditor.addMouseListener(this, true);
         editingPanelArea.addChildComponent(pianoRoll);
+        editingPanelArea.addChildComponent(drumEditor);
+        drumEditor.addMouseListener(this, true);
         pianoRoll.addMouseListener(this, true);
         pianoRoll.onFocus = [this] { focusPianoRoll(); };
         pianoRoll.onChange = [this] { updateControls(); };
@@ -373,7 +364,7 @@ public:
         drumKitButton = std::make_unique<ju::TextButton>("DRUM LANES");
         inspectorControls.addChildComponent(*drumKitButton);
         drumKitButton->onClick = [this] { showDrumLanes(); };
-        arrangement.addChildComponent(drumPopup);
+        drumEditor.addChildComponent(drumPopup);
         for (size_t i = 0; i < drumSubdivisionButtons.size(); ++i)
         {
             auto& control = drumSubdivisionButtons[i];
@@ -705,6 +696,7 @@ public:
             return false;
         }
         hidePianoRoll();
+        hideDrumEditor();
         actionSelection.requestedArea = EditingArea::window;
         effectsEditor.setVisible(true);
         effectsEditor.toFront(false);
@@ -826,16 +818,19 @@ public:
         }
 
         arrangement.setBounds(area);
-        if (drumPatternID.isValid())
-            fitDrumViewport(viewStart);
-        if (effectsEditor.isVisible() || pianoRoll.isVisible())
+        if (effectsEditor.isVisible() || pianoRoll.isVisible() || drumEditor.isVisible())
         {
             auto timeline = area.withTrimmedLeft(headerWidth);
-            ju::Component& editor = pianoRoll.isVisible() ? static_cast<ju::Component&>(pianoRoll)
-                                                         : static_cast<ju::Component&>(effectsEditor);
-            editorAnimator.cancelAnimation(&editor, false);
+            ju::Component* editor = drumEditor.isVisible() ? static_cast<ju::Component*>(&drumEditor)
+                : pianoRoll.isVisible() ? static_cast<ju::Component*>(&pianoRoll) : static_cast<ju::Component*>(&effectsEditor);
+            editorAnimator.cancelAnimation(editor, false);
             editingPanelArea.setBounds(timeline.removeFromBottom(ju::roundToInt(0.8 * timeline.getHeight())));
-            editor.setBounds(editingPanelArea.getLocalBounds());
+            editor->setBounds(editingPanelArea.getLocalBounds());
+            if (drumEditor.isVisible())
+            {
+                fitDrumViewport(drumViewStart);
+                scrollDrumRows(0);
+            }
         }
         scrollRows(0);
     }
@@ -844,33 +839,117 @@ public:
     #include "../tests/DrumGrid.inc"
     static bool testDrumUi(te::Engine& engine)
     {
+        const auto fail = [](int line) {
+            std::fprintf(stderr, "MD0 arrangement test failed at line %d\n", line);
+            return false;
+        };
         const ju::TemporaryFile file(".tracktionedit"), settings(".settings");
         MainGui gui(engine, settings.getFile());
         auto project = te::createEmptyEdit(engine, file.getFile());
         project->ensureNumberOfAudioTracks(maxTracks - 1);
         auto* master = drumMaster::provision(*project, true);
         if (!master)
-            return false;
+            return fail(__LINE__);
         gui.setProject(std::move(project), file.getFile());
         if (gui.trackAt(0) != master || !drumMaster::isLane(*gui.trackAt(1))
             || gui.trackCount() != maxTracks + 5 || !gui.canAddTrack()
             || gui.canDispatch(UniversalAction::remove))
-            return false;
+            return fail(__LINE__);
         gui.addTrack(true);
         if (gui.canAddTrack())
-            return false;
+            return fail(__LINE__);
+        auto* first = gui.trackAt(6);
+        auto* last = gui.trackAt(gui.trackCount() - 1);
+        auto* lane = gui.trackAt(1);
+        if (gui.ordinaryTrackNumber(*first) != 1 || gui.ordinaryTrackNumber(*last) != 24
+            || gui.ordinaryTrackNumber(*lane) != 0 || gui.ordinaryTrackNumber(*master) != 0)
+            return fail(__LINE__);
+        master->state.setProperty(drumMaster::collapsedProperty, true, nullptr);
+        if (gui.ordinaryTrackNumber(*first) != 1 || gui.ordinaryTrackNumber(*last) != 24 || gui.trackAt(1) != first)
+            return fail(__LINE__);
+        master->state.setProperty(drumMaster::collapsedProperty, false, nullptr);
+        if (gui.heightForTrack(lane) != 44
+            || gui.trackPaintBounds(*lane, 0, 44).getX() - gui.trackPaintBounds(*master, 0, 44).getX() != 18
+            || gui.trackPaintBounds(*first, 0, 44) != gui.trackPaintBounds(*master, 0, 44))
+            return fail(__LINE__);
+
+        gui.selectTrack(1);
+        if (!gui.canDispatch(UniversalAction::duplicate))
+            return fail(__LINE__);
+        gui.dispatchAction(UniversalAction::duplicate);
+        auto* duplicate = gui.trackAt(2);
+        if (!duplicate || duplicate == lane || drumMaster::lanes(*master).size() != 6)
+            return fail(__LINE__);
+        const auto duplicateID = duplicate->itemID;
+        auto originalSettings = drumMaster::sampler(*lane)->state.getChildWithName(drumMaster::laneType);
+        auto copySettings = drumMaster::sampler(*duplicate)->state.getChildWithName(drumMaster::laneType);
+        if (!copySettings.isEquivalentTo(originalSettings) || copySettings == originalSettings)
+            return fail(__LINE__);
+        const auto drawHeader = [&] {
+            ju::Image image(ju::Image::RGB, headerWidth, 44, true);
+            ju::Graphics graphics(image);
+            gui.paintTrack(graphics, *duplicate, 2, 0, ju::Colours::blue);
+            return image;
+        };
+        const auto availableHeader = drawHeader();
+        const ju::TemporaryFile sample(".wav");
+        copySettings.setProperty(drumMaster::sampleProperty, sample.getFile().getFullPathName(), nullptr);
+        if (!missingDrumSample(*duplicate) || missingDrumSample(*lane))
+            return fail(__LINE__);
+        const auto missingHeader = drawHeader();
+        if (!writeTestWave(sample.getFile()) || missingDrumSample(*duplicate))
+            return fail(__LINE__);
+        const auto restoredHeader = drawHeader();
+        auto nameBounds = gui.trackPaintBounds(*duplicate, 0, 44).withTrimmedRight(24 + 46).reduced(5, 3);
+        nameBounds = nameBounds.withTrimmedBottom(8).withTrimmedLeft(7);
+        bool changedName = false;
+        for (int y = 0; y < availableHeader.getHeight(); ++y)
+            for (int x = 0; x < availableHeader.getWidth(); ++x)
+            {
+                const auto normal = availableHeader.getPixelAt(x, y);
+                if (normal != restoredHeader.getPixelAt(x, y))
+                    return fail(__LINE__);
+                if (normal != missingHeader.getPixelAt(x, y))
+                {
+                    if (!nameBounds.contains(x, y))
+                        return fail(__LINE__);
+                    changedName = true;
+                }
+            }
+        if (!changedName)
+            return fail(__LINE__);
+        if (!sample.getFile().deleteFile() || !missingDrumSample(*duplicate))
+            return fail(__LINE__);
+        copySettings.setProperty(drumMaster::sampleProperty, originalSettings[drumMaster::sampleProperty], nullptr);
+        if (missingDrumSample(*duplicate))
+            return fail(__LINE__);
+        gui.useHistory(false);
+        if (gui.trackForID(duplicateID) || drumMaster::lanes(*master).size() != 5)
+            return fail(__LINE__);
+        gui.useHistory(true);
+        if (!gui.trackForID(duplicateID) || drumMaster::lanes(*master).size() != 6)
+            return fail(__LINE__);
+        gui.useHistory(false);
+
         gui.selectTrack(0);
         gui.insertMidi();
         auto* clip = dynamic_cast<te::MidiClip*>(master->getClips().getFirst());
         if (!clip || clip->getMidiChannel() != te::MidiChannel(drumMaster::midiChannel))
-            return false;
+            return fail(__LINE__);
 
         gui.menuItemSelected(enableDrumMasterMenuItem, 5);
-        if (gui.trackCount() != maxTracks || master->isProcessing(false))
-            return false;
+        if (gui.trackCount() != maxTracks || master->isProcessing(false)
+            || gui.trackAt(0) != first || gui.ordinaryTrackNumber(*last) != 24)
+            return fail(__LINE__);
         gui.useHistory(false);
-        return gui.trackAt(0) == master && master->isProcessing(false)
-            && gui.trackCount() == maxTracks + 6;
+        if (gui.trackAt(0) != master || !master->isProcessing(false) || gui.trackCount() != maxTracks + 6)
+            return fail(__LINE__);
+        for (int i = drumMaster::lanes(*master).size(); i < drumMaster::maxLanes; ++i)
+            if (!drumMaster::addLane(*master, "Limit fixture", -1))
+                return fail(__LINE__);
+        gui.selectTrack(1);
+        return !gui.canDispatch(UniversalAction::duplicate)
+            && drumMaster::lanes(*master).size() == drumMaster::maxLanes;
     }
 
     static bool test(te::Engine& engine)
@@ -2470,6 +2549,8 @@ private:
     {
         if (pianoRollHasFocus() && pianoRoll.clip)
             pianoRoll.scrollTime(direction * (byScreen ? pianoRoll.visibleBeats() : pianoRoll.beatsPerBar()));
+        else if (drumGridHasFocus())
+            scrollDrumTime(direction * (byScreen ? 1.0 : 0.5));
         else if (byScreen)
             scrollTime(direction * visibleSeconds());
         else
@@ -2480,6 +2561,8 @@ private:
     {
         if (pianoRollHasFocus())
             pianoRoll.scrollPitch(direction);
+        else if (drumGridHasFocus())
+            scrollDrumRows(direction);
         else
             scrollRows(direction);
     }
@@ -2488,7 +2571,7 @@ private:
     {
         if (pianoRollHasFocus())
             pianoRoll.zoomTime(factor);
-        else
+        else if (!drumGridHasFocus())
             zoom(factor);
     }
 
@@ -2837,7 +2920,7 @@ private:
 
     EditingArea activeEditingArea() const
     {
-        return actionSelection.activeArea(effectsEditor.isVisible() || pianoRoll.isVisible(),
+        return actionSelection.activeArea(effectsEditor.isVisible() || pianoRoll.isVisible() || drumEditor.isVisible(),
                                           panels.inspectorOpen);
     }
 
@@ -3567,34 +3650,40 @@ private:
         history.beginNewTransaction(transaction);
         for (const auto& change : changes)
         {
-            const auto previous = change.clip->getPosition();
-            if (change.destination && (!change.clip->moveTo(*change.destination) || change.clip->getTrack() != change.destination))
-            {
-                history.undoCurrentTransactionOnly();
-                report("Could not move clips");
-                return false;
-            }
+            auto* clip = change.clip;
+            const auto previous = clip->getPosition();
             if (change.destination)
-                setDrumClipChannel(*change.clip);
-            if (change.destination && change.clip->state.hasProperty(clipShadeProperty)
-                && cloneMembers(*change.clip).size() == 1)
-                change.clip->state.removeProperty(clipShadeProperty, &history);
-            if (change.sourceResize && dynamic_cast<te::MidiClip*>(change.clip))
+            {
+                const auto id = clip->itemID;
+                const auto moved = clip->moveTo(*change.destination);
+                clip = moved ? te::findClipForID(*edit, id) : nullptr;
+                if (!clip || clip->getTrack() != change.destination)
+                {
+                    history.undoCurrentTransactionOnly();
+                    report("Could not move clips");
+                    return false;
+                }
+                setDrumClipChannel(*clip);
+            }
+            if (change.destination && clip->state.hasProperty(clipShadeProperty)
+                && cloneMembers(*clip).size() == 1)
+                clip->state.removeProperty(clipShadeProperty, &history);
+            if (change.sourceResize && dynamic_cast<te::MidiClip*>(clip))
             {
                 const auto& tempo = edit->tempoSequence;
                 const auto oldExtent = (tempo.toBeats(previous.getEnd()) - tempo.toBeats(previous.getStartOfSource())).inBeats();
                 const auto newExtent = (tempo.toBeats(change.position.getEnd())
                     - tempo.toBeats(change.position.getStartOfSource())).inBeats();
-                const auto storedExtent = static_cast<double>(change.clip->state.getProperty(midiTrimExtentProperty, 0.0));
-                change.clip->state.setProperty(midiTrimExtentProperty,
+                const auto storedExtent = static_cast<double>(clip->state.getProperty(midiTrimExtentProperty, 0.0));
+                clip->state.setProperty(midiTrimExtentProperty,
                     std::max({ storedExtent, oldExtent, newExtent }), &history);
             }
             if (change.loopTime)
-                change.clip->setLoopRange(*change.loopTime);
+                clip->setLoopRange(*change.loopTime);
             if (change.loopBeats)
-                change.clip->setLoopRangeBeats(*change.loopBeats);
-            if (change.clip->getPosition() != change.position)
-                change.clip->setPosition(change.position);
+                clip->setLoopRangeBeats(*change.loopBeats);
+            if (clip->getPosition() != change.position)
+                clip->setPosition(change.position);
         }
         edit->restartPlayback();
         return true;
@@ -4161,7 +4250,7 @@ private:
                 [&](auto step) { return !pattern.hits(step).empty(); });
         }
         if (action == Action::duplicate)
-            return false;
+            return activeEditingArea() == EditingArea::tracks && actionTrack() && canDuplicateDrumLane(*actionTrack());
         if (activeEditingArea() == EditingArea::tracks)
         {
             if (action == Action::copy)
@@ -4293,7 +4382,9 @@ private:
         }
         const bool tracks = activeEditingArea() == EditingArea::tracks;
         auto& history = edit->getUndoManager();
-        if (action == Action::remove || action == Action::cut)
+        if (action == Action::duplicate)
+            duplicateDrumLane(*actionTrack());
+        else if (action == Action::remove || action == Action::cut)
             deleteSelection(tracks, action == Action::cut);
         else if (action == Action::copy)
         {
@@ -4621,15 +4712,7 @@ private:
             if (type == TrackType::mixed)
                 mixedTracks.add(track->getName());
         }
-        closeDrumPopup();
-        if (drumPatternID.isValid())
-            pixelsPerSecond = ordinaryTimelineScale;
-        drumPatternID = {};
-        drumSteps.clear();
-        drumPendingClicks.clear();
-        drumAnchor.reset();
-        drumSelectionBox = {};
-        drumGridFocused = false;
+        hideDrumEditor();
         midiInsertBars = 1;
         projectFile = file;
         selection = trackCount() == 0 ? -1 : 0;
@@ -4682,17 +4765,7 @@ private:
                 if (!te::EditFileOperations(*edit).saveAs(file))
                     return report("Could not save project copy");
                 edit->editFileRetriever = [file] { return file; };
-                closeDrumPopup();
-        if (drumPatternID.isValid())
-            pixelsPerSecond = ordinaryTimelineScale;
-        drumPatternID = {};
-        drumSteps.clear();
-        drumPendingClicks.clear();
-        drumAnchor.reset();
-        drumSelectionBox = {};
-        drumGridFocused = false;
-        midiInsertBars = 1;
-        projectFile = file;
+                projectFile = file;
                 if (auto* window = findParentComponentOfClass<ju::DocumentWindow>())
                     window->setName(ju::String(applicationTitle) + " - " + file.getFileName());
                 report("Project saved");
@@ -4775,7 +4848,6 @@ private:
         if (auto clip = te::insertMIDIClip(*track, drumMaster::isMaster(*track) ? "Drum pattern" : "MIDI item", { start, end }))
         {
             midiInsertBars = bars;
-            drumGridFocused = false;
             setDrumClipChannel(*clip);
             actionSelection.clips = { clip->itemID };
             actionSelection.requestedArea = EditingArea::timeline;
@@ -4966,8 +5038,7 @@ private:
 
     void setViewStart(double seconds)
     {
-        if (!fitDrumViewport(seconds))
-            viewStart = ju::jlimit(0.0, ju::jmax(0.0, totalSeconds() - visibleSeconds()), seconds);
+        viewStart = ju::jlimit(0.0, ju::jmax(0.0, totalSeconds() - visibleSeconds()), seconds);
         arrangement.repaint();
     }
 
@@ -4994,8 +5065,6 @@ private:
 
     void zoom(double factor)
     {
-        if (selectedDrumPattern())
-            return;
         const auto offset = (editCursor.inSeconds() - viewStart) * pixelsPerSecond;
         const auto anchor = ju::jlimit(0.0, static_cast<double>(ju::jmax(0, arrangement.getWidth() - headerWidth)), offset);
         pixelsPerSecond = ju::jlimit(8.0, 1200.0, pixelsPerSecond * factor);
@@ -5231,10 +5300,51 @@ private:
         return false;
     }
 
+    int ordinaryTrackNumber(const te::AudioTrack& target) const
+    {
+        int number = 0;
+        for (auto* track : te::getAudioTracks(*edit))
+        {
+            if (drumMaster::isDrum(*track))
+                continue;
+            ++number;
+            if (track == &target)
+                return number;
+        }
+        return 0;
+    }
+
+    static bool missingDrumSample(te::AudioTrack& track)
+    {
+        if (auto* sampler = drumMaster::sampler(track))
+        {
+            const auto lane = sampler->state.getChildWithName(drumMaster::laneType);
+            return lane[drumMaster::sampleProperty].toString().isNotEmpty()
+                && !sampler->resolveSample(lane).existsAsFile();
+        }
+        return false;
+    }
+
+    static void paintMissingMediaHatch(ju::Graphics& g, ju::Rectangle<int> bounds)
+    {
+        const ju::Graphics::ScopedSaveState state(g);
+        g.reduceClipRegion(bounds.reduced(2));
+        g.setColour(ju::Colour(0xff6b6b6b));
+        for (int x = bounds.getX() - bounds.getHeight(); x < bounds.getRight(); x += 8)
+            g.drawLine(static_cast<float>(x), static_cast<float>(bounds.getBottom()),
+                       static_cast<float>(x + bounds.getHeight()), static_cast<float>(bounds.getY()));
+    }
+
+    ju::Rectangle<int> trackPaintBounds(const te::AudioTrack& track, int y, int height) const
+    {
+        const auto bounds = trackBounds(y, height);
+        return drumMaster::isLane(track) ? bounds.withTrimmedLeft(18) : bounds;
+    }
+
     void paintTrack(ju::Graphics& g, te::AudioTrack& track, int row, int y, ju::Colour colour)
     {
         const auto selected = trackIsHighlighted(track);
-        auto bounds = trackBounds(y, rowHeight(row));
+        auto bounds = trackPaintBounds(track, y, rowHeight(row));
         const auto pulse = inspectorPulse(track.itemID, ju::Time::getMillisecondCounterHiRes());
         const auto fill = pulse ? ju::jmap(*pulse, 0.19f, 0.48f) : selected ? 0.25f : 0.12f;
         g.setColour(ju::Colour(0xff242424).interpolatedWith(colour, fill));
@@ -5280,11 +5390,16 @@ private:
         }
         g.setColour(colour.withMultipliedBrightness(selected ? 0.95f : 0.45f));
         g.fillRect(body.removeFromLeft(7));
+        if (drumMaster::isLane(track) && missingDrumSample(track))
+        {
+            g.setColour(ju::Colours::grey.withMultipliedBrightness(0.42f));
+            g.fillRect(body);
+            paintMissingMediaHatch(g, body);
+        }
         g.setColour(ju::Colours::white);
         g.setFont(ju::FontOptions(17.0f, ju::Font::bold));
-        const auto label = drumMaster::isLane(track) ? "    " + track.getName()
-            : drumMaster::isMaster(track) ? track.getName()
-            : ju::String(row + 1) + "  [" + trackTypeName(trackType(track)) + "] " + track.getName();
+        const auto label = drumMaster::isDrum(track) ? track.getName()
+            : ju::String(ordinaryTrackNumber(track)) + "  [" + trackTypeName(trackType(track)) + "] " + track.getName();
         g.drawFittedText(label,
                          body.reduced(5, 0),
                          ju::Justification::centredLeft, 1);
@@ -5541,14 +5656,7 @@ private:
         g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 4.0f, selected ? 2.0f : 1.0f);
 
         if (missing)
-        {
-            const ju::Graphics::ScopedSaveState state(g);
-            g.reduceClipRegion(bounds.reduced(2));
-            g.setColour(ju::Colour(0xff6b6b6b));
-            for (int x = bounds.getX() - bounds.getHeight(); x < bounds.getRight(); x += 8)
-                g.drawLine(static_cast<float>(x), static_cast<float>(bounds.getBottom()),
-                           static_cast<float>(x + bounds.getHeight()), static_cast<float>(bounds.getY()));
-        }
+            paintMissingMediaHatch(g, bounds);
         auto content = bounds.reduced(1, 2);
         auto title = content.removeFromTop(16);
         {
@@ -5729,14 +5837,6 @@ private:
                            20, 62, 21, ju::Justification::centredLeft);
             }
         }
-        auto* drumClip = selectedDrumPattern();
-        std::optional<MidiNoteEditor> drumEditor;
-        std::optional<DrumPattern> drumPattern;
-        if (drumClip)
-        {
-            drumEditor.emplace(makeDrumEditor(*drumClip));
-            drumPattern.emplace(*drumClip, *drumEditor);
-        }
         const auto tracks = visibleTracks();
         for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < arrangement.getHeight(); y += rowHeight(row), ++row)
         {
@@ -5744,11 +5844,7 @@ private:
             const auto colour = track.getColour().isTransparent() ? palette(row) : track.getColour();
             paintTrack(g, track, row, y, colour);
             if (drumMaster::isLane(track))
-            {
                 paintDrumLane(g, track, y, rowHeight(row), colour);
-                if (drumPattern)
-                    paintDrumGrid(g, *drumClip, *drumPattern, track, y, rowHeight(row), colour);
-            }
             for (auto* clip : track.getClips())
             {
                 const auto target = dragPreview && actionSelection.clips.contains(clip->itemID) ? row + dragRowDelta : row;
@@ -5809,6 +5905,8 @@ private:
             actionSelection.requestedArea = EditingArea::window;
         else if (event.eventComponent == &pianoRoll || pianoRoll.isParentOf(event.eventComponent))
             return focusPianoRoll();
+        else if (drumEditor.isParentOf(event.eventComponent))
+            return focusDrumEditor();
         updateControls();
     }
 
@@ -5861,14 +5959,6 @@ private:
             || actionSelection.clips.empty())
             return;
 
-        if (!drumSelectionBox.isEmpty())
-        {
-            g.setColour(ju::Colours::white.withAlpha(0.2f));
-            g.fillRect(drumSelectionBox);
-            g.setColour(ju::Colours::white);
-            g.drawRect(drumSelectionBox);
-        }
-
         // Keep selection outlines visible above the ruler range and overlapping clips.
         const auto tracks = visibleTracks();
         for (int row = firstRow, y = rulerHeight; row < tracks.size() && y < arrangement.getHeight(); y += rowHeight(row), ++row)
@@ -5878,7 +5968,7 @@ private:
                         g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 4.0f, 2.0f);
     }
 
-    void openPianoRoll(const ju::MouseEvent& event)
+    void openClipEditor(const ju::MouseEvent& event)
     {
         if (!edit || !event.mods.isLeftButtonDown() || event.mods.isShiftDown()
             || event.x < headerWidth || event.y < rulerHeight)
@@ -5897,6 +5987,12 @@ private:
             if (!midi)
                 return;
 
+            if (drumMaster::isMaster(*track))
+            {
+                selection = row;
+                return openDrumEditor(*midi);
+            }
+            hideDrumEditor();
             suspendEffectsEditor();
             slideEditorOut({});
             const bool entering = !pianoRoll.isVisible();
@@ -5919,8 +6015,6 @@ private:
             return;
         if (arrangement.isShowing())
             arrangement.grabKeyboardFocus();
-        if (drumMouseDown(event))
-            return;
         const bool toggle = event.mods.isRightButtonDown();
         const auto area = event.x < headerWidth ? EditingArea::tracks : EditingArea::timeline;
         actionSelection.requestedArea = area;
@@ -6057,12 +6151,6 @@ private:
 
     void arrangementDrag(const ju::MouseEvent& event)
     {
-        if (drumGridFocused)
-        {
-            if (event.getDistanceFromDragStart() >= 5)
-                drumDrag(event.getPosition());
-            return;
-        }
         if (!edit)
             return;
         if (boxAnchor && event.getDistanceFromDragStart() >= 5)
@@ -6102,8 +6190,6 @@ private:
 
     void arrangementUp(const ju::MouseEvent& event)
     {
-        if (drumMouseUp(event))
-            return;
         if (edit && boxAnchor)
         {
             if (event.getDistanceFromDragStart() >= 5 || !selectionBox.isEmpty())
@@ -6189,7 +6275,7 @@ private:
         if (inspectorTrack)
         {
             description = inspectorTrack->getName();
-            const auto row = visibleTracks().indexOf(inspectorTrack) + 1;
+            const auto row = ordinaryTrackNumber(*inspectorTrack);
             const auto type = trackType(*inspectorTrack);
             if (drumMaster::isMaster(*inspectorTrack))
                 inspectorDetails += "\nDRUM MASTER";
@@ -6542,6 +6628,7 @@ private:
     ju::ImageComponent outgoingEditor;
     EffectsEditor effectsEditor { [this] { return edit.get(); }, [this] { closeEffectsEditor(); } };
     PianoRoll pianoRoll;
+    DrumEditorSurface drumEditor { *this };
     te::EditItemID drumPatternID;
     std::set<DrumStep> drumSteps;
     std::map<DrumStep, unsigned> drumPendingClicks;
@@ -6551,10 +6638,11 @@ private:
     std::optional<ju::Point<int>> drumAnchor;
     ju::Rectangle<int> drumSelectionBox;
     te::TimeRange drumViewportClipRange;
-    double ordinaryTimelineScale = 100.0;
+    double drumViewStart = 0.0, drumPixelsPerSecond = 100.0, drumLeftQuarter = 0.0, drumVisibleQuarters = 0.0;
+    double drumPreviousViewStart = 0.0, drumPreviousTimelineScale = 100.0;
+    int drumFirstLane = 0;
     unsigned drumClickSequence = 0;
     int midiInsertBars = 1, drumPopupVelocity = DrumPattern::defaultVelocity;
-    bool drumGridFocused = false;
     te::EditItemID pianoRollClip;
     ju::ComponentAnimator editorAnimator;
     ju::TooltipWindow tooltips { this };

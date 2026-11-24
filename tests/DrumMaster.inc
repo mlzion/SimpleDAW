@@ -1,6 +1,76 @@
 // SPDX-FileCopyrightText: 2026 the SimpleDAW contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 
+bool testDrumSamplerAudio(te::AudioTrack& track)
+{
+    using namespace drumMaster;
+    constexpr int rate = 48000, retrigger = 480, fade = 144;
+    constexpr float amplitude = 0.125f;
+    const ju::TemporaryFile file(".wav");
+    ju::WavAudioFormat wav;
+    auto stream = file.getFile().createOutputStream();
+    if (!stream)
+        return false;
+    std::unique_ptr<ju::AudioFormatWriter> writer(wav.createWriterFor(stream.get(), rate, 1, 16, {}, 0));
+    if (!writer)
+        return false;
+    stream.release();
+    ju::AudioBuffer<float> fixture(1, rate / 2);
+    std::fill_n(fixture.getWritePointer(0), fixture.getNumSamples(), amplitude);
+    if (!writer->writeFromAudioSampleBuffer(fixture, 0, fixture.getNumSamples()))
+        return false;
+    writer.reset();
+
+    auto* player = sampler(track);
+    if (!player)
+        return false;
+    auto lane = player->state.getChildWithName(laneType);
+    const auto original = lane[sampleProperty];
+    const auto originalOverlap = lane[overlapProperty];
+    const ju::ScopeGuard restore { [&] {
+        lane.setProperty(sampleProperty, original, nullptr);
+        lane.setProperty(overlapProperty, originalOverlap, nullptr);
+    } };
+    lane.setProperty(sampleProperty, file.getFile().getFullPathName(), nullptr);
+    const auto render = [&](bool overlap, int velocity, bool twice) {
+        constexpr int frames = retrigger + fade + 100;
+        lane.setProperty(overlapProperty, overlap, nullptr);
+        player->initialise({ {}, rate, frames });
+        te::MidiMessageArray midi;
+        auto send = [&](int frame, int level) {
+            auto message = ju::MidiMessage::noteOn(midiChannel, 36, static_cast<ju::uint8>(level));
+            message.setTimeStamp(static_cast<double>(frame) / rate);
+            midi.addMidiMessage(message, {});
+        };
+        send(0, velocity);
+        if (twice)
+            send(retrigger, velocity);
+        ju::AudioBuffer<float> output(2, frames);
+        output.clear();
+        const te::PluginRenderContext context(&output, ju::AudioChannelSet::stereo(), 0, frames,
+                                              &midi, 0.0, {}, true, false, false, false);
+        player->applyToBuffer(context);
+        player->deinitialise();
+        return output;
+    };
+    const auto quiet = render(false, 32, false);
+    const auto full = render(false, 127, false);
+    const auto overlap = render(true, 127, true);
+    const auto choke = render(false, 127, true);
+    const auto at = [](const auto& buffer, int i) { return buffer.getSample(0, i); };
+    std::fprintf(stderr, "MD0 sampler: velocity 32 = %.6f, 127 = %.6f; overlap ON after 3 ms = %.6f; "
+                         "OFF at 0, 1.5, 3 ms = %.6f, %.6f, %.6f\n",
+        at(quiet, 100), at(full, 100), at(overlap, retrigger + fade),
+        at(choke, retrigger), at(choke, retrigger + fade / 2), at(choke, retrigger + fade));
+    const auto near = [](float a, float b) { return std::abs(a - b) < 1.0e-5f; };
+    return near(at(quiet, 100), amplitude * 32 / 127) && near(at(full, 100), amplitude)
+        && near(at(overlap, retrigger + fade), 2 * amplitude)
+        && near(at(choke, retrigger), 2 * amplitude)
+        && near(at(choke, retrigger + fade / 2), 1.5f * amplitude)
+        && near(at(choke, retrigger + fade - 1), amplitude * (1.0f + 1.0f / fade))
+        && near(at(choke, retrigger + fade), amplitude);
+}
+
 bool runDrumMasterTest(te::Engine& engine)
 {
     using namespace drumMaster;
@@ -39,6 +109,9 @@ bool runDrumMasterTest(te::Engine& engine)
                    "Lanes must route to the master and share its MIDI source"))
             return false;
     }
+
+    if (!check(testDrumSamplerAudio(*lanes(*master).getFirst()), "Sample amplitude and retrigger fade"))
+        return false;
 
     auto& history = project->getUndoManager();
     history.beginNewTransaction("Add layer");
