@@ -1,10 +1,14 @@
 # SimpleDAW
 
-SimpleDAW is a beginner-friendly recording workstation. v0.24.1 adds Piano Roll MIDI note editing to the Windows x64 workstation.
+SimpleDAW is a beginner-friendly recording workstation. The v0.25.1 integration build adds the Master Drum Track (MD0) to the accepted Piano Roll P0 baseline.
 
 SimpleDAW is free and open-source software. Its original code is released under the GNU Affero General Public License, version 3. See [LICENSE](LICENSE), [COPYRIGHT](COPYRIGHT), and the [third-party notices](THIRD_PARTY_NOTICES.md).
 
-## Download and run on Windows x64
+## v0.25.1 MD0 integration build
+
+Use the **SimpleDAW-v0.25.1-Windows-x64.zip** acceptance artifact linked in draft PR #27. Extract the full ZIP and run `SimpleDAW-v0.25.1.exe` with the bundled `Drum Samples` directory beside it. Windows live acceptance is pending. [MD0 integration draft](https://github.com/mlzion/SimpleDAW/pull/27) · [MD0 verification notes](docs/testing/md0-drum-master.md)
+
+## Accepted v0.24.1 download for Windows x64
 
 1. Download the accepted Windows x64 Release `/MD` ZIP. GitHub may ask you to sign in. [SimpleDAW-v0.24.1-Windows-x64.zip](https://github.com/mlzion/SimpleDAW/actions/runs/45291914568/artifacts/14875361245)
 2. Install Microsoft's x64 Visual C++ v14 Redistributable if a compatible version is absent. [Official Microsoft x64 download](https://aka.ms/vc14/vc_redist.x64.exe)

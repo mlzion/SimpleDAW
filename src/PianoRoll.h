@@ -67,8 +67,11 @@ public:
         return ids;
     }
 
-    bool change(const std::vector<GridNote>& changes, const ju::String& label)
+    bool change(const std::vector<GridNote>& changes, const ju::String& label,
+                const std::vector<GridNote>& additions = {})
     {
+        if (!std::all_of(additions.begin(), additions.end(), [this](const auto& note) { return valid(note); }))
+            return false;
         auto& sequence = clip.getSequence();
         std::vector<std::pair<te::MidiNote*, GridNote>> pending;
         for (const auto& change : changes)
@@ -90,12 +93,18 @@ public:
                     pending.emplace_back(match, change);
             }
         }
-        if (pending.empty())
+        if (pending.empty() && additions.empty())
             return false;
         auto& history = clip.edit.getUndoManager();
         history.beginNewTransaction(label);
         for (const auto& [note, value] : pending)
             write(*note, value, history);
+        for (const auto& note : additions)
+        {
+            add(sequence, note, history);
+            for (auto* member : linkedClips)
+                add(member->getSequence(), note, history);
+        }
         finish(history);
         return true;
     }
@@ -208,10 +217,21 @@ struct NoteGrid
     }
 };
 
+struct EditorScrollBar final : ju::ScrollBar, private ju::ScrollBar::Listener
+{
+    explicit EditorScrollBar(bool vertical) : ju::ScrollBar(vertical) { addListener(this); }
+    std::function<void(double)> onMove;
+    void scrollBarMoved(ju::ScrollBar*, double start) override
+    {
+        if (onMove)
+            onMove(start);
+    }
+};
+
 class PianoRoll final : public ju::Component, private ju::Timer
 {
 public:
-    enum class Action { cut, remove, copy, paste, duplicate, up, down, left, right, startMinus, startPlus, endMinus, endPlus };
+    enum class Action { cut, remove, copy, paste, up, down, left, right, startMinus, startPlus, endMinus, endPlus };
 
     PianoRoll()
     {
@@ -316,18 +336,17 @@ public:
     {
         if (!editable || !clip)
             return false;
-        const auto notes = selectedNotes();
         if (action == Action::paste)
             return !pasteNotes().empty();
-        if (action == Action::duplicate)
-            return !duplicateNotes(notes).empty();
-        if (action == Action::copy || action == Action::cut || action == Action::remove)
+        const auto notes = selectedNotes();
+        if (action == Action::cut || action == Action::copy || action == Action::remove)
             return !notes.empty();
-        auto changes = actionChanges(action, notes);
+        const auto changes = actionChanges(action, notes);
+        const MidiNoteEditor model(*clip);
         return !changes.empty() && changes != notes
             && std::all_of(changes.begin(), changes.end(), [&](const auto& note) {
                 return action == Action::up || action == Action::down
-                    ? note.pitch >= 0 && note.pitch <= 127 : MidiNoteEditor(*clip).valid(note);
+                    ? ju::isPositiveAndBelow(note.pitch, 128) : model.valid(note);
             });
     }
 
@@ -353,10 +372,8 @@ public:
         }
         else if (action == Action::paste)
             selected = model.insert(pasteNotes(), "Paste MIDI notes");
-        else if (action == Action::duplicate)
-            selected = model.insert(duplicateNotes(notes), "Duplicate MIDI notes");
         else if (action != Action::copy)
-            model.change(actionChanges(action, notes), "Adjust MIDI notes");
+            model.change(actionChanges(action, notes), action >= Action::startMinus ? "Resize MIDI note" : "Move MIDI notes");
         notify();
     }
 
@@ -365,17 +382,6 @@ public:
 
 private:
     friend class MainGui;
-
-    struct ScrollBar final : ju::ScrollBar, private ju::ScrollBar::Listener
-    {
-        explicit ScrollBar(bool vertical) : ju::ScrollBar(vertical) { addListener(this); }
-        std::function<void(double)> onMove;
-        void scrollBarMoved(ju::ScrollBar*, double start) override
-        {
-            if (onMove)
-                onMove(start);
-        }
-    };
 
     enum class Gesture { none, draw, move, resize, box, addBox, velocity, rightVelocity };
     using G = NoteGrid;
@@ -420,24 +426,6 @@ private:
         {
             note.start += editCursor - earliest;
             if (!MidiNoteEditor(*clip).valid(note))
-                return {};
-        }
-        return notes;
-    }
-
-    std::vector<GridNote> duplicateNotes(std::vector<GridNote> notes) const
-    {
-        if (notes.empty())
-            return {};
-        const auto first = std::min_element(notes.begin(), notes.end(),
-            [](const auto& a, const auto& b) { return a.start < b.start; })->start;
-        const auto last = std::max_element(notes.begin(), notes.end(),
-            [](const auto& a, const auto& b) { return a.end() < b.end(); })->end();
-        const auto model = MidiNoteEditor(*clip);
-        for (auto& note : notes)
-        {
-            note.start += last - first;
-            if (!model.valid(note))
                 return {};
         }
         return notes;
@@ -1042,5 +1030,5 @@ private:
     ju::TextButton close { "×" }, mode { "DRAW" }, quantize { "QUANTIZE" };
     ju::ComboBox snap;
     ju::Slider velocity;
-    ScrollBar horizontal { false }, vertical { true };
+    EditorScrollBar horizontal { false }, vertical { true };
 };
