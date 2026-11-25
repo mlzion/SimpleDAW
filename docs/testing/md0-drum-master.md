@@ -78,3 +78,14 @@ Linux x64 Release passed all 17 CTests under Xvfb. The device setup, GUI correct
 D44 measured a single-voice output of `0.088493`. Overlap ON held at `0.176986` through the retrigger and until the original voice’s natural release. Overlap OFF measured `0.176986`, `0.132740`, and `0.088493` at 0, 1.5, and 3 ms after retrigger. At 48 kHz that is 144 samples. Both renders retained the final voice’s natural fade and reached silence at its end.
 
 Linux x64 Release passed all 17 CTests under Xvfb. The drum grid, drum master, drum voices, Inspector clone, Inspector loop, Piano Roll, and UAT suites each passed three consecutive runs. Windows live validation of the final correction pass remains pending.
+
+## D63 design refinement
+
+The owner accepted D60, D62, and the three D63 live retests on the preceding Windows build. D44 was accepted from the measured integrated render. This follow-up implements the control changes approved during that retest.
+
+- The clip Inspector provides Loop ON/OFF beside the repeat count. Looping remains an explicit toggle and uses the existing repeat, resizing and Undo/Redo behavior.
+- Timeline has MOVE, EDIT, SIZE and MODIFY. MODIFY contains Duplicate, Clone/Unclone, Split and Trim. The single Clone/Unclone button reflects the selected clip's link state. Track List Duplicate remains available for ordinary tracks and drum lanes.
+- Piano Roll has MOVE, EDIT and SIZE. MOVE slides notes by the current snap increment or transposes pitch by a semitone. SIZE adjusts the start or end of a single selected note. Established mouse editing remains available.
+- The Drum Pattern Editor has MOVE and EDIT. Horizontal moves shift one sixteenth note. Vertical moves follow kit row order. Each move preserves step spacing, velocity and subdivision timing and is a single undoable edit. Commands that would leave the pattern or kit, merge occupied hits, or move from an ambiguous layered source are disabled.
+
+Linux x64 Release passed all 17 CTests under Xvfb. Universal Actions, Inspector Loop, Inspector Clone, Drum Grid, Drum Master and Piano Roll each passed three consecutive runs. The refinement awaits Windows live verification.

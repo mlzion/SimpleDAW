@@ -185,8 +185,8 @@
             return false;
 
         gesture(at(0.1, 60), at(0.1, 60), right);
-        if (!check(roll.selectedNotes().size() == 2 && gui.canDispatch(Action::copy) && !gui.canDispatch(Action::right) && !gui.canDispatch(Action::endPlus),
-                   "right click adds a note to selection and edit commands exclude move and size"))
+        if (!check(roll.selectedNotes().size() == 2 && gui.canDispatch(Action::copy) && gui.canDispatch(Action::right) && !gui.canDispatch(Action::endPlus),
+                   "right click adds a note to selection, with MOVE and single-note SIZE rules"))
             return false;
         const auto original = notes();
         auto* midiTrack = gui.trackAt(midiRow);
@@ -208,14 +208,28 @@
             return false;
         gui.actionSelection.requestedArea = EditingArea::window;
         gui.updateControls();
-        gesture(at(0.15, 60), at(0.40, 60));
-        if (!check(near(notes()[0].start, 0.25) && near(notes()[1].start, 1.25), "atomic mouse group movement"))
+        gui.dispatchAction(Action::up);
+        if (!check(notes()[0].pitch == 61 && notes()[1].pitch == 65, "UAT MOVE transposes the note group"))
+            return false;
+        gui.useHistory(false);
+        gui.dispatchAction(Action::right);
+        if (!check(near(notes()[0].start, 0.25) && near(notes()[1].start, 1.25), "atomic UAT group movement"))
             return false;
         gui.useHistory(false);
         if (!check(notes() == original, "one Undo restores both notes"))
             return false;
         gui.useHistory(true);
         gesture(at(0.70, 60), at(0.70, 60));
+        gui.dispatchAction(Action::endPlus);
+        if (!check(near(notes()[0].length, 0.75), "UAT SIZE extends the selected note"))
+            return false;
+        gui.useHistory(false);
+        if (!check(near(notes()[0].length, 0.5), "one Undo restores note duration"))
+            return false;
+        gui.useHistory(true);
+        if (!check(near(notes()[0].length, 0.75), "one Redo restores the UAT size"))
+            return false;
+        gui.useHistory(false);
         gesture(at(0.74, 60), at(0.99, 60));
         if (!check(near(notes()[0].length, 0.75), "trailing-edge drag resizes a single note"))
             return false;
@@ -367,10 +381,7 @@
 
         const auto initial = MidiNoteEditor(*clone).notes();
         roll.selected = { initial.front().id };
-        auto changed = initial.front();
-        ++changed.pitch;
-        if (!roll.mutation().change({ changed }, "Test linked pitch change"))
-            return false;
+        gui.dispatchAction(UniversalAction::up);
         if (!check(MidiNoteEditor(parent).notes().front().pitch == initial.front().pitch + 1
                 && MidiNoteEditor(*clone).notes().front().pitch == initial.front().pitch + 1
                 && nonNotesIntact(parent) && nonNotesIntact(*clone), "note edits follow the family and preserve controller data"))
@@ -413,7 +424,7 @@
 
         gui.actionSelection.requestedArea = EditingArea::timeline;
         gui.updateControls();
-        gui.dispatchAction(UniversalAction::unclone);
+        gui.dispatchAction(UniversalAction::clone);
         gui.focusPianoRoll();
         gui.dispatchAction(UniversalAction::remove);
         if (!check(gui.cloneMembers(*clone).size() == 1 && clonedSequence.getNotes().size() == 1

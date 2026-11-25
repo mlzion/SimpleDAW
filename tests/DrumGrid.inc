@@ -156,8 +156,43 @@
             && hitState()[0].velocity == 108 && hitState()[1].velocity == 108
             && clip->getSequence().getNotes().getLast()->getVelocity() == 96, "box and wheel adjust the selected group"))
             return false;
+        using Action = UniversalAction;
+        const auto beforeMoves = gui.makeDrumEditor(*clip).notes();
+        if (!check(!gui.canDispatch(Action::left) && !gui.canDispatch(Action::up)
+            && !gui.canDispatch(Action::endPlus) && !gui.canDispatch(Action::clone),
+            "grid edges, SIZE and MODIFY disable their commands"))
+            return false;
+        gui.dispatchAction(Action::right);
+        gui.dispatchAction(Action::down);
+        const auto movedHits = gui.makeDrumEditor(*clip).notes();
+        if (!check(movedHits.size() == 3 && movedHits[0].pitch == 38 && movedHits[1].pitch == 38
+            && movedHits[2].pitch == 38 && movedHits[0].start == 0.25 && movedHits[1].start == 0.3125
+            && movedHits[2].start == 0.5 && movedHits[0].velocity == 108 && movedHits[2].velocity == 96
+            && gui.drumSteps.contains({ 38, 1 }) && gui.drumSteps.contains({ 38, 2 }),
+            "drum MOVE preserves subdivisions, spacing, velocity and destination selection"))
+            return false;
+        gui.useHistory(false);
+        if (!check(gui.drumSteps.contains({ 36, 1 }), "Undo restores the prior lane and selection"))
+            return false;
+        gui.useHistory(true);
+        if (!check(gui.makeDrumEditor(*clip).notes() == movedHits && gui.drumSteps.contains({ 38, 2 }),
+                   "Redo restores lane movement and selection"))
+            return false;
+        gui.useHistory(false);
+        gui.useHistory(false);
+        if (!check(gui.makeDrumEditor(*clip).notes() == beforeMoves, "Undo restores original timing and lane"))
+            return false;
         gesture(next, next, right);
         if (!check(gui.drumSteps.size() == 1 && gui.drumSteps.contains({ 36, 0 }), "right-click toggles selection"))
+            return false;
+        if (!check(!gui.canDispatch(Action::right), "an occupied destination blocks movement without merging hits"))
+            return false;
+        auto layered = drumMaster::sampler(*gui.trackAt(3))->state.getChildWithName(drumMaster::laneType);
+        const auto originalPitch = layered[drumMaster::noteProperty];
+        layered.setProperty(drumMaster::noteProperty, 36, nullptr);
+        const auto ambiguousMove = gui.canDispatch(Action::down);
+        layered.setProperty(drumMaster::noteProperty, originalPitch, nullptr);
+        if (!check(!ambiguousMove, "a shared pitch with ambiguous lane ownership blocks vertical movement"))
             return false;
         gesture(next, next, left);
         settle();
@@ -238,7 +273,7 @@
         if (!check(hitState().front().velocity == 109, "redo re-applies the linked edit"))
             return false;
 
-        correctionAction(UniversalAction::unclone);
+        correctionAction(UniversalAction::clone);
         if (!check(gui.cloneMembers(*clip).size() == 1 && gui.cloneMembers(*clone).size() == 1,
                    "Unclone separates the linked source"))
             return false;
@@ -270,10 +305,20 @@
         if (!check(independent->getPosition().time == trimmed, "Resize Undo restores the trimmed clip"))
             return false;
         independent->state.setProperty(loopCountProperty, 2, nullptr);
-        correctionAction(UniversalAction::loop);
-        if (!check(independent->isLooping() && independent->getLoopLengthBeats().inBeats() > 0,
-                   "Resize undo and UAT drum Loop"))
+        gui.updateControls();
+        if (!check(gui.clipLoop.isVisible() && gui.clipLoop.getButtonText() == "LOOP OFF",
+                   "Inspector shows the loop toggle beside the count"))
             return false;
+        gui.clipLoop.onClick();
+        if (!check(independent->isLooping() && independent->getLoopLengthBeats().inBeats() > 0
+                   && gui.clipLoop.getButtonText() == "LOOP ON",
+                   "Resize undo and Inspector drum Loop"))
+            return false;
+        gui.clipLoop.onClick();
+        if (!check(!independent->isLooping() && independent->getPosition().time == trimmed
+            && gui.clipLoop.getButtonText() == "LOOP OFF", "Inspector Loop OFF restores the source length"))
+            return false;
+        gui.useHistory(false);
         if (!check(independent->isLooping() && independent->getLengthInBeats() > independent->getLoopLengthBeats(),
                    "loop repeats one source"))
             return false;

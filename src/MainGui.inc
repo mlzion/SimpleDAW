@@ -13,7 +13,7 @@
     enum class UniversalAction
     {
         cut, remove, copy, paste, up, down, left, right,
-        startMinus, startPlus, endMinus, endPlus, split, trim, duplicate, clone, unclone, loop
+        startMinus, startPlus, endMinus, endPlus, split, trim, duplicate, clone
     };
 
     using ItemSelection = std::set<te::EditItemID>;
@@ -330,9 +330,8 @@ public:
                                                 { "←  LEFT", Action::left }, { "→  RIGHT", Action::right } });
         addActionGroup(2, "SIZE", 0xff30465a, { { "START −", Action::startMinus }, { "START +", Action::startPlus },
                                                 { "END −", Action::endMinus }, { "END +", Action::endPlus } });
-        addActionGroup(3, "MODIFY", 0xff354a5e, { { "SPLIT", Action::split }, { "DUPLICATE", Action::duplicate },
-                                                  { "TRIM", Action::trim }, { "CLONE", Action::clone },
-                                                  { "UNCLONE", Action::unclone }, { "LOOP", Action::loop } });
+        addActionGroup(3, "MODIFY", 0xff354a5e, { { "DUPLICATE", Action::duplicate }, { "CLONE", Action::clone },
+                                                  { "SPLIT", Action::split }, { "TRIM", Action::trim } });
         undoButton = &button(historyButtons, "UNDO", [this] { useHistory(false); });
         redoButton = &button(historyButtons, "REDO", [this] { useHistory(true); });
         for (auto* control : historyButtons)
@@ -557,10 +556,12 @@ public:
         inspectorControls.addChildComponent(clipMute);
         inspectorFadeIn.onValueChange = [this] { setInspectorFade(true); };
         inspectorFadeOut.onValueChange = [this] { setInspectorFade(false); };
+        clipLoop.onClick = [this] { changeClipLoop(inspectorContext == EditingArea::timeline ? selectedClip() : nullptr, true); };
+        inspectorControls.addChildComponent(clipLoop);
         inspectorControls.addChildComponent(inspectorLoopCount);
         inspectorLoopCount.setEditable(true);
         inspectorLoopCount.setName("Loop count");
-        inspectorLoopCount.setTooltip("Repeat count for the timeline UAT Loop command");
+        inspectorLoopCount.setTooltip("Clip loop repeat count");
         inspectorLoopCount.onTextChange = [this] { changeClipLoop(inspectorContext == EditingArea::timeline ? selectedClip() : nullptr, false); };
         button(trackInputButtons, "INPUT", [this] { chooseInspectorInput(); });
         button(trackInputButtons, "RECORD ARM", [this] { armInspectorInput(); });
@@ -803,7 +804,9 @@ public:
             layoutAudioSlider(clipGainLabel, inspectorGain);
             layoutAudioSlider(fadeInLabel, inspectorFadeIn);
             layoutAudioSlider(fadeOutLabel, inspectorFadeOut);
-            inspectorLoopCount.setBounds(controls.removeFromTop(36).reduced(2));
+            auto loopRow = controls.removeFromTop(36);
+            clipLoop.setBounds(loopRow.removeFromLeft(loopRow.getWidth() / 2).reduced(2));
+            inspectorLoopCount.setBounds(loopRow.reduced(2));
         }
 
         arrangement.setBounds(area);
@@ -1057,7 +1060,7 @@ public:
             return passed;
         };
         MainGui gui(engine, dir.getChildFile("gui.settings"));
-        if (!check(gui.actionButtons.size() == 18 && std::none_of(gui.actionButtons.begin(), gui.actionButtons.end(),
+        if (!check(gui.actionButtons.size() == 16 && std::none_of(gui.actionButtons.begin(), gui.actionButtons.end(),
                 [](const auto& slot) { return slot.button->isEnabled(); }), "four fixed groups and inert initial state"))
             return false;
 
@@ -1260,7 +1263,7 @@ public:
             return false;
         gui.snap.setSelectedId(4, ju::dontSendNotification);
         for (const auto action : { Action::startMinus, Action::startPlus, Action::endMinus, Action::endPlus,
-                                   Action::split, Action::trim, Action::duplicate, Action::clone, Action::unclone, Action::loop })
+                                   Action::split, Action::trim, Action::duplicate, Action::clone })
             if (!check(!gui.canDispatch(action), "all group SIZE and MODIFY actions are disabled"))
                 return false;
 
@@ -1855,10 +1858,18 @@ public:
         gui.actionSelection.requestedArea = EditingArea::timeline;
         gui.editCursor = start + duration * 2;
         gui.updateControls();
+        auto& modify = gui.actionGroups[3].buttons;
+        if (modify.size() != 4)
+            return fail(__LINE__);
+        auto& cloneButton = *static_cast<ju::TextButton*>(modify[1]);
+        if (!cloneButton.isEnabled() || cloneButton.getButtonText() != "CLONE")
+            return fail(__LINE__);
         gui.dispatchAction(UniversalAction::clone);
         auto* clone = gui.selectedClip();
         if (!clone || clone == source.get() || clone->getPosition().getStart() != gui.editCursor
             || gui.cloneMembers(*clone).size() != 2 || gui.cloneMembers(*clone).front() != source.get())
+            return fail(__LINE__);
+        if (cloneButton.getButtonText() != "UNCLONE" || !cloneButton.isEnabled())
             return fail(__LINE__);
         const auto cloneID = clone->itemID;
         const auto move = gui.movePlan({ clone }, 1, duration);
@@ -1894,7 +1905,7 @@ public:
             if (gui.canDispatch(UniversalAction::split) || gui.canDispatch(UniversalAction::trim))
                 return fail(__LINE__);
         }
-        gui.dispatchAction(UniversalAction::unclone);
+        gui.dispatchAction(UniversalAction::clone);
         if (gui.inspectedClipColour(*clone) != ju::Colours::orange
             || gui.inspectedClipColour(*source) != ju::Colours::blue || gui.cloneMembers(*source).size() != 1)
             return fail(__LINE__);
@@ -2553,8 +2564,6 @@ private:
         {
             auto& control = button(group.buttons, ju::String::fromUTF8(label), {}, colour);
             control.setWantsKeyboardFocus(false);
-            if (action == UniversalAction::loop)
-                control.setTooltip("Toggle the selected clip's loop");
             control.onClick = [this, action] { dispatchAction(action); };
             actionButtons.push_back({ &control, action, ju::Colour(colour) });
         }
@@ -2984,8 +2993,10 @@ private:
             return;
         const auto* primary = trackAt(selection);
         const auto primaryID = primary ? primary->itemID : te::EditItemID{};
+        const auto drumNotes = selectedDrumNoteIDs();
         if (EffectsEditor::applyHistory(*edit, redoAction))
         {
+            restoreDrumNoteSelection(drumNotes);
             selection = visibleTracks().indexOf(trackForID(primaryID));
             edit->restartPlayback();
         }
@@ -4237,6 +4248,14 @@ private:
             case UAT::remove: return Note::remove;
             case UAT::copy: return Note::copy;
             case UAT::paste: return Note::paste;
+            case UAT::up: return Note::up;
+            case UAT::down: return Note::down;
+            case UAT::left: return Note::left;
+            case UAT::right: return Note::right;
+            case UAT::startMinus: return Note::startMinus;
+            case UAT::startPlus: return Note::startPlus;
+            case UAT::endMinus: return Note::endMinus;
+            case UAT::endPlus: return Note::endPlus;
             default: return {};
         }
     }
@@ -4281,15 +4300,13 @@ private:
         if (action == Action::split || action == Action::trim)
             return modifyRange(action).has_value();
         const auto clips = selectedClips();
-        if (action == Action::duplicate || action == Action::clone || action == Action::unclone || action == Action::loop)
+        if (action == Action::duplicate || action == Action::clone)
         {
             if (clips.size() != 1 || !ordinaryClip(*clips.front()))
                 return false;
             auto& clip = *clips.front();
-            if (action == Action::unclone)
-                return cloneMembers(clip).size() > 1;
-            if (action == Action::loop)
-                return canControlLoop(clip);
+            if (action == Action::clone && cloneMembers(clip).size() > 1)
+                return true;
             auto* track = dynamic_cast<te::AudioTrack*>(clip.getTrack());
             return editCursor >= te::TimePosition{} && editCursor < te::Edit::getMaximumEditEnd()
                 && destinationAvailable(track, 1);
@@ -4403,7 +4420,13 @@ private:
         if (action == Action::duplicate || action == Action::clone)
         {
             if (!tracks)
-                copyTimelineClip(selectedClip(), action == Action::clone);
+            {
+                auto* clip = selectedClip();
+                if (action == Action::clone && cloneMembers(*clip).size() > 1)
+                    uncloneClip(clip);
+                else
+                    copyTimelineClip(clip, action == Action::clone);
+            }
             else if (drumMaster::isLane(*actionTrack()))
                 duplicateDrumLane(*actionTrack());
             else
@@ -4412,10 +4435,6 @@ private:
                 pasteTrack(track, snapshotTrack(track));
             }
         }
-        else if (action == Action::unclone)
-            uncloneClip(selectedClip());
-        else if (action == Action::loop)
-            changeClipLoop(selectedClip(), true);
         else if (action == Action::remove || action == Action::cut)
             deleteSelection(tracks, action == Action::cut);
         else if (action == Action::copy)
@@ -6470,6 +6489,11 @@ private:
                 inspectorOutput.setText(route.device, ju::dontSendNotification);
         }
         const auto canLoop = inspectorClip && canControlLoop(*inspectorClip);
+        clipLoop.setVisible(canLoop);
+        clipLoop.setEnabled(canLoop && canEditInspector);
+        const bool loopingClip = canLoop && inspectorClip->isLooping();
+        clipLoop.setToggleState(loopingClip, ju::dontSendNotification);
+        clipLoop.setButtonText(loopingClip ? "LOOP ON" : "LOOP OFF");
         inspectorLoopCount.setVisible(canLoop);
         inspectorLoopCount.setEnabled(canEditInspector);
         if (canLoop && !inspectorLoopCount.isBeingEdited())
@@ -6520,8 +6544,11 @@ private:
             const bool enabled = canDispatch(slot.action) || incompatiblePlacement(slot.action).isNotEmpty();
             slot.button->setColour(ju::TextButton::buttonColourId, enabled ? slot.colour : ju::Colour(0xff444444));
             slot.button->setEnabled(enabled);
-            if (slot.action == UniversalAction::loop)
-                slot.button->setToggleState(enabled && selectedClip()->isLooping(), ju::dontSendNotification);
+            if (slot.action == UniversalAction::clone)
+            {
+                auto* clip = selectedClip();
+                slot.button->setButtonText(clip && cloneMembers(*clip).size() > 1 ? "UNCLONE" : "CLONE");
+            }
         }
 
         undoButton->setEnabled(canUseHistory(false));
@@ -6648,7 +6675,7 @@ private:
     std::unique_ptr<ju::TextButton> drumKitButton;
     ju::Array<ju::File> drumLibrary = drumMaster::scanLibrary();
     ju::Label clipGainLabel { {}, "Gain" }, fadeInLabel { {}, "Fade In" }, fadeOutLabel { {}, "Fade Out" };
-    ju::TextButton clipMute { "CLIP MUTE" }, eqBypass { "EQ BYPASS" };
+    ju::TextButton clipLoop { "LOOP OFF" }, clipMute { "CLIP MUTE" }, eqBypass { "EQ BYPASS" };
     ju::Slider* parameterGesture = nullptr;
     ju::ComboBox inspectorOutput, inspectorAutomation;
     std::array<ju::Slider, 3> inspectorEQ;

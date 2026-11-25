@@ -561,11 +561,101 @@
         return result;
     }
 
+    std::vector<ju::ValueTree> selectedDrumNoteIDs() const
+    {
+        std::vector<ju::ValueTree> ids;
+        if (auto* clip = selectedDrumPattern(); clip && !drumSteps.empty())
+        {
+            auto model = makeDrumEditor(*clip);
+            const DrumPattern pattern(*clip, model);
+            for (auto step : drumSteps)
+                for (const auto& note : pattern.hits(step))
+                    ids.push_back(note.id);
+        }
+        return ids;
+    }
+
+    void restoreDrumNoteSelection(const std::vector<ju::ValueTree>& ids)
+    {
+        if (auto* clip = selectedDrumPattern(); clip && !ids.empty())
+        {
+            auto model = makeDrumEditor(*clip);
+            const DrumPattern pattern(*clip, model);
+            drumSteps.clear();
+            for (const auto& note : model.notes())
+                if (std::find(ids.begin(), ids.end(), note.id) != ids.end())
+                    drumSteps.insert({ note.pitch, pattern.indexAt(note.start) });
+        }
+    }
+
+    static bool isDrumMove(UniversalAction action)
+    {
+        return action == UniversalAction::left || action == UniversalAction::right
+            || action == UniversalAction::up || action == UniversalAction::down;
+    }
+
+    std::vector<GridNote> drumMoveNotes(UniversalAction action, const DrumPattern& pattern,
+                                        const MidiNoteEditor& model) const
+    {
+        const bool vertical = action == UniversalAction::up || action == UniversalAction::down;
+        const int direction = action == UniversalAction::up || action == UniversalAction::left ? -1 : 1;
+        std::vector<int> pitches;
+        if (vertical)
+            for (auto* lane : drumEditorLanes())
+            {
+                auto* sampler = drumMaster::sampler(*lane);
+                pitches.push_back(sampler ? static_cast<int>(sampler->state.getChildWithName(drumMaster::laneType)
+                    .getProperty(drumMaster::noteProperty, -1)) : -1);
+            }
+
+        std::set<DrumStep> destinations;
+        std::vector<GridNote> changes;
+        for (auto source : drumSteps)
+        {
+            const auto& hits = pattern.hits(source);
+            if (hits.empty())
+                continue;
+            auto destination = source;
+            if (vertical)
+            {
+                const auto row = std::find(pitches.begin(), pitches.end(), source.pitch);
+                if (row == pitches.end() || std::find(std::next(row), pitches.end(), source.pitch) != pitches.end())
+                    return {};
+                const auto target = static_cast<int>(std::distance(pitches.begin(), row)) + direction;
+                if (!ju::isPositiveAndBelow(target, static_cast<int>(pitches.size())) || pitches[target] < 0)
+                    return {};
+                destination.pitch = pitches[target];
+            }
+            else
+                destination.index += direction;
+
+            if (!ju::isPositiveAndBelow(destination.index, pattern.count()) || !destinations.insert(destination).second
+                || (!drumSteps.contains(destination) && !pattern.hits(destination).empty()))
+                return {};
+
+            for (auto note : hits)
+            {
+                note.pitch = destination.pitch;
+                if (!vertical)
+                {
+                    const auto shift = direction * DrumPattern::step;
+                    const auto end = pattern.sourceAtQuarter(pattern.quarterForSource(note.end()) + shift);
+                    note.start = pattern.sourceAtQuarter(pattern.quarterForSource(note.start) + shift);
+                    note.length = end - note.start;
+                }
+                if (!model.valid(note))
+                    return {};
+                changes.push_back(note);
+            }
+        }
+        return changes;
+    }
+
     bool canDispatchDrumEdit(UniversalAction action) const
     {
         const bool paste = action == UniversalAction::paste;
         const bool selectionCommand = action == UniversalAction::cut || action == UniversalAction::copy
-            || action == UniversalAction::remove;
+            || action == UniversalAction::remove || isDrumMove(action);
         if (paste ? drumClipboard.empty() : !selectionCommand || drumSteps.empty())
             return false;
         auto* clip = selectedDrumPattern();
@@ -573,6 +663,8 @@
         const DrumPattern pattern(*clip, model);
         if (paste)
             return !drumPasteNotes(pattern, model).empty();
+        if (isDrumMove(action))
+            return !drumMoveNotes(action, pattern, model).empty();
         return std::any_of(drumSteps.begin(), drumSteps.end(), [&](auto step) { return !pattern.hits(step).empty(); });
     }
 
@@ -581,6 +673,18 @@
         auto* clip = selectedDrumPattern();
         auto model = makeDrumEditor(*clip);
         DrumPattern pattern(*clip, model);
+        if (isDrumMove(action))
+        {
+            const auto changes = drumMoveNotes(action, pattern, model);
+            if (model.change(changes, "Move drum hits"))
+            {
+                drumSteps.clear();
+                for (const auto& note : changes)
+                    drumSteps.insert({ note.pitch, pattern.indexAt(note.start) });
+            }
+            updateControls();
+            return;
+        }
         if (action == UniversalAction::copy || action == UniversalAction::cut)
         {
             drumClipboard.clear();

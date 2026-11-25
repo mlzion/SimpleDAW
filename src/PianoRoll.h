@@ -231,7 +231,7 @@ struct EditorScrollBar final : ju::ScrollBar, private ju::ScrollBar::Listener
 class PianoRoll final : public ju::Component, private ju::Timer
 {
 public:
-    enum class Action { cut, remove, copy, paste };
+    enum class Action { cut, remove, copy, paste, up, down, left, right, startMinus, startPlus, endMinus, endPlus };
 
     PianoRoll()
     {
@@ -336,7 +336,18 @@ public:
     {
         if (!editable || !clip)
             return false;
-        return action == Action::paste ? !pasteNotes().empty() : !selectedNotes().empty();
+        if (action == Action::paste)
+            return !pasteNotes().empty();
+        const auto notes = selectedNotes();
+        if (action == Action::cut || action == Action::copy || action == Action::remove)
+            return !notes.empty();
+        const auto changes = actionChanges(action, notes);
+        const MidiNoteEditor model(*clip);
+        return !changes.empty() && changes != notes
+            && std::all_of(changes.begin(), changes.end(), [&](const auto& note) {
+                return action == Action::up || action == Action::down
+                    ? ju::isPositiveAndBelow(note.pitch, 128) : model.valid(note);
+            });
     }
 
     void apply(Action action)
@@ -361,6 +372,8 @@ public:
         }
         else if (action == Action::paste)
             selected = model.insert(pasteNotes(), "Paste MIDI notes");
+        else if (action != Action::copy)
+            model.change(actionChanges(action, notes), action >= Action::startMinus ? "Resize MIDI note" : "Move MIDI notes");
         notify();
     }
 
@@ -415,6 +428,27 @@ private:
             if (!MidiNoteEditor(*clip).valid(note))
                 return {};
         }
+        return notes;
+    }
+
+    std::vector<GridNote> actionChanges(Action action, std::vector<GridNote> notes) const
+    {
+        if (action >= Action::startMinus && notes.size() != 1)
+            return {};
+        const auto increment = step() > 0 ? step() : 1.0 / 96.0;
+        for (auto& note : notes)
+            switch (action)
+            {
+                case Action::up: ++note.pitch; break;
+                case Action::down: --note.pitch; break;
+                case Action::left: note.start -= increment; break;
+                case Action::right: note.start += increment; break;
+                case Action::startMinus: note.start -= increment; note.length += increment; break;
+                case Action::startPlus: note.start += increment; note.length -= increment; break;
+                case Action::endMinus: note.length -= increment; break;
+                case Action::endPlus: note.length += increment; break;
+                default: break;
+            }
         return notes;
     }
 
