@@ -1,8 +1,8 @@
 # SimpleDAW for Windows x64
 
-## v0.25.1 MD0 integration
+## Accepted v0.25.1 Master Drum Track MD0
 
-The Windows x64 Release `/MD` integration package is `SimpleDAW-v0.25.1-Windows-x64.zip`. Use the artifact linked in draft PR #27 and extract it in full. Launch `SimpleDAW-v0.25.1.exe` with the bundled `Drum Samples` directory beside it. Use the same separately installed Microsoft x64 runtime described below. This build is for Windows live acceptance. [MD0 integration draft](https://github.com/mlzion/SimpleDAW/pull/27)
+Download and extract the full Windows x64 Release `/MD` ZIP. Launch `SimpleDAW-v0.25.1.exe` with the bundled `Drum Samples` directory beside it. Install the Microsoft Visual C++ v14 x64 Redistributable if a compatible version is absent. [Accepted v0.25.1 ZIP](https://github.com/mlzion/SimpleDAW/actions/runs/45701407785/artifacts/15063758284) · [Official Microsoft x64 download](https://aka.ms/vc14/vc_redist.x64.exe) · [Acceptance record](testing/md0-drum-master.md#final-acceptance)
 
 ## Accepted v0.24.1 Piano Roll P0
 

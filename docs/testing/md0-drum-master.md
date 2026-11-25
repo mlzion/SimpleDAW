@@ -1,6 +1,14 @@
 # SimpleDAW v0.25.1 — Master Drum Track MD0 Integration
 
-Draft PR #27 contains the v0.25.1 MD0 integration. The owner reported that the prior corrective Windows retest passed except for the inconclusive D44 listening check. The final correction pass below awaits a separately authorized Windows build and live retest. The accepted Piano Roll P0 release remains v0.24.1. [MD0 integration draft](https://github.com/mlzion/SimpleDAW/pull/27)
+## Final acceptance
+
+MD0 v0.25.1 was accepted on `25ff152ffbd918ef9eba710939a4cf40730efff8` and merged into `main` at `ba3e4acdd6183a36b7f471d9457cdffc63fde13a`. The owner reported that all scheduled Windows live tests and corrective retests passed, including D63-R9 through R12. D44 passed objective integrated audio verification. [Merged PR #27](https://github.com/mlzion/SimpleDAW/pull/27) · [MD0 implementation issue #26](https://github.com/mlzion/SimpleDAW/issues/26)
+
+Linux and Windows Release each passed all 17 CTests. Windows x64 `/MD` verification confirmed version 0.25.1, isolated startup and clean shutdown, runtime imports, and a valid ZIP with the matching source and ten drum samples. [Windows run #45701407785](https://github.com/mlzion/SimpleDAW/actions/runs/45701407785) · [Accepted Windows ZIP](https://github.com/mlzion/SimpleDAW/actions/runs/45701407785/artifacts/15063758284)
+
+For the final UAT matrix, Inspector Loop controls, and parent and child indicators, see the [accepted architecture](../architecture.md#universal-actions-toolbar).
+
+## Implementation
 
 The Master is a protected native audio track that owns the project's drum MIDI clips. The arrangement pins it above ordinary tracks and groups its child drum lanes beneath it. Each lane uses a native track and sampler. The Tracktion graph reads the Master's MIDI clips for each lane, then routes lane audio by Master track ID through the Master inserts, EQ, and fader. Each lane has an independent volume, pan, EQ, and effect chain. Collapsing the kit only changes the arrangement.
 
@@ -31,7 +39,7 @@ The integrated Debian 13 x64 Release build with GCC 14.2 and Xvfb passed all 17 
 
 ## Windows acceptance corrections
 
-The correction build passed all 17 CTests on Debian 13 x64 Release with GCC 14.2 and Xvfb. Windows 11 retest remains pending.
+The correction build passed all 17 CTests on Debian 13 x64 Release with GCC 14.2 and Xvfb. The owner confirmed the final Windows results above.
 
 D09 and D44 use a deterministic 500 ms constant WAV at 48 kHz and two MIDI triggers 10 ms apart. The sampler measured `0.031496` at velocity 32 and `0.125000` at velocity 127. Overlap ON sustained `0.250000` after the second trigger. Overlap OFF measured `0.250000`, `0.187500`, and `0.125000` at 0, 1.5, and 3 ms after retrigger, respectively. The previous voice reached zero after 144 samples. The overlap implementation needed no change.
 
@@ -60,7 +68,7 @@ Tracktion writes JUCE's chosen configuration to `audio_device_setup` and reads i
 
 The device regression drives repeated choices through the message queue with a live Edit context, verifies rate and buffer fallback without a second notification, closes the dialog through its close handler, and reinitializes from Tracktion's saved XML. With the old selector compiled into an otherwise identical test binary, the device regression timed out after 10 seconds. Playback tests exercise output loss, the stopped interlocks and warning, and non-silent ordinary WAV playback after reopening a hosted output. The routing regression exercises recording and monitoring through hosted callbacks.
 
-Linux x64 Release passed all 17 CTests under Xvfb. The device setup, GUI corrections, and Piano Roll suites also passed three consecutive runs each. Windows native device and dialog behavior awaits live verification.
+Linux x64 Release passed all 17 CTests under Xvfb. The device setup, GUI corrections, and Piano Roll suites also passed three consecutive runs each. The final live acceptance includes the scheduled device and dialog retests.
 
 ### Windows 11 retest for D59 and D61
 
@@ -77,7 +85,7 @@ Linux x64 Release passed all 17 CTests under Xvfb. The device setup, GUI correct
 
 D44 measured a single-voice output of `0.088493`. Overlap ON held at `0.176986` through the retrigger and until the original voice’s natural release. Overlap OFF measured `0.176986`, `0.132740`, and `0.088493` at 0, 1.5, and 3 ms after retrigger. At 48 kHz that is 144 samples. Both renders retained the final voice’s natural fade and reached silence at its end.
 
-Linux x64 Release passed all 17 CTests under Xvfb. The drum grid, drum master, drum voices, Inspector clone, Inspector loop, Piano Roll, and UAT suites each passed three consecutive runs. Windows live validation of the final correction pass remains pending.
+Linux x64 Release passed all 17 CTests under Xvfb. The drum grid, drum master, drum voices, Inspector clone, Inspector loop, Piano Roll, and UAT suites each passed three consecutive runs. The final Windows results are recorded above.
 
 ## D63 design refinement
 
@@ -88,7 +96,7 @@ The owner accepted D60, D62, and the three D63 live retests on the preceding Win
 - Piano Roll has MOVE, EDIT and SIZE. MOVE slides notes by the current snap increment or transposes pitch by a semitone. SIZE adjusts the start or end of a single selected note. Established mouse editing remains available.
 - The Drum Pattern Editor has MOVE and EDIT. Horizontal moves shift one sixteenth note. Vertical moves follow kit row order. Each move preserves step spacing, velocity and subdivision timing and is a single undoable edit. Commands that would leave the pattern or kit, merge occupied hits, or move from an ambiguous layered source are disabled.
 
-Linux x64 Release passed all 17 CTests under Xvfb. Universal Actions, Inspector Loop, Inspector Clone, Drum Grid, Drum Master and Piano Roll each passed three consecutive runs. The refinement awaits Windows live verification.
+Linux x64 Release passed all 17 CTests under Xvfb. Universal Actions, Inspector Loop, Inspector Clone, Drum Grid, Drum Master and Piano Roll each passed three consecutive runs. The final Windows results are recorded above.
 
 ## D63-R5 clone parent correction
 
@@ -96,4 +104,4 @@ Windows live retests D63-R4 through R8 passed on `f852de3` apart from the R5 par
 
 Parent identity comes from the persisted clone order. The oldest surviving child becomes the parent when the original is deleted. Undo restores the original order and parent. A lone survivor is independent. Audio, ordinary MIDI, and drum pattern clips use the same role logic.
 
-Linux x64 Release passed all 17 CTests. Universal Actions, Inspector Clone, Drum Grid and Piano Roll passed three consecutive runs each. Windows live verification of this correction remains pending.
+Linux x64 Release passed all 17 CTests. Universal Actions, Inspector Clone, Drum Grid and Piano Roll passed three consecutive runs each. The final Windows results are recorded above.

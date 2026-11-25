@@ -46,7 +46,8 @@ All three original PDFs were parsed and all 14 pages rendered for visual inspect
 | `SimpleDAW_Universal_Actions_Integration_Spec.pdf` | `d1e19f22134f135be581438f6ac4e576fd5da9c24cc6fe850f74297ba613c04b` |
 | `SimpleDAW_Development_Phase_Plan_Draft_0_1.pdf` | `c58a7109b0c645a13c0016c07b5946376254f7ee19fffb1a6330b88a8df800b9` |
 
-## MD0 Drum Master — accepted design, draft foundation
+## MD0 Master Drum Track — accepted and merged
 
-- [MD0 Master Drum Track specification](md0-master-drum-track-2026-11-23.md) — accepted singleton MDT, Settings enable/disable, GM lane/sampler, packaged WAV library, inline pattern editing, shared MIDI Insert lengths and audio bus rules. The foundation is under review in draft PR #27. Inline step editing and the shared MIDI Insert length selector remain outside that draft. The MD0 implementation has yet to merge into `main`. [MD0 draft PR](https://github.com/mlzion/SimpleDAW/pull/27)
-- [MD0 Codex task sheet](../tasks/md0-master-drum-track-task-sheet.md) — prepared work packages and acceptance criteria; **not authorization** to code or run Windows CI. Normal Mixer precedes Drum Mixer; MDT recording/monitoring deferred to MD1.
+MD0 shipped in v0.25.1 after Piano Roll P0. The accepted implementation covers the Master, channel-10 lanes, sample library, Drum Master routing, shared 1–4-bar MIDI insertion and the slide-up Drum Pattern Editor. Its final UAT focus rules, Inspector Loop controls, and clone roles supersede the corresponding earlier foundation proposals. [MD0 specification](md0-master-drum-track-2026-11-23.md) · [Acceptance and final controls](../testing/md0-drum-master.md#final-acceptance) · [Merged PR #27](https://github.com/mlzion/SimpleDAW/pull/27)
+
+Drum Mixer remains sequenced after the normal Mixer. MDT recording and monitoring remain scoped to MD1. The dated phase-plan PDF remains the original planning record.
