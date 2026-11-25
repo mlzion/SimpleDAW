@@ -280,9 +280,10 @@ bool DeviceSetup::test(te::Engine& engine)
 }
 
 #include "EffectsEditor.h"
+#include "ContextToolbar.h"
 
 class MainGui final : public ju::Component, private ju::Timer, private ju::MenuBarModel,
-                      private ju::ApplicationCommandTarget
+                      private ju::ApplicationCommandTarget, private ju::KeyListener
 {
     #include "MainGui.inc"
 
@@ -786,7 +787,7 @@ public:
             return;
 
         const bool testing = command == "--smoke-test" || command == "--gui-test"
-            || command == "--correction-test" || command == "--uat-test"
+            || command == "--correction-test" || command == "--uat-test" || command == "--context-toolbar-test"
             || command == "--effects-foundation-test" || command == "--effects-editor-test"
             || command == "--midi-import-test" || command == "--midi-inspector-test"
             || command == "--inspector-loop-test" || command == "--inspector-clone-test"
@@ -803,6 +804,8 @@ public:
                 passed = MainGui::testCorrections(*engine);
             else if (command == "--uat-test")
                 passed = MainGui::testUniversalActions(*engine);
+            else if (command == "--context-toolbar-test")
+                passed = MainGui::testContextToolbar(*engine);
             else if (command == "--device-setup-test")
                 passed = DeviceSetup::test(*engine);
             else if (command == "--audio-overlap-test")

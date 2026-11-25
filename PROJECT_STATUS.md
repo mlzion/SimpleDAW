@@ -1,5 +1,12 @@
 # SimpleDAW project status
 
+## Context UI experiment — CUI0/CUI1
+
+The experimental branch adds a session-only Options toggle, a middle-click Edit popup and a labeled wheel test page. The popup uses the existing UAT availability and dispatch for Cut, Delete, Copy and Paste, and validates editing focus and selection again before dispatching. Classic mode is the startup default. [Implementation brief](docs/CONTEXT_UI_EXPERIMENT.md) · [Baseline command and input audit](docs/CONTEXT_UI_AUDIT.md)
+
+Debian 13 x64 Release (Clang 19, `-O1`, Xvfb) passed all 15 CTests, including the new context toolbar test. A native X11 smoke test verified the Options switch, middle-click opening, wheel wrap in both directions, Escape, outside click and classic restoration. Windows x64 Release `/MD` packaging and Windows live acceptance are pending. Later Context UI phases await acceptance and separate authorization.
+
+
 ## v0.24.1 — Piano Roll P0 — ACCEPTED
 
 This release integrates the reusable editor from foundation commit `6486a5f`. MIDI clips open by double-click in the slide-up area shared with E1. The active editor owns UAT commands, with independent Timeline and Track selections. Note Duplicate, right-drag velocity, and remembered draw velocity are included. Note edits use Tracktion's Edit UndoManager and propagate across linked MIDI clips. Audition uses the current effective clip channel and existing instrument path. Track-owned MIDI routing remains deferred. [Editing and acceptance notes](docs/research/piano-roll-p0.md)

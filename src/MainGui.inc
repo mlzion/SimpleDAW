@@ -18,6 +18,17 @@
 
     using ItemSelection = std::set<te::EditItemID>;
 
+    struct ContextTarget
+    {
+        EditingArea area;
+        ju::ValueTree track, midi;
+        ItemSelection clips;
+        std::vector<ju::ValueTree> notes;
+        te::TimePosition cursor;
+        double noteCursor = 0.0;
+        bool operator==(const ContextTarget&) const = default;
+    };
+
     struct ActionSelection
     {
         std::optional<EditingArea> requestedArea;
@@ -134,7 +145,11 @@
         void paint(ju::Graphics& g) override { owner.paintArrangement(g); }
         void paintOverChildren(ju::Graphics& g) override { owner.paintArrangementSelection(g); }
         void changeListenerCallback(ju::ChangeBroadcaster*) override { repaint(); }
-        void mouseDown(const ju::MouseEvent& event) override { owner.arrangementDown(event); }
+        void mouseDown(const ju::MouseEvent& event) override
+        {
+            if (!owner.tryOpenContextToolbar(event))
+                owner.arrangementDown(event);
+        }
         void mouseDrag(const ju::MouseEvent& event) override { owner.arrangementDrag(event); }
         void mouseUp(const ju::MouseEvent& event) override { owner.arrangementUp(event); }
         void mouseDoubleClick(const ju::MouseEvent& event) override { owner.openPianoRoll(event); }
@@ -234,6 +249,9 @@ public:
         commandManager.setFirstCommandTarget(this);
         setApplicationCommandManagerToWatch(&commandManager);
         addAndMakeVisible(menuBar);
+        addChildComponent(contextToolbar);
+        contextToolbar.onEdit = [this](ContextToolbar::Edit action) { invokeContextEdit(action); };
+        contextToolbar.onDismiss = [this] { dismissContextToolbar(); };
         addAndMakeVisible(arrangement);
         addAndMakeVisible(inspector);
         addAndMakeVisible(inspectorDivider);
@@ -652,9 +670,13 @@ public:
     ~MainGui() override
     {
         stopTimer();
+        dismissContextToolbar();
         pianoRoll.clearProject();
         if (shortcutHost != nullptr)
+        {
+            shortcutHost->removeKeyListener(this);
             shortcutHost->removeKeyListener(commandManager.getKeyMappings());
+        }
         setApplicationCommandManagerToWatch(nullptr);
         menuBar.setModel(nullptr);
         stop();
@@ -692,6 +714,7 @@ public:
     {
         shortcutHost = &host;
         host.addKeyListener(commandManager.getKeyMappings());
+        host.addKeyListener(this);
     }
 
     bool prepareToQuit()
@@ -705,6 +728,9 @@ public:
 
     void resized() override
     {
+        if (contextToolbar.getBounds() != getLocalBounds())
+            dismissContextToolbar();
+        contextToolbar.setBounds(getLocalBounds());
         auto area = getLocalBounds().reduced(5);
         menuBar.setBounds(area.removeFromTop(28));
         layoutRow(first, area.removeFromTop(42), { 10, 10, 10, 10, 10, 25, 12, 13 }, { 5, 6 });
@@ -723,7 +749,7 @@ public:
             control->setBounds(historyControls.removeFromTop(42).reduced(2));
             historyControls.removeFromTop(4);
         }
-        for (size_t i = 0; i < actionGroups.size(); ++i)
+        for (size_t i = contextMode ? 1 : 0; i < actionGroups.size(); ++i)
         {
             auto& group = actionGroups[i];
             auto bounds = toolbar.removeFromLeft(toolbar.getWidth() / static_cast<int>(actionGroups.size() - i));
@@ -854,6 +880,8 @@ public:
     }
 
     static bool testEffectsEditor(te::Engine& engine);
+
+    #include "../tests/ContextToolbar.inc"
 
     static bool testUniversalActions(te::Engine& engine)
     {
@@ -2494,7 +2522,15 @@ private:
             case 0: add({ newProject, openProject, saveProject, saveProjectAs, importAudio, importMidiFile, exportAudio, exitApp }); break;
             case 1: add({ undo, redo, cut, copy, paste, duplicate, deleteItem, locateFile }); break;
             case 2: add({ audioTrack, midiTrack, midiItem, synth, reverb, vst3 }); break;
-            case 3: add({ devices, armAudio, armMidi, monitoringReport }); break;
+            case 3:
+                add({ devices, armAudio, armMidi, monitoringReport });
+                menu.addSeparator();
+                menu.addItem("Experimental Context UI", true, contextMode,
+                    [safe = ju::Component::SafePointer<MainGui>(this)] {
+                        if (safe != nullptr)
+                            safe->setContextMode(!safe->contextMode);
+                    });
+                break;
             case 4: add({ about }); break;
             default: break;
         }
@@ -3975,6 +4011,138 @@ private:
         return pianoRoll.isVisible() && activeEditingArea() == EditingArea::window;
     }
 
+    void setContextMode(bool enabled)
+    {
+        dismissContextToolbar();
+        contextMode = enabled;
+        auto& group = actionGroups.front();
+        group.frame.setVisible(!enabled);
+        for (auto* button : group.buttons)
+            button->setVisible(!enabled);
+        // Arrangement and Piano Roll already take focus explicitly on left/right clicks.
+        for (auto* surface : { static_cast<ju::Component*>(&arrangement), static_cast<ju::Component*>(&pianoRoll),
+                               static_cast<ju::Component*>(&effectsEditor), static_cast<ju::Component*>(&inspector),
+                               &inspectorControls })
+            surface->setMouseClickGrabsKeyboardFocus(!enabled);
+        resized();
+    }
+
+    static UniversalAction contextAction(ContextToolbar::Edit action)
+    {
+        switch (action)
+        {
+            case ContextToolbar::Edit::cut: return UniversalAction::cut;
+            case ContextToolbar::Edit::remove: return UniversalAction::remove;
+            case ContextToolbar::Edit::copy: return UniversalAction::copy;
+            case ContextToolbar::Edit::paste: return UniversalAction::paste;
+        }
+        return UniversalAction::reserved;
+    }
+
+    std::optional<ContextTarget> currentContextTarget() const
+    {
+        ContextTarget target {};
+        target.area = activeEditingArea();
+        if (!edit)
+            return target;
+        if (pianoRollHasFocus())
+        {
+            auto* clip = dynamic_cast<te::MidiClip*>(te::findClipForID(*edit, pianoRollClip));
+            if (!clip || pianoRoll.clip.get() != clip)
+                return {};
+            target.midi = clip->state;
+            target.notes = pianoRoll.selected;
+            target.noteCursor = pianoRoll.editCursor;
+            for (const auto& note : target.notes)
+                if (!clip->getSequence().getNoteFor(note))
+                    return {};
+        }
+        else if (target.area == EditingArea::timeline)
+        {
+            if (auto* destination = trackAt(selection))
+                target.track = destination->state;
+            target.cursor = editCursor;
+            target.clips = actionSelection.clips;
+            if (selectedClips().size() != target.clips.size())
+                return {};
+        }
+        else if (target.area == EditingArea::tracks)
+        {
+            if (auto* track = actionTrack())
+                target.track = track->state;
+        }
+        return target;
+    }
+
+    bool tryOpenContextToolbar(const ju::MouseEvent& event)
+    {
+        if (!contextMode || contextTarget || !event.mods.isMiddleButtonDown() || event.mods.isLeftButtonDown()
+            || event.mods.isRightButtonDown() || ju::Component::getCurrentlyModalComponent())
+            return false;
+        auto target = currentContextTarget();
+        if (!target)
+            return false;
+        auto available = getLocalBounds();
+        const auto screenPointer = event.getScreenPosition();
+        if (const auto* display = ju::Desktop::getInstance().getDisplays().getDisplayForPoint(screenPointer))
+            available = available.getIntersection(getLocalArea(nullptr, display->userArea));
+        if (available.isEmpty())
+            return false;
+        contextTarget = std::move(target);
+        contextFocus = ju::Component::getCurrentlyFocusedComponent();
+        contextHadFocus = contextFocus != nullptr;
+        if (contextHadFocus && contextFocus.getComponent() != shortcutHost.getComponent())
+            contextFocus->addKeyListener(this);
+        contextToolbar.open(getLocalPoint(nullptr, screenPointer), available);
+        refreshContextToolbar();
+        return true;
+    }
+
+    void dismissContextToolbar()
+    {
+        contextToolbar.setVisible(false);
+        contextTarget.reset();
+        if (contextFocus != nullptr && contextFocus.getComponent() != shortcutHost.getComponent())
+            contextFocus->removeKeyListener(this);
+        contextFocus = nullptr;
+    }
+
+    bool keyPressed(const ju::KeyPress& key, ju::Component*) override
+    {
+        if (key.getKeyCode() != ju::KeyPress::escapeKey || !contextTarget)
+            return false;
+        dismissContextToolbar();
+        return true;
+    }
+
+    bool contextStillValid() const
+    {
+        auto* focused = ju::Component::getCurrentlyFocusedComponent();
+        return contextTarget && !ju::Component::getCurrentlyModalComponent()
+            && (!contextHadFocus || contextFocus != nullptr)
+            && contextFocus.getComponent() == focused && currentContextTarget() == contextTarget
+            && (!isShowing() || !getPeer() || getPeer()->isFocused());
+    }
+
+    void refreshContextToolbar()
+    {
+        if (!contextTarget)
+            return;
+        if (!contextStillValid())
+            return dismissContextToolbar();
+        for (size_t i = 0; i < ContextToolbar::edits.size(); ++i)
+            contextToolbar.setEditEnabled(i, canDispatch(contextAction(ContextToolbar::edits[i])));
+    }
+
+    void invokeContextEdit(ContextToolbar::Edit editAction)
+    {
+        const auto action = contextAction(editAction);
+        const bool available = contextToolbar.page == 0 && contextStillValid() && canDispatch(action);
+        dismissContextToolbar();
+        if (available)
+            dispatchAction(action);
+    }
+
     bool canDispatch(UniversalAction action) const
     {
         using Action = UniversalAction;
@@ -4414,6 +4582,7 @@ private:
 
     void setProject(std::unique_ptr<te::Edit> next, const ju::File& file)
     {
+        dismissContextToolbar();
         hidePianoRoll();
         pianoRoll.clearProject();
         pianoRollClip = {};
@@ -5507,6 +5676,17 @@ private:
 
     void mouseDown(const ju::MouseEvent& event) override
     {
+        auto* surface = event.eventComponent;
+        if (surface == &pianoRoll || surface == &effectsEditor
+            || surface == &inspector || surface == &inspectorControls)
+        {
+            if (tryOpenContextToolbar(event))
+                return;
+            if (contextMode && surface != &pianoRoll && surface->isShowing()
+                && (event.mods.isLeftButtonDown() || event.mods.isRightButtonDown()))
+                surface->grabKeyboardFocus();
+        }
+
         if (!edit || (!event.mods.isLeftButtonDown() && !event.mods.isRightButtonDown()))
             return;
         if (event.eventComponent == &inspector || event.eventComponent == &inspectorControls
@@ -6144,6 +6324,7 @@ private:
             });
         }
         updateControls();
+        refreshContextToolbar();
     }
 
     te::Engine& engine;
@@ -6241,6 +6422,11 @@ private:
     std::array<ActionGroup, 4> actionGroups;
     std::vector<ActionButton> actionButtons;
     ActionSelection actionSelection;
+    ContextToolbar contextToolbar;
+    bool contextMode = false;
+    std::optional<ContextTarget> contextTarget;
+    ju::Component::SafePointer<ju::Component> contextFocus;
+    bool contextHadFocus = false;
     EditingArea inspectorContext = EditingArea::timeline;
     std::unique_ptr<te::Clipboard::Clips> clipClipboard;
     std::optional<TrackSnapshot> trackClipboard;
