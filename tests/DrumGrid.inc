@@ -260,7 +260,8 @@
         gui.editCursor = gui.barTime(8);
         correctionAction(UniversalAction::clone);
         auto* clone = dynamic_cast<te::MidiClip*>(gui.selectedClip());
-        if (!check(clone && clone != clip && gui.cloneMembers(*clip).size() == 2, "clone retains a linked drum source"))
+        if (!check(clone && clone != clip && gui.cloneRole(*clip) == CloneRole::parent
+            && gui.cloneRole(*clone) == CloneRole::child, "linked drum patterns identify parent and child"))
             return false;
         auto cloneEditor = gui.makeDrumEditor(*clone);
         if (!check(DrumPattern(*clone, cloneEditor).velocity({ { 36, 0 } }, 1)

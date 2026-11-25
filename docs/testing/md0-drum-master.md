@@ -89,3 +89,11 @@ The owner accepted D60, D62, and the three D63 live retests on the preceding Win
 - The Drum Pattern Editor has MOVE and EDIT. Horizontal moves shift one sixteenth note. Vertical moves follow kit row order. Each move preserves step spacing, velocity and subdivision timing and is a single undoable edit. Commands that would leave the pattern or kit, merge occupied hits, or move from an ambiguous layered source are disabled.
 
 Linux x64 Release passed all 17 CTests under Xvfb. Universal Actions, Inspector Loop, Inspector Clone, Drum Grid, Drum Master and Piano Roll each passed three consecutive runs. The refinement awaits Windows live verification.
+
+## D63-R5 clone parent correction
+
+Windows live retests D63-R4 through R8 passed on `f852de3` apart from the R5 parent command. The MODIFY group keeps four buttons. Its Clone button remains available for independent clips and parents, and reads Unclone for children. The Inspector and MAX timeline identify linked parents with a gold crown and children with a chain link. MIN keeps its compact clip display.
+
+Parent identity comes from the persisted clone order. The oldest surviving child becomes the parent when the original is deleted. Undo restores the original order and parent. A lone survivor is independent. Audio, ordinary MIDI, and drum pattern clips use the same role logic.
+
+Linux x64 Release passed all 17 CTests. Universal Actions, Inspector Clone, Drum Grid and Piano Roll passed three consecutive runs each. Windows live verification of this correction remains pending.

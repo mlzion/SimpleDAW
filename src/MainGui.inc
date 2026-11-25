@@ -55,10 +55,41 @@
         std::vector<ju::Component*> buttons;
     };
 
+    enum class CloneRole { independent, parent, child };
+
+    static void paintCloneIcon(ju::Graphics& g, CloneRole role, ju::Point<int> position)
+    {
+        const auto offset = ju::AffineTransform::translation(static_cast<float>(position.x), static_cast<float>(position.y));
+        if (role == CloneRole::parent)
+        {
+            ju::Path crown;
+            crown.startNewSubPath(0, 2);
+            crown.lineTo(4, 5);
+            crown.lineTo(8, 0);
+            crown.lineTo(12, 5);
+            crown.lineTo(16, 2);
+            crown.lineTo(14, 12);
+            crown.lineTo(2, 12);
+            crown.closeSubPath();
+            g.setColour(ju::Colours::gold);
+            g.fillPath(crown, offset);
+        }
+        else if (role == CloneRole::child)
+        {
+            ju::Path link;
+            link.addRoundedRectangle(0.5f, 3.5f, 9.0f, 5.0f, 2.5f);
+            link.addRoundedRectangle(6.5f, 3.5f, 9.0f, 5.0f, 2.5f);
+            g.setColour(ju::Colours::orange);
+            g.strokePath(link, ju::PathStrokeType(1.35f),
+                         ju::AffineTransform::rotation(-0.45f, 8.0f, 6.0f).followedBy(offset));
+        }
+    }
+
     struct AreaLabel final : ju::Label
     {
         void paintOverChildren(ju::Graphics& g) override
         {
+            paintCloneIcon(g, role, { getWidth() - 25, 7 });
             if (active)
             {
                 g.setColour(ju::Colours::white);
@@ -75,6 +106,7 @@
             }
         }
 
+        CloneRole role = CloneRole::independent;
         bool active = false;
     };
 
@@ -1926,13 +1958,99 @@ public:
         gui.setMidiInspectorValue(midiVelocityProperty, 70, 100, "Velocity");
         if (static_cast<int>(source->state[midiVelocityProperty]) != 50 || !gui.save())
             return fail(__LINE__);
+        const auto selectClip = [&](te::Clip& clip) {
+            gui.actionSelection.clips = { clip.itemID };
+            gui.actionSelection.requestedArea = EditingArea::timeline;
+            gui.updateControls();
+        };
+        if (gui.cloneRole(*duplicate) != CloneRole::independent || gui.inspector.role != CloneRole::independent)
+            return fail(__LINE__);
+        selectClip(*source);
+        gui.editCursor = start + duration * 7;
+        if (cloneButton.getButtonText() != "CLONE" || gui.inspector.role != CloneRole::parent)
+            return fail(__LINE__);
+        cloneButton.onClick();
+        auto* secondClone = gui.selectedClip();
+        if (!secondClone || gui.cloneMembers(*source).size() != 3 || gui.cloneRole(*source) != CloneRole::parent
+            || gui.cloneRole(*clone) != CloneRole::child || gui.inspector.role != CloneRole::child
+            || cloneButton.getButtonText() != "UNCLONE")
+            return fail(__LINE__);
+        const auto secondID = secondClone->itemID;
+        gui.useHistory(false);
+        if (gui.cloneMembers(*source).size() != 2 || te::findClipForID(*gui.edit, secondID))
+            return fail(__LINE__);
+        gui.useHistory(true);
+        secondClone = te::findClipForID(*gui.edit, secondID);
+        if (!secondClone || gui.cloneMembers(*source).size() != 3)
+            return fail(__LINE__);
+
+        selectClip(*secondClone);
+        cloneButton.onClick();
+        if (gui.cloneRole(*secondClone) != CloneRole::independent || gui.cloneMembers(*source).size() != 2)
+            return fail(__LINE__);
+        gui.useHistory(false);
+        if (gui.cloneRole(*secondClone) != CloneRole::child || gui.cloneMembers(*source).size() != 3)
+            return fail(__LINE__);
+
+        const auto clonePosition = clone->getPosition();
+        const auto secondPosition = secondClone->getPosition();
+        selectClip(*source);
+        gui.dispatchAction(UniversalAction::remove);
+        if (te::findClipForID(*gui.edit, sourceID) || gui.cloneRole(*clone) != CloneRole::parent
+            || gui.cloneRole(*secondClone) != CloneRole::child || clone->getPosition() != clonePosition
+            || secondClone->getPosition() != secondPosition
+            || static_cast<int>(secondClone->state[midiVelocityProperty]) != 50)
+            return fail(__LINE__);
+        gui.useHistory(false);
+        auto* original = te::findClipForID(*gui.edit, sourceID);
+        if (!original || gui.cloneRole(*original) != CloneRole::parent || gui.cloneRole(*clone) != CloneRole::child)
+            return fail(__LINE__);
+        gui.useHistory(true);
+        selectClip(*clone);
+        if (gui.cloneRole(*clone) != CloneRole::parent || cloneButton.getButtonText() != "CLONE" || !gui.save())
+            return fail(__LINE__);
+
+        MainGui reloaded(engine, dir.getChildFile("reload.settings"));
         auto reopened = te::loadEditFromFile(engine, project);
-        auto* restoredSource = reopened ? te::findClipForID(*reopened, sourceID) : nullptr;
-        auto* restoredClone = reopened ? te::findClipForID(*reopened, cloneID) : nullptr;
-        return restoredSource && restoredClone
-            && restoredSource->state[cloneFamilyProperty] == restoredClone->state[cloneFamilyProperty]
-            && restoredClone->state.hasProperty(cloneFamilyProperty)
-            && static_cast<int>(restoredClone->state[midiVelocityProperty]) == 50;
+        if (!reopened)
+            return fail(__LINE__);
+        reloaded.setProject(std::move(reopened), project);
+        auto* restoredClone = te::findClipForID(*reloaded.edit, cloneID);
+        auto* restoredSecond = te::findClipForID(*reloaded.edit, secondID);
+        if (!restoredClone || !restoredSecond || reloaded.cloneRole(*restoredClone) != CloneRole::parent
+            || reloaded.cloneRole(*restoredSecond) != CloneRole::child
+            || static_cast<int>(restoredSecond->state[midiVelocityProperty]) != 50)
+            return fail(__LINE__);
+
+        const auto hasBadgeColour = [](CloneRole role, ju::Colour colour) {
+            ju::Image badge(ju::Image::ARGB, 20, 16, true);
+            {
+                ju::Graphics graphics(badge);
+                paintCloneIcon(graphics, role, { 2, 2 });
+            }
+            for (int y = 0; y < badge.getHeight(); ++y)
+                for (int x = 0; x < badge.getWidth(); ++x)
+                    if (badge.getPixelAt(x, y).withAlpha(1.0f) == colour && badge.getPixelAt(x, y).getAlpha() > 128)
+                        return true;
+            return false;
+        };
+        if (!hasBadgeColour(CloneRole::parent, ju::Colours::gold) || !hasBadgeColour(CloneRole::child, ju::Colours::orange)
+            || hasBadgeColour(CloneRole::independent, ju::Colours::gold) || hasBadgeColour(CloneRole::independent, ju::Colours::orange))
+            return fail(__LINE__);
+
+        const auto wave = dir.getChildFile("sample.wav");
+        auto* audioTrack = gui.trackAt(sourceRow + 2);
+        if (!writeTestWave(wave) || !insertAudio(*audioTrack, wave, start))
+            return fail(__LINE__);
+        auto* audio = audioTrack->getClips().getFirst();
+        selectClip(*audio);
+        gui.editCursor = start + duration;
+        cloneButton.onClick();
+        auto* audioChild = dynamic_cast<te::WaveAudioClip*>(gui.selectedClip());
+        return audioChild && audioChild != audio && audioChild->getOriginalFile() == wave
+            && gui.cloneRole(*audio) == CloneRole::parent && gui.cloneRole(*audioChild) == CloneRole::child
+            && cloneButton.getButtonText() == "UNCLONE";
+
     }
 
     static bool testInspectorEffects(te::Engine& engine)
@@ -3420,6 +3538,14 @@ private:
         return members;
     }
 
+    CloneRole cloneRole(te::Clip& clip) const
+    {
+        const auto members = cloneMembers(clip);
+        if (members.size() < 2)
+            return CloneRole::independent;
+        return members.front() == &clip ? CloneRole::parent : CloneRole::child;
+    }
+
     inline static const juce::Identifier clipColourProperty { "simpleDawClipColour" };
     inline static const juce::Identifier clipShadeProperty { "simpleDawClipShade" };
 
@@ -4305,7 +4431,7 @@ private:
             if (clips.size() != 1 || !ordinaryClip(*clips.front()))
                 return false;
             auto& clip = *clips.front();
-            if (action == Action::clone && cloneMembers(clip).size() > 1)
+            if (action == Action::clone && cloneRole(clip) == CloneRole::child)
                 return true;
             auto* track = dynamic_cast<te::AudioTrack*>(clip.getTrack());
             return editCursor >= te::TimePosition{} && editCursor < te::Edit::getMaximumEditEnd()
@@ -4422,7 +4548,7 @@ private:
             if (!tracks)
             {
                 auto* clip = selectedClip();
-                if (action == Action::clone && cloneMembers(*clip).size() > 1)
+                if (action == Action::clone && cloneRole(*clip) == CloneRole::child)
                     uncloneClip(clip);
                 else
                     copyTimelineClip(clip, action == Action::clone);
@@ -5754,12 +5880,19 @@ private:
         if (height > 44)
         {
             paintLoopBoundaries(g, clip, positionInEdit.getStart(), bounds);
-            if (clip.state.hasProperty(cloneFamilyProperty) && cloneMembers(clip).size() > 1)
+            const auto role = cloneRole(clip);
+            if (role != CloneRole::independent && title.getWidth() >= 20)
             {
-                g.setColour(ju::Colours::orange);
-                g.setFont(ju::FontOptions(12.0f, ju::Font::bold));
-                g.drawText(ju::String::fromUTF8("↔ ") + clip.state[cloneFamilyProperty].toString(),
-                           bounds.getRight() - 43, bounds.getY() + 2, 40, 14, ju::Justification::centredRight);
+                const auto family = clip.state[cloneFamilyProperty].toString();
+                const bool hasNumber = title.getWidth() >= 55;
+                auto badge = title.removeFromRight(hasNumber ? 43 : 20);
+                const auto icon = badge.removeFromLeft(18);
+                paintCloneIcon(g, role, icon.getPosition().translated(0, 2));
+                if (hasNumber)
+                {
+                    g.setFont(ju::FontOptions(12.0f, ju::Font::bold));
+                    g.drawFittedText(family, badge, ju::Justification::centredLeft, 1);
+                }
             }
             if (auto* audio = dynamic_cast<te::AudioClipBase*>(&clip); audio && !missing && !audio->isLooping())
             {
@@ -6332,6 +6465,7 @@ private:
             inspectorDetails = "CLIP";
         auto* inspectorTrack = inspectorContext == EditingArea::tracks ? actionTrack() : nullptr;
         auto* inspectorClip = inspectorContext == EditingArea::timeline ? selectedClip() : nullptr;
+        const auto inspectorRole = inspectorClip ? cloneRole(*inspectorClip) : CloneRole::independent;
         if (inspectorTrack)
         {
             description = inspectorTrack->getName();
@@ -6352,14 +6486,19 @@ private:
             inspectorDetails += dynamic_cast<te::MidiClip*>(inspectorClip) ? "\nMIDI" : "\nAudio";
             if (auto* track = inspectorClip->getTrack())
                 inspectorDetails += "  " + track->getName();
-            if (inspectorClip->state.hasProperty(cloneFamilyProperty) && cloneMembers(*inspectorClip).size() > 1)
-                inspectorDetails += ju::String::fromUTF8("  ↔ ") + inspectorClip->state[cloneFamilyProperty].toString()
-                    + "." + inspectorClip->state[cloneOrderProperty].toString();
+            if (inspectorRole != CloneRole::independent)
+                inspectorDetails += (inspectorRole == CloneRole::parent ? "  Parent " : "  Clone ")
+                    + inspectorClip->state[cloneFamilyProperty].toString() + "." + inspectorClip->state[cloneOrderProperty].toString();
             inspectorDetails += "\nStart " + ju::String(position.getStart().inSeconds(), 3)
                 + " s\nLength " + ju::String(position.getLength().inSeconds(), 3) + " s";
         }
         else if (inspectorContext == EditingArea::timeline && !actionSelection.clips.empty())
             inspectorDetails += "\n" + ju::String(static_cast<int>(actionSelection.clips.size())) + " clips selected";
+        if (inspector.role != inspectorRole)
+        {
+            inspector.role = inspectorRole;
+            inspector.repaint();
+        }
         inspector.setText(inspectorDetails.isEmpty() ? "INSPECTOR" : "INSPECTOR\n" + inspectorDetails,
                           ju::dontSendNotification);
         const bool liveInspector = edit && !edit->getTransport().isRecording();
@@ -6547,7 +6686,7 @@ private:
             if (slot.action == UniversalAction::clone)
             {
                 auto* clip = selectedClip();
-                slot.button->setButtonText(clip && cloneMembers(*clip).size() > 1 ? "UNCLONE" : "CLONE");
+                slot.button->setButtonText(clip && cloneRole(*clip) == CloneRole::child ? "UNCLONE" : "CLONE");
             }
         }
 
