@@ -26,8 +26,10 @@ The dispatcher uses the active editing area. Timeline, Track List, Piano Roll, a
 | --- | --- | --- | --- |
 | EDIT | Cut, Copy, Paste, Delete clips | Cut, Copy, Paste, Delete notes | Cut, Copy, Paste, Delete hits |
 | MOVE | Move selected clips in time or across compatible tracks | Move notes in time by the snap increment or transpose by semitone | Move hits one sixteenth note or to an adjacent kit lane |
-| SIZE | Adjust the start or end of a single eligible clip | Adjust the start or end of a single eligible note | Disabled |
+| SIZE | No toolbar duration commands required. Existing mouse resizing and MIN/MAX remain available. | Adjust the start or end of a single eligible note | Disabled |
 | MODIFY | Duplicate, Clone/Unclone, Split, Trim | Disabled | Disabled |
+
+This matrix records the current requirements. The accepted v0.25.1 executable still enables the existing Timeline START/END commands for eligible clips. The separate MIN/MAX control adjusts track height.
 
 Track List focus supports track copy, paste, delete, and sibling movement subject to the existing eligibility rules. Duplicate works for ordinary tracks and drum lanes. The clip-specific Clone/Unclone, Split, and Trim commands are disabled in Track List focus. Global Undo and Redo are available while stopped.
 
