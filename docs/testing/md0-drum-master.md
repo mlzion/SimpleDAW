@@ -92,7 +92,8 @@ Linux x64 Release passed all 17 CTests under Xvfb. The drum grid, drum master, d
 The owner accepted D60, D62, and the three D63 live retests on the preceding Windows build. D44 was accepted from the measured integrated render. This follow-up implements the control changes approved during that retest.
 
 - The clip Inspector provides Loop ON/OFF beside the repeat count. Looping remains an explicit toggle and uses the existing repeat, resizing and Undo/Redo behavior.
-- Timeline has MOVE, EDIT, SIZE and MODIFY. MODIFY contains Duplicate, Clone/Unclone, Split and Trim. The single Clone/Unclone button reflects the selected clip's link state. Track List Duplicate remains available for ordinary tracks and drum lanes.
+- The accepted v0.25.1 build has Timeline MOVE, EDIT, SIZE and MODIFY. Current requirements omit Timeline toolbar duration commands and retain mouse resizing and MIN/MAX. [Current UAT matrix](../architecture.md#universal-actions-toolbar)
+- MODIFY contains Duplicate, Clone/Unclone, Split and Trim. The single Clone/Unclone button reflects the selected clip's link state. Track List Duplicate remains available for ordinary tracks and drum lanes.
 - Piano Roll has MOVE, EDIT and SIZE. MOVE slides notes by the current snap increment or transposes pitch by a semitone. SIZE adjusts the start or end of a single selected note. Established mouse editing remains available.
 - The Drum Pattern Editor has MOVE and EDIT. Horizontal moves shift one sixteenth note. Vertical moves follow kit row order. Each move preserves step spacing, velocity and subdivision timing and is a single undoable edit. Commands that would leave the pattern or kit, merge occupied hits, or move from an ambiguous layered source are disabled.
 
