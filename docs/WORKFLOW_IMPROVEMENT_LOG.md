@@ -18,3 +18,7 @@ Requirement: make the timeline edit cursor and time selection window selectable 
 ## W04 — Timeline snap increments and startup default
 Status: APPROVED; implementation pending. CUI integration PROPOSED.
 Ensure Timeline snap options include 1 Bar and 1/2 (half note), alongside 1/4, 1/8, 1/16, 1/32 and OFF (10 ms). Verify existing options before adding duplicates. Set 1 Bar as the default on program startup. Preserve meter-aware bar length and existing editor-specific snap behavior unless separately approved. Consider a CUI snap page during navigation/workflow testing; not yet authorized. No changes during active CUI0/CUI1 integration.
+
+## W05 — Track List visual cleanup
+Status: APPROVED; implementation pending.
+Remove Input 1 and Input 2 display icons from Track List rows; retain input configuration and routing functionality in Inspector. Restore approved compact ordinary track title format: track number immediately followed by A (Audio) or M (MIDI), space, user-assigned name (example: 3A Guitar 1). Do not append redundant Audio/MIDI type labels. Derive identifier from current track order and type; update after insert/delete/reorder, without changing stored user name. Preserve Master Drum Track and child lane numbering exemptions and existing functional controls. No implementation during CUI0/CUI1 acceptance.
