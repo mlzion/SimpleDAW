@@ -1,5 +1,11 @@
 # SimpleDAW for Windows x64
 
+## Accepted v0.25.1 Master Drum Track MD0
+
+Download and extract the full Windows x64 Release `/MD` ZIP. Launch `SimpleDAW-v0.25.1.exe` with the bundled `Drum Samples` directory beside it. Install the Microsoft Visual C++ v14 x64 Redistributable if a compatible version is absent. [Accepted v0.25.1 ZIP](https://github.com/mlzion/SimpleDAW/actions/runs/45701407785/artifacts/15063758284) · [Official Microsoft x64 download](https://aka.ms/vc14/vc_redist.x64.exe) · [Acceptance record](testing/md0-drum-master.md#final-acceptance)
+
+## Accepted v0.24.1 Piano Roll P0
+
 1. Install the [Microsoft Visual C++ v14 x64 Redistributable](https://aka.ms/vc14/vc_redist.x64.exe) if a compatible version is absent. Microsoft requires a version at least as recent as the build tools used for the app. [Microsoft support and version information](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist/)
 2. Download and extract the accepted Windows x64 ZIP, then open `SimpleDAW-v0.24.1.exe`. [SimpleDAW-v0.24.1-Windows-x64.zip](https://github.com/mlzion/SimpleDAW/actions/runs/45291914568/artifacts/14875361245) SimpleDAW has no installer. Microsoft runtime files are supplied by Windows and the separately installed Microsoft package.
 

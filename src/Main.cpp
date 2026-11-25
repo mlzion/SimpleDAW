@@ -3,6 +3,7 @@
 
 #include <JuceHeader.h>
 #include "MidiPlaybackNotes.h"
+#include <memory>
 #include <array>
 #include <cstdio>
 #include <numeric>
@@ -11,12 +12,14 @@
 
 namespace te = tracktion;
 namespace ju = juce;
+#include "DrumMaster.h"
 
 bool runEffectsFoundationTest(te::Engine&);
 
 namespace
 {
 #include "PianoRoll.h"
+#include "DrumPattern.h"
 
 constexpr int maxTracks = 24;
 constexpr const char* applicationTitle = "SimpleDAW v" SIMPLEDAW_RELEASE_VERSION;
@@ -191,6 +194,17 @@ public:
         setSize(540, 600);
     }
 
+    static std::unique_ptr<ju::DialogWindow> createDialog(ju::AudioDeviceManager& manager, ju::Component* owner)
+    {
+        ju::DialogWindow::LaunchOptions options;
+        options.dialogTitle = "Audio and MIDI devices";
+        options.dialogBackgroundColour = ju::Colours::darkgrey;
+        options.componentToCentreAround = owner;
+        options.useNativeTitleBar = true;
+        options.content.setOwned(new DeviceSetup(manager));
+        return std::unique_ptr<ju::DialogWindow>(options.create());
+    }
+
     static bool test(te::Engine& engine);
 
     void resized() override
@@ -200,7 +214,8 @@ public:
 #if JUCE_WINDOWS && ! JUCE_ASIO
         driverHelp.setBounds(area.removeFromTop(28));
 #endif
-        selector->setBounds(area);
+        if (selector)
+            selector->setBounds(area);
     }
 
 private:
@@ -235,50 +250,110 @@ bool DeviceSetup::test(te::Engine& engine)
     if (activeDevice == nullptr || manager.getCurrentAudioDeviceType() != "Hosted Device")
         return false;
 
-    const auto findDeviceBox = [](ju::Component& component, const auto& find) -> ju::ComboBox* {
+    const auto findCombo = [](ju::Component& component, const auto& match, const auto& find) -> ju::ComboBox* {
         for (auto* child : component.getChildren())
         {
-            if (auto* box = dynamic_cast<ju::ComboBox*>(child); box && box->getItemText(0) == "Hosted Device"
-                && box->indexOfItemId(-1) >= 0)
+            if (auto* box = dynamic_cast<ju::ComboBox*>(child); box && match(*box))
                 return box;
-            if (auto* box = find(*child, find))
+            if (auto* box = find(*child, match, find))
                 return box;
         }
         return nullptr;
     };
+    const auto isDeviceBox = [](const ju::ComboBox& box) {
+        return box.getItemText(0) == "Hosted Device" && box.indexOfItemId(-1) >= 0;
+    };
 
-    DeviceSetup setup(manager);
-    auto* audioChoice = findDeviceBox(*setup.selector, findDeviceBox);
+    const auto drainMessages = [] {
+        ju::MessageManager::getInstance()->runDispatchLoopUntil(40);
+    };
+    const ju::TemporaryFile project(".tracktionedit");
+    auto edit = te::createEmptyEdit(engine, project.getFile());
+    edit->getTransport().ensureContextAllocated();
+
+    auto dialog = createDialog(manager, nullptr);
+    dialog->enterModalState(true);
+    auto& setup = *static_cast<DeviceSetup*>(dialog->getContentComponent());
     const auto original = manager.getAudioDeviceSetup();
-    if (audioChoice == nullptr || audioChoice->getText() != original.outputDeviceName)
+
+    // Use the real message queue and the same visible dialog across repeated
+    // changes, with an Edit playback context attached to the DeviceManager.
+    for (int i = 0; i < 3; ++i)
+        for (int id : { -1, 1 })
+        {
+            auto* choice = findCombo(*setup.selector, isDeviceBox, findCombo);
+            if (!choice)
+                return false;
+            choice->setSelectedId(id, ju::sendNotificationAsync);
+            drainMessages();
+            choice = findCombo(*setup.selector, isDeviceBox, findCombo);
+            if (!choice || choice->getSelectedId() != id
+                || (manager.getCurrentAudioDevice() != nullptr) != (id == 1))
+                return false;
+        }
+    if (manager.getAudioDeviceSetup().outputDeviceName != original.outputDeviceName)
         return false;
 
-    // Drive the real audio ComboBox handler, then check the active choice without reopening Setup.
-    audioChoice->setSelectedId(-1, ju::dontSendNotification);
-    audioChoice->onChange();
-    if (manager.getCurrentAudioDevice() != nullptr || audioChoice->getSelectedId() != -1)
-        return false;
-    audioChoice->setSelectedId(1, ju::dontSendNotification);
-    audioChoice->onChange();
-    if (manager.getCurrentAudioDevice() == nullptr
-        || audioChoice->getText() != manager.getAudioDeviceSetup().outputDeviceName)
-        return false;
+    // A driver can fall back to its supported rate or buffer. A control
+    // rebuild must reflect that result without emitting another change.
+    struct ChangeCount final : ju::ComboBox::Listener
+    {
+        void comboBoxChanged(ju::ComboBox*) override { ++count; }
+        int count = 0;
+    };
+    for (const auto* pattern : { " Hz", " samples (" })
+    {
+        auto* choice = findCombo(*setup.selector, [pattern](const ju::ComboBox& box) {
+            return box.getItemText(0).contains(pattern);
+        }, findCombo);
+        if (!choice || choice->getSelectedId() <= 0)
+            return false;
+        const auto actual = choice->getSelectedId();
+        ChangeCount changes;
+        choice->addListener(&changes);
+        const ju::ScopeGuard removeListener { [&] { choice->removeListener(&changes); } };
+        constexpr int unsupported = 99999;
+        choice->addItem("Unsupported test value", unsupported);
+        choice->setSelectedId(unsupported, ju::sendNotificationAsync);
+        drainMessages();
+        drainMessages();
+        if (choice->getSelectedId() != actual || changes.count != 1)
+            return false;
+    }
 
-    activeDevice = manager.getCurrentAudioDevice();
+    auto* beforeRefreshDevice = manager.getCurrentAudioDevice();
     const auto beforeRefresh = manager.getAudioDeviceSetup();
     const auto saved = manager.createStateXml();
     setup.refresh.onClick();
+    drainMessages();
     const auto restored = manager.createStateXml();
-    if (manager.getCurrentAudioDevice() != activeDevice || manager.getAudioDeviceSetup() != beforeRefresh
+    if (manager.getCurrentAudioDevice() != beforeRefreshDevice || manager.getAudioDeviceSetup() != beforeRefresh
         || !saved || !restored || !saved->isEquivalentTo(restored.get(), true))
         return false;
 
     // MIDI inventory is refreshed independently of the selected audio endpoint.
     auto* midiInputs = setup.selector->getMidiInputSelectorListBox();
     const auto availableMidi = ju::MidiInput::getAvailableDevices();
-    return midiInputs && midiInputs->getListBoxModel()->getNumRows() == availableMidi.size();
+    if (!midiInputs || midiInputs->getListBoxModel()->getNumRows() != availableMidi.size())
+        return false;
+
+    dialog->closeButtonPressed();
+    drainMessages();
+    if (dialog->isVisible() || dialog->isCurrentlyModal())
+        return false;
+    dialog.reset();
+    const auto persisted = engine.getPropertyStorage().getXmlProperty(te::SettingID::audio_device_setup);
+    if (!persisted || !persisted->isEquivalentTo(saved.get(), true))
+        return false;
+    edit.reset();
+    manager.closeAudioDevice();
+    if (manager.initialise(2, 2, persisted.get(), false).isNotEmpty())
+        return false;
+    drainMessages();
+    return manager.getCurrentAudioDevice() && manager.getAudioDeviceSetup() == beforeRefresh;
 }
 
+#include "../tests/DrumMaster.inc"
 #include "EffectsEditor.h"
 #include "ContextToolbar.h"
 
@@ -343,8 +418,11 @@ private:
                 if (!next)
                     return report("Could not open project");
                 if (create)
-                {
                     next->ensureNumberOfAudioTracks(1);
+                if (!drumMaster::provision(*next, create))
+                    return report("Could not prepare the Master Drum Track");
+                if (create)
+                {
                     if (!te::EditFileOperations(*next).save(false, true, false))
                         return report("Could not create project file");
                 }
@@ -386,17 +464,38 @@ private:
         return track;
     }
 
+    bool hasPlaybackOutput()
+    {
+        auto& manager = engine.getDeviceManager().deviceManager;
+        auto* device = manager.getCurrentAudioDevice();
+        return device && device->isOpen() && device->isPlaying()
+            && manager.getAudioDeviceSetup().outputDeviceName.isNotEmpty()
+            && !manager.getAudioDeviceSetup().outputChannels.isZero()
+            && !device->getActiveOutputChannels().isZero()
+            && device->getCurrentSampleRate() > 0.0 && device->getCurrentBufferSizeSamples() > 0;
+    }
+
+    static constexpr auto noPlaybackOutputMessage =
+        "No active audio output. Select one in Options > Audio and MIDI Devices.";
+
+    void reportNoPlaybackOutput()
+    {
+        report(noPlaybackOutputMessage);
+    }
+
     void configureDevices()
     {
         if (edit && !ready())
             return;
 
-        ju::DialogWindow::LaunchOptions dialog;
-        dialog.dialogTitle = "Audio and MIDI devices";
-        dialog.dialogBackgroundColour = ju::Colours::darkgrey;
-        dialog.componentToCentreAround = this;
-        dialog.content.setOwned(new DeviceSetup(engine.getDeviceManager().deviceManager));
-        dialog.runModal();
+        if (deviceSetupDialog && deviceSetupDialog->isVisible())
+        {
+            deviceSetupDialog->toFront(true);
+            return;
+        }
+
+        deviceSetupDialog = DeviceSetup::createDialog(engine.getDeviceManager().deviceManager, this);
+        deviceSetupDialog->enterModalState(true);
     }
 
     void armInput(bool midi)
@@ -407,7 +506,7 @@ private:
         if (midi && playing)
             return;
         auto* track = trackAt(selection);
-        if (!track)
+        if (!track || drumMaster::isDrum(*track))
             return;
 
         if (const auto error = placementError(midi ? TrackType::midi : TrackType::audio, *track); error.isNotEmpty())
@@ -574,6 +673,10 @@ private:
         if (!edit)
             return;
 
+        if (auto* master = drumMaster::find(*edit); master && master->isProcessing(false))
+            for (auto* lane : drumMaster::lanes(*master))
+                if (auto* sampler = drumMaster::sampler(*lane))
+                    sampler->midiPanic();
         const bool recording = edit->getTransport().isRecording();
         edit->getTransport().stop(false, false);
         edit->getTransport().setPosition(editCursor);
@@ -670,6 +773,7 @@ private:
         auto clip = te::insertMIDIClip(track, file.getFileNameWithoutExtension(), { start, end });
         if (!clip)
             return ju::Result::fail("Could not create the MIDI clip");
+        setDrumClipChannel(*clip);
         for (const auto* event : *notes)
         {
             const auto& note = event->message;
@@ -740,6 +844,8 @@ private:
 
                 if (const int choice = menu.show(); choice > 0)
                 {
+                    if (drumMaster::isDrum(*track) && descriptions[choice - 1]->isInstrument)
+                        return report("Drum Master accepts audio effects only");
                     if (!descriptions[choice - 1]->isInstrument && audioInserts(track).size() >= 8)
                         return report("The track has eight or more audio inserts");
                     auto plugin = edit->getPluginCache().createNewPlugin(
@@ -771,6 +877,7 @@ private:
     }
 
     std::unique_ptr<ju::FileChooser> chooser;
+    std::unique_ptr<ju::DialogWindow> deviceSetupDialog;
 };
 
 #include "../tests/EffectsEditor.inc"
@@ -792,9 +899,10 @@ public:
             || command == "--midi-import-test" || command == "--midi-inspector-test"
             || command == "--inspector-loop-test" || command == "--inspector-clone-test"
             || command == "--inspector-effects-test" || command == "--audio-overlap-test"
-            || command == "--device-setup-test" || command == "--piano-roll-test";
+            || command == "--device-setup-test" || command == "--drum-master-test" || command == "--piano-roll-test" || command == "--drum-grid-test";
         engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW",
             std::make_unique<SimpleDawUIBehaviour>(), std::make_unique<SimpleDawEngineBehaviour>(testing));
+        engine->getPluginManager().createBuiltInType<drumMaster::Sampler>();
         if (testing)
         {
             bool passed = false;
@@ -806,8 +914,12 @@ public:
                 passed = MainGui::testUniversalActions(*engine);
             else if (command == "--context-toolbar-test")
                 passed = MainGui::testContextToolbar(*engine);
+            else if (command == "--drum-grid-test")
+                passed = MainGui::testDrumGrid(*engine);
+            else if (command == "--drum-master-test")
+                passed = runDrumMasterTest(*engine) && MainGui::testDrumUi(*engine) && MainGui::testDrumPlayback(*engine);
             else if (command == "--device-setup-test")
-                passed = DeviceSetup::test(*engine);
+                passed = DeviceSetup::test(*engine) && MainGui::testPlaybackOutput(*engine);
             else if (command == "--audio-overlap-test")
                 passed = MainGui::testAudioOverlap(*engine);
             else if (command == "--inspector-effects-test")

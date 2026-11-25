@@ -238,5 +238,214 @@
 
         if (!check(toggleViaMenu(true), "Options marks experimental mode as enabled"))
             return false;
-        return check(!popup.isVisible() && editGroupVisible(true) && !open(), "classic restoration closes popup");
+        return check(!popup.isVisible() && editGroupVisible(true) && !open(), "classic restoration closes popup")
+            && testDrumContextToolbar(engine);
+    }
+
+    static bool testDrumContextToolbar(te::Engine& engine)
+    {
+        using Edit = ContextToolbar::Edit;
+        const auto check = [](bool ok, const char* step) {
+            if (!ok)
+                std::fprintf(stderr, "Drum Context Toolbar: %s\n", step);
+            return ok;
+        };
+        const ju::TemporaryFile path(".tracktionedit"), settingsFile(".settings");
+        MainGui gui(engine, settingsFile.getFile());
+        gui.setVisible(true);
+        auto project = te::createEmptyEdit(engine, path.getFile());
+        auto* master = drumMaster::provision(*project, true);
+        if (!master)
+            return false;
+        gui.setProject(std::move(project), path.getFile());
+        gui.selectTrack(0);
+        if (!gui.insertMidi(4))
+            return false;
+        auto* clip = dynamic_cast<te::MidiClip*>(gui.selectedClip());
+        if (!clip)
+            return false;
+        const auto clipID = clip->itemID;
+        const auto notes = [&] { return gui.makeDrumEditor(*clip).notes(); };
+        auto model = gui.makeDrumEditor(*clip);
+        const auto inserted = model.insert({ { {}, 0.0, 0.0625, 36, 84 }, { {}, 0.0625, 0.0625, 36, 84 },
+                                             { {}, 0.25, 0.25, 38, 63 } }, "Context test drum hits");
+        if (!check(inserted.size() == 3, "create selected hits, including subdivisions"))
+            return false;
+        auto& popup = gui.contextToolbar;
+        const auto mouse = [](ju::Component& component, ju::Point<int> point, int buttons = 0) {
+            const auto now = ju::Time::getCurrentTime();
+            return ju::MouseEvent(ju::Desktop::getInstance().getMainMouseSource(), point.toFloat(),
+                ju::ModifierKeys(buttons), 0, 0, 0, 0, 0, &component, &component, now, point.toFloat(), now, 1, false);
+        };
+        const auto middle = ju::ModifierKeys::middleButtonModifier;
+        const auto openTrack = [&] {
+            gui.arrangement.mouseDown(mouse(gui.arrangement, { 30, 60 }, middle));
+            return popup.isVisible();
+        };
+        const auto drumPoint = ju::Point<int>(drumNameWidth + 15, drumHeaderHeight + 10);
+        const auto openDrum = [&] {
+            auto event = mouse(gui.drumEditor, drumPoint, middle);
+            gui.drumEditor.mouseDown(event);
+            gui.drumEditor.mouseUp(event);
+            return popup.isVisible();
+        };
+        const auto escape = [&] { return gui.keyPressed(ju::KeyPress(ju::KeyPress::escapeKey), &gui.drumEditor); };
+        const auto invoke = [&](Edit action) {
+            const auto i = std::find(ContextToolbar::edits.begin(), ContextToolbar::edits.end(), action)
+                - ContextToolbar::edits.begin();
+            popup.buttons[static_cast<size_t>(i)].onClick();
+        };
+        const auto matchesUAT = [&] {
+            for (size_t i = 0; i < ContextToolbar::edits.size(); ++i)
+                if (popup.buttons[i].isEnabled() != gui.canDispatch(contextAction(ContextToolbar::edits[i])))
+                    return false;
+            return true;
+        };
+
+        gui.setContextMode(true);
+        gui.selectTrack(0);
+        if (!check(openTrack() && matchesUAT()
+            && std::none_of(popup.buttons.begin(), popup.buttons.end(), [](const auto& b) { return b.isEnabled(); }),
+            "Master track stays protected across all Edit actions"))
+            return false;
+        invoke(Edit::remove);
+        if (!check(drumMaster::find(*gui.edit) == master, "disabled Delete preserves the Master track"))
+            return false;
+        gui.selectTrack(1);
+        if (!check(openTrack() && matchesUAT() && popup.buttons[1].isEnabled()
+            && !popup.buttons[0].isEnabled() && !popup.buttons[2].isEnabled() && !popup.buttons[3].isEnabled()
+            && escape(), "lane allows Delete only in Edit"))
+            return false;
+
+        gui.selection = 0;
+        gui.actionSelection.requestedArea = EditingArea::timeline;
+        gui.actionSelection.clips = { clipID };
+        if (!check(openTrack() && matchesUAT() && popup.buttons[2].isEnabled(), "Timeline can copy a Master pattern"))
+            return false;
+        invoke(Edit::copy);
+        const auto* clipClipboard = gui.clipClipboard.get();
+        if (!check(clipClipboard && clipClipboard->clips.size() == 1, "Timeline uses the clip clipboard"))
+            return false;
+        gui.editCursor = gui.barTime(5);
+        if (!check(openTrack() && popup.buttons[3].isEnabled(), "compatible Timeline paste on the Master is enabled"))
+            return false;
+        invoke(Edit::paste);
+        auto* placed = dynamic_cast<te::MidiClip*>(gui.selectedClip());
+        if (!check(placed && placed != clip && placed->getTrack() == master
+            && placed->getMidiChannel() == te::MidiChannel(drumMaster::midiChannel),
+            "Timeline Paste on the Master uses channel 10"))
+            return false;
+        gui.useHistory(false);
+        if (!check(master->getClips().size() == 1 && notes().size() == 3, "Timeline Undo removes the pasted pattern"))
+            return false;
+        gui.selectTrack(1);
+        gui.actionSelection.requestedArea = EditingArea::timeline;
+        if (!check(openTrack() && matchesUAT() && !popup.buttons[3].isEnabled() && escape(),
+            "Timeline cannot paste clips onto a drum lane"))
+            return false;
+
+        gui.openDrumEditor(*clip);
+        gui.actionSelection.requestedArea = EditingArea::timeline;
+        if (!check(openDrum() && gui.activeEditingArea() == EditingArea::timeline && escape(),
+            "middle-click over an unfocused drum grid preserves Timeline focus"))
+            return false;
+        gui.focusDrumEditor();
+        if (!check(openDrum() && matchesUAT()
+            && std::none_of(popup.buttons.begin(), popup.buttons.end(), [](const auto& b) { return b.isEnabled(); })
+            && escape(), "empty drum selection and clipboard disable Edit"))
+            return false;
+
+        const std::set<DrumStep> selection { { 36, 0 }, { 38, 1 } };
+        gui.drumSteps = selection;
+        gui.drumPasteStep = 4;
+        gui.updateControls();
+        const auto before = notes();
+        const auto beforeCursor = gui.editCursor;
+        const auto beforeView = gui.drumLeftQuarter;
+        const auto beforeLane = gui.drumFirstLane;
+        const auto focus = ju::Component::getCurrentlyFocusedComponent();
+        if (!check(openDrum() && matchesUAT() && gui.drumGridHasFocus() && gui.drumSteps == selection
+            && gui.drumPasteStep == 4 && gui.editCursor == beforeCursor
+            && ju::Component::getCurrentlyFocusedComponent() == focus, "open preserves selected hits and both edit cursors"))
+            return false;
+        const auto wheel = [&](ju::Component& component, ju::Point<int> point, float x, float y) {
+            component.mouseWheelMove(mouse(component, point), { x, y, false, false, false });
+        };
+        const auto wheelPoint = gui.getLocalPoint(&gui.drumEditor, drumPoint);
+        if (!check(gui.getComponentAt(wheelPoint) == &popup, "popup owns the wheel over the grid"))
+            return false;
+        gui.drumEditor.mouseWheelMove(mouse(gui.drumEditor, drumPoint), { 0.0f, 1.0f, false, true, true });
+        if (!check(popup.page == 0 && notes() == before, "an inertial wheel event on the previous grid target is ignored"))
+            return false;
+        wheel(popup, wheelPoint, 0.05f, 1.0f);
+        if (!check(popup.page == 1 && notes() == before && gui.drumLeftQuarter == beforeView
+            && gui.drumFirstLane == beforeLane, "wheel cycles without altering velocity or scroll position"))
+            return false;
+        wheel(popup, wheelPoint, 1.0f, 0.0f);
+        if (!check(popup.page == 1 && gui.drumLeftQuarter == beforeView, "horizontal wheel is consumed"))
+            return false;
+        wheel(popup, wheelPoint, 0.0f, -1.0f);
+        if (!check(escape() && !popup.isVisible() && gui.drumGridHasFocus() && gui.drumSteps == selection,
+            "first Escape dismisses Context UI and keeps the Drum Pattern Editor open"))
+            return false;
+        wheel(gui.drumEditor, drumPoint, 0.05f, 1.0f);
+        const auto louder = notes();
+        if (!check(louder.size() == 3 && louder[0].velocity == 96 && louder[1].velocity == 96
+            && louder[2].velocity == 75, "closed popup restores grouped velocity wheel behavior"))
+            return false;
+        gui.useHistory(false);
+        if (!check(notes() == before && openDrum(), "velocity Undo restores the original hits"))
+            return false;
+
+        invoke(Edit::copy);
+        if (!check(gui.drumClipboard.size() == 3 && gui.clipClipboard.get() == clipClipboard
+            && gui.drumSteps == selection && openDrum() && popup.buttons[3].isEnabled(),
+            "drum Copy preserves selection and uses a separate clipboard"))
+            return false;
+        gui.drumPasteStep = 5;
+        invoke(Edit::paste);
+        if (!check(!popup.isVisible() && notes() == before, "changed paste step invalidates the popup"))
+            return false;
+        gui.drumPasteStep = 4;
+        if (!openDrum())
+            return false;
+        invoke(Edit::paste);
+        const auto pasted = notes();
+        if (!check(pasted.size() == 6 && pasted[3].start == 1.0 && pasted[4].start == 1.0625
+            && pasted[4].velocity == 84 && pasted[5].pitch == 38, "drum Paste preserves subdivision timing and velocity"))
+            return false;
+        gui.useHistory(false);
+        if (!check(notes() == before, "one Undo removes the whole paste"))
+            return false;
+        gui.useHistory(true);
+        if (!check(notes().size() == 6, "Redo restores pasted hits"))
+            return false;
+        gui.useHistory(false);
+        gui.drumSteps = selection;
+        if (!openDrum())
+            return false;
+        gui.drumSteps.erase({ 36, 0 });
+        invoke(Edit::remove);
+        if (!check(!popup.isVisible() && notes() == before, "stale hit selection blocks Delete"))
+            return false;
+        gui.drumSteps = selection;
+        if (!openDrum())
+            return false;
+        invoke(Edit::cut);
+        if (!check(notes().empty() && gui.drumClipboard.size() == 3, "drum Cut copies and removes the hits"))
+            return false;
+        gui.useHistory(false);
+        gui.drumSteps = selection;
+        if (!check(notes() == before && openDrum(), "Undo restores Cut hits"))
+            return false;
+        invoke(Edit::remove);
+        if (!check(notes().empty() && gui.drumClipboard.size() == 3, "drum Delete leaves the clipboard intact"))
+            return false;
+        gui.useHistory(false);
+        if (!check(notes() == before && openDrum(), "Undo restores deleted hits"))
+            return false;
+        gui.menuItemSelected(enableDrumMasterMenuItem, 5);
+        invoke(Edit::paste);
+        return check(!popup.isVisible() && !gui.drumEditor.isVisible() && !master->isProcessing(false)
+            && notes() == before, "disabling the Master invalidates the drum popup without editing the pattern");
     }

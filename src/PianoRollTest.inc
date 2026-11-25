@@ -25,6 +25,13 @@
                 std::fprintf(stderr, "Piano Roll: %s\n", step);
             return passed;
         };
+        auto& devices = engine.getDeviceManager();
+        auto& hosted = devices.getHostedAudioDeviceInterface();
+        const te::HostedAudioDeviceInterface::Parameters parameters;
+        hosted.initialise(parameters);
+        hosted.prepareToPlay(parameters.sampleRate, parameters.blockSize);
+        devices.deviceManager.dispatchPendingMessages();
+        devices.dispatchPendingUpdates();
         const auto path = directory.getChildFile("notes.tracktionedit");
         MainGui gui(engine, directory.getChildFile("gui.settings"));
         gui.setProject(te::createEmptyEdit(engine, path), path);
@@ -159,8 +166,9 @@
                 return false;
             gesture(key, key);
             gui.play();
-            if (!check(listener.messages.size() == 6 && listener.messages.back().isNoteOff()
-                    && listener.messages.back().getChannel() == 5, "starting playback releases guide notes"))
+            if (!check(gui.edit->getTransport().isPlaying() && listener.messages.size() == 6
+                    && listener.messages.back().isNoteOff() && listener.messages.back().getChannel() == 5,
+                    "starting playback releases guide notes"))
                 return false;
             gui.stop();
             gui.updateControls();
@@ -177,8 +185,8 @@
             return false;
 
         gesture(at(0.1, 60), at(0.1, 60), right);
-        if (!check(roll.selectedNotes().size() == 2 && gui.canDispatch(Action::right) && !gui.canDispatch(Action::endPlus),
-                   "right click adds a note to UAT selection and disables group sizing"))
+        if (!check(roll.selectedNotes().size() == 2 && gui.canDispatch(Action::copy) && gui.canDispatch(Action::right) && !gui.canDispatch(Action::endPlus),
+                   "right click adds a note to selection, with MOVE and single-note SIZE rules"))
             return false;
         const auto original = notes();
         auto* midiTrack = gui.trackAt(midiRow);
@@ -187,7 +195,7 @@
                    "E1 focus cannot duplicate selected notes"))
             return false;
         gui.arrangement.mouseDoubleClick(mouse(gui.arrangement, clipPoint, clipPoint, left, 2));
-        if (!check(roll.selectedNotes().size() == 2 && gui.canDispatch(Action::duplicate),
+        if (!check(roll.selectedNotes().size() == 2 && gui.canDispatch(Action::copy) && !gui.canDispatch(Action::duplicate),
                    "switching back preserves the note selection and restores its commands"))
             return false;
         if (!check(!gui.canDispatch(Action::left), "an out-of-range move is rejected for the whole group"))
@@ -200,6 +208,10 @@
             return false;
         gui.actionSelection.requestedArea = EditingArea::window;
         gui.updateControls();
+        gui.dispatchAction(Action::up);
+        if (!check(notes()[0].pitch == 61 && notes()[1].pitch == 65, "UAT MOVE transposes the note group"))
+            return false;
+        gui.useHistory(false);
         gui.dispatchAction(Action::right);
         if (!check(near(notes()[0].start, 0.25) && near(notes()[1].start, 1.25), "atomic UAT group movement"))
             return false;
@@ -208,6 +220,16 @@
             return false;
         gui.useHistory(true);
         gesture(at(0.70, 60), at(0.70, 60));
+        gui.dispatchAction(Action::endPlus);
+        if (!check(near(notes()[0].length, 0.75), "UAT SIZE extends the selected note"))
+            return false;
+        gui.useHistory(false);
+        if (!check(near(notes()[0].length, 0.5), "one Undo restores note duration"))
+            return false;
+        gui.useHistory(true);
+        if (!check(near(notes()[0].length, 0.75), "one Redo restores the UAT size"))
+            return false;
+        gui.useHistory(false);
         gesture(at(0.74, 60), at(0.99, 60));
         if (!check(near(notes()[0].length, 0.75), "trailing-edge drag resizes a single note"))
             return false;
@@ -281,19 +303,23 @@
 
         const auto group = notes();
         roll.selected = { group[0].id, group[1].id };
-        if (!check(gui.canDispatch(Action::duplicate), "UAT Duplicate accepts a group with room to the right"))
+        if (!check(!gui.canDispatch(Action::duplicate) && gui.canDispatch(Action::copy),
+                   "Piano Roll offers Copy and Paste in place of Duplicate"))
             return false;
-        gui.dispatchAction(Action::duplicate);
-        const auto copies = roll.selectedNotes();
+        gui.dispatchAction(Action::copy);
         const auto shift = group.back().end() - group.front().start;
+        const auto groupPaste = at(group.back().end() + 0.01, 60).withY(roll.canvas().getY() + 7);
+        gesture(groupPaste, groupPaste);
+        gui.dispatchAction(Action::paste);
+        const auto copies = roll.selectedNotes();
         if (!check(copies.size() == 2 && near(copies[0].start, group[0].start + shift)
                 && near(copies[1].start, group[1].start + shift)
                 && copies[0].pitch == group[0].pitch && copies[1].velocity == group[1].velocity
                 && near(copies[1].length, group[1].length) && notes().size() == 4,
-                "Duplicate shifts by the group span and selects the copies"))
+                "Paste retains the group span and selects the copies"))
             return false;
         gui.useHistory(false);
-        if (!check(notes() == group, "one Undo removes the full duplicate group"))
+        if (!check(notes() == group, "one Undo removes the full pasted group"))
             return false;
 
         const auto saved = notes();
@@ -332,7 +358,7 @@
         gui.actionSelection.requestedArea = EditingArea::timeline;
         gui.editCursor = parent.getPosition().getEnd() + te::TimeDuration::fromSeconds(1);
         gui.updateControls();
-        gui.copyInspectedClip(true);
+        gui.dispatchAction(UniversalAction::clone);
         auto* clone = dynamic_cast<te::MidiClip*>(gui.selectedClip());
         if (!check(clone && gui.cloneMembers(*clone).size() == 2, "create linked MIDI clips"))
             return false;
@@ -370,9 +396,11 @@
                 "one Redo restores both edits"))
             return false;
 
-        gui.dispatchAction(UniversalAction::duplicate);
+        gui.dispatchAction(UniversalAction::copy);
+        roll.editCursor = 3.0;
+        gui.dispatchAction(UniversalAction::paste);
         if (!check(parentSequence.getNotes().size() == 3 && clonedSequence.getNotes().size() == 3,
-                   "linked Duplicate inserts into each member"))
+                   "linked Paste inserts into each member"))
             return false;
         gui.useHistory(false);
         if (!check(parentSequence.getNotes().size() == 2 && clonedSequence.getNotes().size() == 2,
@@ -396,7 +424,7 @@
 
         gui.actionSelection.requestedArea = EditingArea::timeline;
         gui.updateControls();
-        gui.toggleInspectorClone();
+        gui.dispatchAction(UniversalAction::clone);
         gui.focusPianoRoll();
         gui.dispatchAction(UniversalAction::remove);
         if (!check(gui.cloneMembers(*clone).size() == 1 && clonedSequence.getNotes().size() == 1
@@ -408,7 +436,10 @@
         parent.removeFromParent();
         gui.updateControls();
         roll.selected = { MidiNoteEditor(*clone).notes().front().id };
-        gui.dispatchAction(UniversalAction::down);
+        auto promoted = roll.selectedNotes().front();
+        --promoted.pitch;
+        if (!roll.mutation().change({ promoted }, "Test promoted pitch change"))
+            return false;
         if (!check(gui.cloneMembers(*clone).size() == 1
                 && MidiNoteEditor(*clone).notes().front().pitch == initial.front().pitch,
                 "promoted member remains editable when its parent is deleted"))
