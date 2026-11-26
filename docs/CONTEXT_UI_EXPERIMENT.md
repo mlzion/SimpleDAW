@@ -18,7 +18,7 @@ Status: approved experiment, not canonical product specification. Branch: experi
 
 ## Windows live acceptance
 
-The owner reported all C01–C10 passed on `790f532`, including appearance and usability. The v0.26.1 button-order correction awaits final Windows verification. [Acceptance record](testing/context-ui-foundation.md)
+The owner reported all C01–C10 passed on `790f532`, including appearance and usability. The owner also passed C11, the v0.26.1 Edit button-order correction, on `e1921ec`. [Acceptance record](testing/context-ui-foundation.md)
 
 - C01 classic mode unchanged; enable/disable experiment restores original controls.
 - C02 middle-click opens near cursor; selection and edit cursor unchanged.
@@ -30,6 +30,9 @@ The owner reported all C01–C10 passed on `790f532`, including appearance and u
 - C08 visual readability, icon recognition, mouse travel and comfort at 1920x1080; report subjective findings.
 - C09 existing regression suite passes; transport/recording restrictions preserved.
 
+- C10 passed on the integrated Windows baseline, as reported by the owner.
+- C11 verifies the corrected left-to-right Edit order Cut | Copy | Paste | Delete.
+
 ## Approved development sequence
 
 | Version | Phase | Popup page |
@@ -39,4 +42,4 @@ The owner reported all C01–C10 passed on `790f532`, including appearance and u
 | v0.26.3 | CUI3 | Size |
 | v0.26.4 | CUI4 | Modify |
 
-The v0.26.1 experimental milestone is subject to verification of the Edit button-order correction. Each later phase requires separate implementation authorization and Windows live acceptance before progression. Preserve the existing UAT command behavior as each group is moved into the popup. Navigation, other controls, interface cleanup, and workflow improvements remain for separate authorization. [Workflow Improvement Log](WORKFLOW_IMPROVEMENT_LOG.md)
+v0.26.1 is the first accepted experimental milestone. Each later phase requires separate implementation authorization and Windows live acceptance before progression. Preserve the existing UAT command behavior as each group is moved into the popup. Navigation, other controls, interface cleanup, and workflow improvements remain for separate authorization. [Workflow Improvement Log](WORKFLOW_IMPROVEMENT_LOG.md)

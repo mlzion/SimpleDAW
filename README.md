@@ -6,7 +6,7 @@ SimpleDAW is free and open-source software. Its original code is released under 
 
 ## v0.26.1 Context UI Foundation experiment
 
-This branch builds the v0.26.1 experimental milestone. The owner passed Windows live acceptance on the integrated baseline. The final verification build for the Edit button-order correction awaits authorization. [Experimental acceptance record](docs/testing/context-ui-foundation.md)
+v0.26.1 Context UI Foundation is the first accepted experimental milestone. The owner passed all C01–C11 Windows live checks. Extract the full Windows x64 Release `/MD` ZIP, launch `SimpleDAW-v0.26.1.exe`, and enable **Options → Experimental Context UI** to try the middle-click Edit popup. The ZIP includes matching source and the drum sample library. [Accepted Windows ZIP](https://github.com/mlzion/SimpleDAW/actions/runs/45731539661/artifacts/15077700824) · [Acceptance record](docs/testing/context-ui-foundation.md) · [Milestone tag](https://github.com/mlzion/SimpleDAW/tree/v0.26.1-experimental)
 
 ## Accepted v0.25.1 download for Windows x64
 

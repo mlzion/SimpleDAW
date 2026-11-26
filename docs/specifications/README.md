@@ -56,7 +56,7 @@ Drum Mixer remains sequenced after the normal Mixer. MDT recording and monitorin
 
 | Version | Phase | Scope |
 | --- | --- | --- |
-| v0.26.1 | CUI0/CUI1 | Edit · Context UI Foundation, subject to verification of the button-order correction |
+| v0.26.1 | CUI0/CUI1 | Edit · Context UI Foundation, accepted experimental milestone at `e1921ec` |
 | v0.26.2 | CUI2 | Move |
 | v0.26.3 | CUI3 | Size |
 | v0.26.4 | CUI4 | Modify |

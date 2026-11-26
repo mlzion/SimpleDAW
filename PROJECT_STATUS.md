@@ -1,16 +1,16 @@
 # SimpleDAW project status
 
-## v0.26.1 — Context UI Foundation CUI0/CUI1
+## v0.26.1 — Context UI Foundation CUI0/CUI1 — ACCEPTED EXPERIMENTAL MILESTONE
 
 The experimental branch adds a session-only Options toggle, a middle-click Edit popup and a labeled wheel test page. The popup uses the existing UAT availability and dispatch for Cut, Delete, Copy and Paste, and validates editing focus and selection again before dispatching. Classic mode is the startup default. [Implementation brief](docs/CONTEXT_UI_EXPERIMENT.md) · [Baseline command and input audit](docs/CONTEXT_UI_AUDIT.md)
 
-Debian 13 x64 Release (Clang 19, `-O1`, Xvfb) passed all 15 CTests, including the new context toolbar test. A native X11 smoke test verified the Options switch, middle-click opening, wheel wrap in both directions, Escape, outside click and classic restoration. Those results apply to the pre-MD0 experiment at `831a5e1`. Later Context UI phases await acceptance and separate authorization.
+Debian 13 x64 Release (Clang 19, `-O1`, Xvfb) passed all 15 CTests, including the new context toolbar test. A native X11 smoke test verified the Options switch, middle-click opening, wheel wrap in both directions, Escape, outside click and classic restoration. Those results apply to the pre-MD0 experiment at `831a5e1`. Later Context UI phases await separate authorization.
 
 The experiment integrates accepted MD0 from `main` at `94cb467`. The popup keeps the Master and lane UAT protections and routes focused Drum Pattern Editor actions through its own clipboard and hit handlers. It validates the pattern, selected hits and paste step, and consumes the wheel while open, including inertial events addressed to the grid. The accepted menu changes are recorded in the [command and input audit](docs/CONTEXT_UI_AUDIT.md#accepted-md0-changes).
 
 The integrated Debian 13 x64 Release build (Clang 19, `-O1`, Xvfb) passed all 18 CTests, including grid, voices, Master routing and playback, and the extended Context UI regression. A native X11 smoke test passed for the Options switch, popup wheel cycling, dismissal and classic restoration.
 
-The owner passed Windows live acceptance C01–C10 at `790f532`. The popup now displays Cut | Copy | Paste | Delete. All 18 Linux CTests and the v0.26.1 native X11 popup smoke test passed on the correction. Final acceptance of the first experimental milestone awaits Windows verification of that correction. The final Windows x64 Release `/MD` build awaits authorization. [Windows acceptance record](docs/testing/context-ui-foundation.md) · [Approved development sequence](docs/specifications/README.md#context-ui-experimental-development-plan) [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
+The owner passed C01–C10 at `790f532` and C11 at `e1921ec`. The accepted Edit order is Cut | Copy | Paste | Delete. The accepted revision passed all 18 Linux and Windows x64 Release `/MD` CTests, runtime dependency verification, and isolated Windows startup and shutdown. The first experimental milestone is tagged `v0.26.1-experimental` at `e1921ec`. [Acceptance record](docs/testing/context-ui-foundation.md) · [Accepted ZIP and matching source](https://github.com/mlzion/SimpleDAW/actions/runs/45731539661/artifacts/15077700824) · [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
 
 ## v0.25.1 — Master Drum Track MD0 — ACCEPTED
 
