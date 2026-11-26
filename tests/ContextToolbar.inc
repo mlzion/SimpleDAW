@@ -581,8 +581,11 @@
         }
         const auto arrowPoints = [](auto& button) {
             ju::Image image(ju::Image::RGB, button.getWidth(), button.getHeight(), true);
-            ju::Graphics graphics(image);
-            button.paintButton(graphics, false, false);
+            {
+                // Native images finish the drawing session when Graphics is destroyed.
+                ju::Graphics graphics(image);
+                button.paintButton(graphics, false, false);
+            }
             const auto centre = button.getLocalBounds().getCentre();
             const auto count = [&](int x, int y) {
                 int bright = 0;
@@ -595,6 +598,9 @@
         };
         const auto finer = arrowPoints(popup.finer);
         const auto coarser = arrowPoints(popup.coarser);
+        if (finer.first <= finer.second || coarser.second <= coarser.first)
+            std::fprintf(stderr, "Chevron tip pixels (left/right) finer %d/%d, coarser %d/%d\n",
+                finer.first, finer.second, coarser.first, coarser.second);
         if (!check(finer.first > finer.second && coarser.second > coarser.first,
             "snap arrows paint opposing vector tips in the existing hit areas"))
             return false;
@@ -664,8 +670,10 @@
         const auto windowHit = window.getPosition() + ju::Point<int>(8, window.getHeight() / 2);
         const auto paintPixel = [&](ju::Point<int> point) {
             ju::Image image(ju::Image::RGB, gui.arrangement.getWidth(), gui.arrangement.getHeight(), true);
-            ju::Graphics graphics(image);
-            gui.paintArrangement(graphics);
+            {
+                ju::Graphics graphics(image);
+                gui.paintArrangement(graphics);
+            }
             return image.getPixelAt(point.x, point.y);
         };
         const auto previousView = gui.viewStart;

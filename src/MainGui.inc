@@ -1931,10 +1931,15 @@ public:
 
     static bool testInspectorClone(te::Engine& engine)
     {
+        const auto checkpoint = [](const char* operation) {
+            std::fprintf(stderr, "Inspector Clone: %s\n", operation);
+            std::fflush(stderr);
+        };
         const auto fail = [](int line) {
             std::fprintf(stderr, "Inspector regression failed at MainGui.inc:%d\n", line);
             return false;
         };
+        checkpoint("create fixture and GUI");
         const auto dir = ju::File::getSpecialLocation(ju::File::tempDirectory)
             .getNonexistentChildFile("SimpleDAW-inspector-clone", {});
         if (dir.createDirectory().failed())
@@ -1964,6 +1969,7 @@ public:
         auto& cloneButton = *static_cast<ju::TextButton*>(modify[1]);
         if (!cloneButton.isEnabled() || cloneButton.getButtonText() != "CLONE")
             return fail(__LINE__);
+        checkpoint("create linked MIDI child");
         gui.dispatchAction(UniversalAction::clone);
         auto* clone = gui.selectedClip();
         if (!clone || clone == source.get() || clone->getPosition().getStart() != gui.editCursor
@@ -1972,6 +1978,7 @@ public:
         if (cloneButton.getButtonText() != "UNCLONE" || !cloneButton.isEnabled())
             return fail(__LINE__);
         const auto cloneID = clone->itemID;
+        checkpoint("move linked child, Undo and Redo");
         const auto move = gui.movePlan({ clone }, 1, duration);
         if (!gui.applyClipChanges(move, "Move clone") || clone->getTrack() != gui.trackAt(sourceRow + 1)
             || source->getPosition().getStart() != start || !gui.movePlan({ clone }, 1, {}).empty())
@@ -1982,6 +1989,7 @@ public:
         gui.useHistory(true);
         if (clone->getTrack() != gui.trackAt(sourceRow + 1))
             return fail(__LINE__);
+        checkpoint("apply linked Inspector velocity, colour and mute");
         gui.setMidiInspectorValue(midiVelocityProperty, 50, 100, "Velocity");
         if (static_cast<int>(source->state.getProperty(midiVelocityProperty)) != 50)
             return fail(__LINE__);
@@ -1994,6 +2002,7 @@ public:
         if (!source->isMuted() || !clone->isMuted())
             return fail(__LINE__);
         gui.useHistory(false);
+        checkpoint("check linked Split/Trim restrictions and unlink");
         for (auto* linked : std::array<te::Clip*, 2> { source.get(), clone })
         {
             const auto range = linked->getPosition().time;
@@ -2012,12 +2021,14 @@ public:
         gui.useHistory(false);
         if (gui.cloneMembers(*source).size() != 2)
             return fail(__LINE__);
+        checkpoint("remove and restore original parent");
         gui.edit->getUndoManager().beginNewTransaction("Remove parent");
         source->removeFromParent();
         if (gui.cloneMembers(*clone).size() != 1 || gui.cloneMembers(*clone).front() != clone)
             return fail(__LINE__);
         gui.useHistory(false);
         gui.editCursor = start + duration * 6;
+        checkpoint("duplicate clip independently and save");
         gui.dispatchAction(UniversalAction::duplicate);
         auto* duplicate = gui.selectedClip();
         if (!duplicate || duplicate->itemID == cloneID || gui.cloneMembers(*duplicate).size() != 1
@@ -2033,6 +2044,7 @@ public:
         };
         if (gui.cloneRole(*duplicate) != CloneRole::independent || gui.inspector.role != CloneRole::independent)
             return fail(__LINE__);
+        checkpoint("clone from parent and check history");
         selectClip(*source);
         gui.editCursor = start + duration * 7;
         if (cloneButton.getButtonText() != "CLONE" || gui.inspector.role != CloneRole::parent)
@@ -2052,6 +2064,7 @@ public:
         if (!secondClone || gui.cloneMembers(*source).size() != 3)
             return fail(__LINE__);
 
+        checkpoint("unclone child and undo");
         selectClip(*secondClone);
         cloneButton.onClick();
         if (gui.cloneRole(*secondClone) != CloneRole::independent || gui.cloneMembers(*source).size() != 2)
@@ -2060,6 +2073,7 @@ public:
         if (gui.cloneRole(*secondClone) != CloneRole::child || gui.cloneMembers(*source).size() != 3)
             return fail(__LINE__);
 
+        checkpoint("delete parent, verify promotion and save");
         const auto clonePosition = clone->getPosition();
         const auto secondPosition = secondClone->getPosition();
         selectClip(*source);
@@ -2078,6 +2092,7 @@ public:
         if (gui.cloneRole(*clone) != CloneRole::parent || cloneButton.getButtonText() != "CLONE" || !gui.save())
             return fail(__LINE__);
 
+        checkpoint("reopen project and verify restored clone family");
         MainGui reloaded(engine, dir.getChildFile("reload.settings"));
         auto reopened = te::loadEditFromFile(engine, project);
         if (!reopened)
@@ -2090,6 +2105,7 @@ public:
             || static_cast<int>(restoredSecond->state[midiVelocityProperty]) != 50)
             return fail(__LINE__);
 
+        checkpoint("render Inspector parent and child badges");
         const auto hasBadgeColour = [](CloneRole role, ju::Colour colour) {
             ju::Image badge(ju::Image::ARGB, 20, 16, true);
             {
@@ -2106,6 +2122,7 @@ public:
             || hasBadgeColour(CloneRole::independent, ju::Colours::gold) || hasBadgeColour(CloneRole::independent, ju::Colours::orange))
             return fail(__LINE__);
 
+        checkpoint("insert source WAV and clone audio");
         const auto wave = dir.getChildFile("sample.wav");
         auto* audioTrack = gui.trackAt(sourceRow + 2);
         if (!writeTestWave(wave) || !insertAudio(*audioTrack, wave, start))
@@ -2115,10 +2132,13 @@ public:
         gui.editCursor = start + duration;
         cloneButton.onClick();
         auto* audioChild = dynamic_cast<te::WaveAudioClip*>(gui.selectedClip());
-        return audioChild && audioChild != audio && audioChild->getOriginalFile() == wave
+        const bool passed = audioChild && audioChild != audio && audioChild->getOriginalFile() == wave
             && gui.cloneRole(*audio) == CloneRole::parent && gui.cloneRole(*audioChild) == CloneRole::child
             && cloneButton.getButtonText() == "UNCLONE";
-
+        if (!passed)
+            return fail(__LINE__);
+        checkpoint("checks passed, releasing test fixtures");
+        return true;
     }
 
     static bool testInspectorEffects(te::Engine& engine)

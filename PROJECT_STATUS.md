@@ -10,6 +10,8 @@ Debian 13 x64 Release (Clang 19, `-O1`, Xvfb) passed all 18 CTests and three add
 
 Initial Windows x64 Release `/MD` CI at `d38f90b` passed all 18 CTests and portable verification. The owner reported eight clean passes, two passes with findings, and two failures in live testing. Corrections address snap chevrons, post-layout Piano Roll visibility, larger ruler handles, and usable short time-window drags under coarse snap. [Windows acceptance and findings](docs/testing/context-ui-move.md)
 
+Correction CI at `c9a89fd` passed 16 of 18 Windows CTests. The chevron test now closes the graphics session before retrieving pixels. The Inspector Clone fail-fast remains unclassified from the available log. Checkpoints and a Windows-only diagnostic path are ready for the next authorized run. All 18 Linux CTests and 20 additional runs each of the two focused cases passed. [Failure investigation](docs/testing/context-ui-move.md#windows-failure-investigation-at-c9a89fd)
+
 ## v0.26.1 — Context UI Foundation CUI0/CUI1 — ACCEPTED EXPERIMENTAL MILESTONE
 
 The experimental branch adds a session-only Options toggle, a middle-click Edit popup and a labeled wheel test page. The popup uses the existing UAT availability and dispatch for Cut, Delete, Copy and Paste, and validates editing focus and selection again before dispatching. Classic mode is the startup default. [Implementation brief](docs/CONTEXT_UI_EXPERIMENT.md) · [Baseline command and input audit](docs/CONTEXT_UI_AUDIT.md)

@@ -35,7 +35,46 @@ jobs:
       - name: Build
         run: cmake --build archive-build --config Release --parallel 2
       - name: Smoke test
+        id: smoke
         run: ctest --test-dir archive-build -C Release --output-on-failure
+      - name: Repeat Inspector Clone regression
+        id: clone_repeat
+        run: ctest --test-dir archive-build -C Release -R '^inspector_clone$' --repeat until-fail:10 --output-on-failure
+      - name: Diagnose Inspector Clone fail-fast
+        if: failure() && (steps.smoke.outcome == 'failure' || steps.clone_repeat.outcome == 'failure')
+        shell: pwsh
+        run: |
+          $failed = 'archive-build/Testing/Temporary/LastTestsFailed.log'
+          if (!(Test-Path $failed) -or !(Select-String -LiteralPath $failed -Pattern ':inspector_clone$' -Quiet)) { exit 0 }
+          $exe = (Get-Content -LiteralPath archive-build/SimpleDAW-Release.json -Raw | ConvertFrom-Json).executable
+          $exeName = [regex]::Escape((Split-Path -Leaf $exe))
+          Get-WinEvent -FilterHashtable @{
+            LogName = 'Application'; Id = 1000, 1001; StartTime = (Get-Date).AddMinutes(-10)
+          } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match $exeName } |
+            Select-Object -First 6 -ExpandProperty Message
+          $cdb = Get-Item "C:/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe" -ErrorAction SilentlyContinue
+          if (!$cdb) {
+            Write-Warning 'Windows SDK cdb is unavailable. Review the Inspector Clone checkpoints and Application event log above.'
+            exit 0
+          }
+          $debugDir = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/SimpleDAW-Clone-Debug" -Force
+          $commands = Join-Path $debugDir 'commands.txt'
+          @'
+          sxe -c ".lastevent; .exr -1; .ecxr; kv; q" 0xc0000409
+          g
+          '@ | Set-Content -LiteralPath $commands -Encoding ascii
+          $log = Join-Path $debugDir 'debugger.log'
+          $debugger = Start-Process -FilePath $cdb.FullName -ArgumentList @(
+            '-G', '-cf', ('"{0}"' -f $commands), ('"{0}"' -f $exe), '--inspector-clone-test'
+          ) -RedirectStandardOutput $log -RedirectStandardError (Join-Path $debugDir 'debugger-error.log') -PassThru
+          if (!$debugger.WaitForExit(60000)) {
+            taskkill.exe /PID $debugger.Id /T /F
+            Write-Warning 'Inspector Clone diagnostic rerun exceeded 60 seconds.'
+          }
+          Get-Content -LiteralPath $log
+          Get-Content -LiteralPath (Join-Path $debugDir 'debugger-error.log')
+
       - name: Verify version, runtime imports and isolated startup
         id: release
         run: |

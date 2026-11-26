@@ -901,6 +901,8 @@ public:
             || command == "--inspector-loop-test" || command == "--inspector-clone-test"
             || command == "--inspector-effects-test" || command == "--audio-overlap-test"
             || command == "--device-setup-test" || command == "--drum-master-test" || command == "--piano-roll-test" || command == "--drum-grid-test";
+        if (command == "--inspector-clone-test")
+            std::fputs("Inspector Clone: initialize test engine\n", stderr);
         engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW",
             std::make_unique<SimpleDawUIBehaviour>(), std::make_unique<SimpleDawEngineBehaviour>(testing));
         engine->getPluginManager().createBuiltInType<drumMaster::Sampler>();
@@ -926,7 +928,10 @@ public:
             else if (command == "--inspector-effects-test")
                 passed = MainGui::testInspectorEffects(*engine);
             else if (command == "--inspector-clone-test")
+            {
                 passed = MainGui::testInspectorClone(*engine);
+                std::fputs("Inspector Clone: fixture returned, shutting down test engine\n", stderr);
+            }
             else if (command == "--inspector-loop-test")
                 passed = MainGui::testInspectorLoop(*engine);
             else if (command == "--midi-inspector-test")
