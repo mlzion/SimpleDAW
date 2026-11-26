@@ -44,7 +44,7 @@ Middle-click has no application edit binding on these workspace surfaces at base
 - Middle-click a workspace surface to open Edit against the existing effective editing area and selection. Existing controls embedded within a workspace retain their own input handling.
 - The popup opens near the pointer inside the visible application and the pointer monitor's work area. Wheel cycles Edit and the labeled non-operational Wheel test page while the popup is open.
 - Middle-click, right-click, outside click or Escape dismisses. Outside clicks inside the application are consumed. The popup also dismisses when its context changes or the application loses focus.
-- Cut, Delete, Copy and Paste use the UAT rules in the table. The permanent Edit group is hidden in experimental mode. The remaining permanent groups, history, Inspector, navigation, transport and menus are available.
+- Edit displays Cut | Copy | Paste | Delete from left to right and uses the UAT rules in the table. The permanent Edit group is hidden in experimental mode. The remaining permanent groups, history, Inspector, navigation, transport and menus are available.
 
 ## Accepted MD0 changes
 

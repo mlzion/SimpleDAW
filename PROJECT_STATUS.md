@@ -1,6 +1,6 @@
 # SimpleDAW project status
 
-## Context UI experiment — CUI0/CUI1
+## v0.26.1 — Context UI Foundation CUI0/CUI1
 
 The experimental branch adds a session-only Options toggle, a middle-click Edit popup and a labeled wheel test page. The popup uses the existing UAT availability and dispatch for Cut, Delete, Copy and Paste, and validates editing focus and selection again before dispatching. Classic mode is the startup default. [Implementation brief](docs/CONTEXT_UI_EXPERIMENT.md) · [Baseline command and input audit](docs/CONTEXT_UI_AUDIT.md)
 
@@ -8,7 +8,9 @@ Debian 13 x64 Release (Clang 19, `-O1`, Xvfb) passed all 15 CTests, including th
 
 The experiment integrates accepted MD0 from `main` at `94cb467`. The popup keeps the Master and lane UAT protections and routes focused Drum Pattern Editor actions through its own clipboard and hit handlers. It validates the pattern, selected hits and paste step, and consumes the wheel while open, including inertial events addressed to the grid. The accepted menu changes are recorded in the [command and input audit](docs/CONTEXT_UI_AUDIT.md#accepted-md0-changes).
 
-The integrated Debian 13 x64 Release build (Clang 19, `-O1`, Xvfb) passed all 18 CTests, including grid, voices, Master routing and playback, and the extended Context UI regression. A native X11 smoke test passed for the Options switch, popup wheel cycling, dismissal and classic restoration. Windows CI and live acceptance await authorization. [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
+The integrated Debian 13 x64 Release build (Clang 19, `-O1`, Xvfb) passed all 18 CTests, including grid, voices, Master routing and playback, and the extended Context UI regression. A native X11 smoke test passed for the Options switch, popup wheel cycling, dismissal and classic restoration.
+
+The owner passed Windows live acceptance C01–C10 at `790f532`. The popup now displays Cut | Copy | Paste | Delete. All 18 Linux CTests and the v0.26.1 native X11 popup smoke test passed on the correction. Final acceptance of the first experimental milestone awaits Windows verification of that correction. The final Windows x64 Release `/MD` build awaits authorization. [Windows acceptance record](docs/testing/context-ui-foundation.md) · [Approved development sequence](docs/specifications/README.md#context-ui-experimental-development-plan) [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
 
 ## v0.25.1 — Master Drum Track MD0 — ACCEPTED
 

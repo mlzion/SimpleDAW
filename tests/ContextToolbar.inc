@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: 2026 the SimpleDAW contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 
+    static auto& contextEditButton(ContextToolbar& popup, ContextToolbar::Edit action)
+    {
+        const auto index = std::find(ContextToolbar::edits.begin(), ContextToolbar::edits.end(), action)
+            - ContextToolbar::edits.begin();
+        return popup.buttons[static_cast<size_t>(index)];
+    }
+
     static bool testContextToolbar(te::Engine& engine)
     {
         using EditAction = ContextToolbar::Edit;
@@ -65,11 +72,7 @@
             return false;
         };
         const auto escape = [&] { return gui.keyPressed(ju::KeyPress(ju::KeyPress::escapeKey), &gui); };
-        const auto invoke = [&](EditAction action) {
-            const auto index = std::find(ContextToolbar::edits.begin(), ContextToolbar::edits.end(), action)
-                - ContextToolbar::edits.begin();
-            popup.buttons[static_cast<size_t>(index)].onClick();
-        };
+        const auto invoke = [&](EditAction action) { contextEditButton(popup, action).onClick(); };
         const auto availabilityMatchesUAT = [&] {
             for (size_t i = 0; i < ContextToolbar::edits.size(); ++i)
                 if (popup.buttons[i].isEnabled() != gui.canDispatch(contextAction(ContextToolbar::edits[i])))
@@ -92,8 +95,18 @@
         if (!check(editGroupVisible(false) && gui.actionGroups[1].frame.isVisible() && open()
             && gui.activeEditingArea() == EditingArea::timeline && gui.actionSelection.clips == originalSelection
             && gui.editCursor == seconds(6) && ju::Component::getCurrentlyFocusedComponent() == focus
-            && availabilityMatchesUAT() && !popup.buttons.back().isEnabled(), "opening over a track keeps timeline context"))
+            && availabilityMatchesUAT() && !contextEditButton(popup, EditAction::paste).isEnabled(), "opening over a track keeps timeline context"))
             return false;
+        const std::array<ju::String, 4> labels { "Cut", "Copy", "Paste", "Delete" };
+        int previousX = -1;
+        for (size_t i = 0; i < labels.size(); ++i)
+        {
+            const auto& button = popup.buttons[i];
+            if (!check(button.getButtonText() == labels[i] && button.getX() > previousX,
+                       "Edit displays Cut, Copy, Paste and Delete from left to right"))
+                return false;
+            previousX = button.getX();
+        }
         const auto anchor = popup.panel;
         if (!check(gui.getComponentAt(1, 1) == &popup
             && popup.isParentOf(gui.getComponentAt(popup.buttons.front().getBounds().getCentre())),
@@ -152,7 +165,7 @@
 
         invoke(EditAction::copy);
         if (!check(!popup.isVisible() && gui.actionSelection.clips == originalSelection && open()
-            && popup.buttons.back().isEnabled(), "popup Copy populates the UAT clipboard"))
+            && contextEditButton(popup, EditAction::paste).isEnabled(), "popup Copy populates the UAT clipboard"))
             return false;
         invoke(EditAction::paste);
         if (!check(track->getClips().size() == 4, "popup Paste pastes both clips"))
@@ -183,7 +196,7 @@
             return false;
 
         gui.selectTrack(0);
-        if (!check(open() && availabilityMatchesUAT() && !popup.buttons.front().isEnabled(),
+        if (!check(open() && availabilityMatchesUAT() && !contextEditButton(popup, EditAction::cut).isEnabled(),
             "Track List disables Cut"))
             return false;
         invoke(EditAction::cut);
@@ -191,7 +204,7 @@
             return false;
         invoke(EditAction::copy);
         gui.selectTrack(1);
-        if (!check(open() && popup.buttons.back().isEnabled() && availabilityMatchesUAT(), "Track List clipboard"))
+        if (!check(open() && contextEditButton(popup, EditAction::paste).isEnabled() && availabilityMatchesUAT(), "Track List clipboard"))
             return false;
         invoke(EditAction::paste);
         if (!check(gui.trackCount() == 3, "popup Paste duplicates a track below the anchor"))
@@ -218,7 +231,7 @@
         if (!check(!gui.pianoRoll.selected.empty() && popup.isVisible() && availabilityMatchesUAT(), "Piano Roll availability"))
             return false;
         invoke(EditAction::copy);
-        if (!check(gui.pianoRoll.clipboard.size() == 1 && open() && popup.buttons.back().isEnabled(),
+        if (!check(gui.pianoRoll.clipboard.size() == 1 && open() && contextEditButton(popup, EditAction::paste).isEnabled(),
             "Piano Roll uses its own clipboard"))
             return false;
         const auto noteWheel = mouse(popup, popup.panel.getCentre(), 0);
@@ -290,11 +303,7 @@
             return popup.isVisible();
         };
         const auto escape = [&] { return gui.keyPressed(ju::KeyPress(ju::KeyPress::escapeKey), &gui.drumEditor); };
-        const auto invoke = [&](Edit action) {
-            const auto i = std::find(ContextToolbar::edits.begin(), ContextToolbar::edits.end(), action)
-                - ContextToolbar::edits.begin();
-            popup.buttons[static_cast<size_t>(i)].onClick();
-        };
+        const auto invoke = [&](Edit action) { contextEditButton(popup, action).onClick(); };
         const auto matchesUAT = [&] {
             for (size_t i = 0; i < ContextToolbar::edits.size(); ++i)
                 if (popup.buttons[i].isEnabled() != gui.canDispatch(contextAction(ContextToolbar::edits[i])))
@@ -312,22 +321,22 @@
         if (!check(drumMaster::find(*gui.edit) == master, "disabled Delete preserves the Master track"))
             return false;
         gui.selectTrack(1);
-        if (!check(openTrack() && matchesUAT() && popup.buttons[1].isEnabled()
-            && !popup.buttons[0].isEnabled() && !popup.buttons[2].isEnabled() && !popup.buttons[3].isEnabled()
+        if (!check(openTrack() && matchesUAT() && contextEditButton(popup, Edit::remove).isEnabled()
+            && !contextEditButton(popup, Edit::cut).isEnabled() && !contextEditButton(popup, Edit::copy).isEnabled() && !contextEditButton(popup, Edit::paste).isEnabled()
             && escape(), "lane allows Delete only in Edit"))
             return false;
 
         gui.selection = 0;
         gui.actionSelection.requestedArea = EditingArea::timeline;
         gui.actionSelection.clips = { clipID };
-        if (!check(openTrack() && matchesUAT() && popup.buttons[2].isEnabled(), "Timeline can copy a Master pattern"))
+        if (!check(openTrack() && matchesUAT() && contextEditButton(popup, Edit::copy).isEnabled(), "Timeline can copy a Master pattern"))
             return false;
         invoke(Edit::copy);
         const auto* clipClipboard = gui.clipClipboard.get();
         if (!check(clipClipboard && clipClipboard->clips.size() == 1, "Timeline uses the clip clipboard"))
             return false;
         gui.editCursor = gui.barTime(5);
-        if (!check(openTrack() && popup.buttons[3].isEnabled(), "compatible Timeline paste on the Master is enabled"))
+        if (!check(openTrack() && contextEditButton(popup, Edit::paste).isEnabled(), "compatible Timeline paste on the Master is enabled"))
             return false;
         invoke(Edit::paste);
         auto* placed = dynamic_cast<te::MidiClip*>(gui.selectedClip());
@@ -340,7 +349,7 @@
             return false;
         gui.selectTrack(1);
         gui.actionSelection.requestedArea = EditingArea::timeline;
-        if (!check(openTrack() && matchesUAT() && !popup.buttons[3].isEnabled() && escape(),
+        if (!check(openTrack() && matchesUAT() && !contextEditButton(popup, Edit::paste).isEnabled() && escape(),
             "Timeline cannot paste clips onto a drum lane"))
             return false;
 
@@ -399,7 +408,7 @@
 
         invoke(Edit::copy);
         if (!check(gui.drumClipboard.size() == 3 && gui.clipClipboard.get() == clipClipboard
-            && gui.drumSteps == selection && openDrum() && popup.buttons[3].isEnabled(),
+            && gui.drumSteps == selection && openDrum() && contextEditButton(popup, Edit::paste).isEnabled(),
             "drum Copy preserves selection and uses a separate clipboard"))
             return false;
         gui.drumPasteStep = 5;

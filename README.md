@@ -4,6 +4,10 @@ SimpleDAW is a beginner-friendly recording workstation. The accepted v0.25.1 rel
 
 SimpleDAW is free and open-source software. Its original code is released under the GNU Affero General Public License, version 3. See [LICENSE](LICENSE), [COPYRIGHT](COPYRIGHT), and the [third-party notices](THIRD_PARTY_NOTICES.md).
 
+## v0.26.1 Context UI Foundation experiment
+
+This branch builds the v0.26.1 experimental milestone. The owner passed Windows live acceptance on the integrated baseline. The final verification build for the Edit button-order correction awaits authorization. [Experimental acceptance record](docs/testing/context-ui-foundation.md)
+
 ## Accepted v0.25.1 download for Windows x64
 
 1. Download the accepted Windows x64 Release `/MD` ZIP. GitHub may ask you to sign in. [SimpleDAW-v0.25.1-Windows-x64.zip](https://github.com/mlzion/SimpleDAW/actions/runs/45701407785/artifacts/15063758284)

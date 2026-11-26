@@ -7,7 +7,7 @@ class ContextToolbar final : public ju::Component
 {
 public:
     enum class Edit { cut, remove, copy, paste };
-    static constexpr std::array edits { Edit::cut, Edit::remove, Edit::copy, Edit::paste };
+    static constexpr std::array edits { Edit::cut, Edit::copy, Edit::paste, Edit::remove };
     static constexpr int pageCount = 2;
 
     ContextToolbar()
@@ -188,8 +188,8 @@ private:
     }
 
     std::array<EditButton, 4> buttons {{
-        { *this, Edit::cut, "Cut" }, { *this, Edit::remove, "Delete" },
-        { *this, Edit::copy, "Copy" }, { *this, Edit::paste, "Paste" }
+        { *this, Edit::cut, "Cut" }, { *this, Edit::copy, "Copy" },
+        { *this, Edit::paste, "Paste" }, { *this, Edit::remove, "Delete" }
     }};
     ju::Rectangle<int> panel;
     int page = 0;

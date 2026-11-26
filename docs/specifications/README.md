@@ -52,6 +52,17 @@ MD0 shipped in v0.25.1 after Piano Roll P0. The accepted implementation covers t
 
 Drum Mixer remains sequenced after the normal Mixer. MDT recording and monitoring remain scoped to MD1. The dated phase-plan PDF remains the original planning record.
 
+## Context UI experimental development plan
+
+| Version | Phase | Scope |
+| --- | --- | --- |
+| v0.26.1 | CUI0/CUI1 | Edit · Context UI Foundation, subject to verification of the button-order correction |
+| v0.26.2 | CUI2 | Move |
+| v0.26.3 | CUI3 | Size |
+| v0.26.4 | CUI4 | Modify |
+
+Edit opens first in v0.26.1. Move opens first once implemented. The eventual forward wheel order is Move → Size → Edit → Modify → Move. Each later phase requires separate authorization. [Context UI specification](../CONTEXT_UI_EXPERIMENT.md#approved-development-sequence) · [Acceptance record](../testing/context-ui-foundation.md) · [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
+
 ## Deferred integration — MX0 Mixer Foundation
 
 MX0 integration is deferred while CUI0/CUI1 takes priority on the experimental branch. Draft PR #28 retains the Mixer Foundation. Its foundation covers the mixer workspace, channel scrolling, pinned FX1, FX2 and Master strips, and native Tracktion mixer controls and meters. Integration against accepted MD0, Windows CI, and live acceptance await separate authorization. [MX0 Mixer Foundation PR #28](https://github.com/mlzion/SimpleDAW/pull/28)

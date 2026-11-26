@@ -5,18 +5,21 @@ Status: approved experiment, not canonical product specification. Branch: experi
 ## Interaction
 - Middle-click opens a context-sensitive popup near pointer; middle-click again or outside click dismisses. Right-click while popup closed retains selection toggle; left-click/drag/double-click and wheel retain existing behavior when closed.
 - While open, wheel cycles toolbar pages in either direction, wrapping; popup stays anchored, with stable dimensions for equivalent pages. Consume wheel events so underlying timeline/editor does not scroll or change velocity. Freeze originating workspace and selection context; opening must not implicitly select or change cursor. Validate target and command availability again on invocation; dismiss on invalidated context.
-- Left-click invokes existing command handler and closes after a discrete action. Future parameter pages stay open for multiple adjustments, using drag controls rather than wheel. Escape and right-click dismissal are proposed defaults to test.
-- Show applicable pages; retain stable button positions within a page, dim unavailable commands. Page title and page count/dots indicate current page. Start with Edit on each invocation; remembering last page is a later usability experiment.
+- Left-click invokes existing command handler and closes after a discrete action. Future parameter pages stay open for multiple adjustments, using drag controls rather than wheel. Escape and right-click dismiss the popup.
+- Show applicable pages; retain stable button positions within a page, dim unavailable commands. Page title and page count/dots indicate current page. Start each invocation on Edit through v0.26.1. Move becomes the initial page once implemented in v0.26.2. When all four pages are present, forward wheel cycling is Move → Size → Edit → Modify → Move. Reverse cycling follows the reverse order.
 - Visual standard: large recognizable vector icon above short text label, equal button dimensions, subtle rounded corners, dark slate surfaces, hover feedback, disabled dimming, clear toggle states (not color alone). Use consistent permissively licensed vector icons (Lucide-style; preserve license notices if importing assets). Exact dimensions/colors subject to Windows acceptance. Clamp popup to available screen bounds.
 - Reuse existing UAT command dispatch, selection/focus rules, validation, clipboard and undo semantics. Popup must not steal effective editing context. Do not introduce new editing capabilities or change command semantics.
 
 ## Initial implementation authorization: CUI0/CUI1 only
 1. Audit actual menu entries, command handlers, keyboard/mouse bindings, and availability by workspace at branch baseline; document current vs unbound vs proposed, with source references. Identify reusable dispatch paths; no wholesale command refactor.
-2. Implement opt-in experimental mode, default existing interface; middle-click popup, anchor/clamp, dismissal, wheel page cycling and focus preservation. For CUI0 exercise cycling with a clearly labeled non-operational test page if necessary; no dummy production commands. 
-3. CUI1 implement Edit page using existing Cut, Copy, Paste, Delete where applicable. Hide only corresponding permanent Edit group in experimental mode once functional; restore on switching back. Other UAT groups, Inspector, navigation and transport remain intact. Support existing workspaces present in baseline; do not import unmerged features. 
+2. Implement opt-in experimental mode, default existing interface; middle-click popup, anchor/clamp, dismissal, wheel page cycling and focus preservation. For CUI0 exercise cycling with a clearly labeled non-operational test page if necessary; no dummy production commands.
+3. CUI1 implements the Edit page in left-to-right order Cut | Copy | Paste | Delete using existing command handlers. Hide only corresponding permanent Edit group in experimental mode once functional; restore on switching back. Other UAT groups, Inspector, navigation and transport remain intact. Support existing workspaces present in baseline; do not import unmerged features.
 4. Add automated tests for dispatch equivalence, disabled commands, focus/selection preservation, wheel consumption and wrap, dismissal, screen bounds, classic mode restoration, undo and clipboard behavior. Run existing Linux CTests and Windows x64 Release /MD build/tests per project policy. Publish testable Windows ZIP with matching source via established workflow; report commit, tests and artifact. Stop for Windows live acceptance; no merge.
 
 ## Windows live acceptance
+
+The owner reported all C01–C10 passed on `790f532`, including appearance and usability. The v0.26.1 button-order correction awaits final Windows verification. [Acceptance record](testing/context-ui-foundation.md)
+
 - C01 classic mode unchanged; enable/disable experiment restores original controls.
 - C02 middle-click opens near cursor; selection and edit cursor unchanged.
 - C03 popup stays on screen at edges; stable anchor when cycling.
@@ -27,5 +30,13 @@ Status: approved experiment, not canonical product specification. Branch: experi
 - C08 visual readability, icon recognition, mouse travel and comfort at 1920x1080; report subjective findings.
 - C09 existing regression suite passes; transport/recording restrictions preserved.
 
-## Future phases (not authorized yet)
-CUI2 Modify (Split, Trim, Duplicate, Clone/Unclone); CUI3 Move/Size; CUI4 Navigation; CUI5 Item properties; CUI6 Track properties/effects; CUI7 History/insertion/remaining toolbars; CUI8 layout cleanup. Convert one group at a time, live accept before proceeding. Retain transport, menu and core workspaces initially. Evaluate removing permanent UAT/Inspector/navigation only after equivalent access proven. Shortcut editor is complementary but separate, not part of initial implementation. Six-button mouse optional, never required.
+## Approved development sequence
+
+| Version | Phase | Popup page |
+| --- | --- | --- |
+| v0.26.1 | CUI0/CUI1 — Context UI Foundation | Edit |
+| v0.26.2 | CUI2 | Move |
+| v0.26.3 | CUI3 | Size |
+| v0.26.4 | CUI4 | Modify |
+
+The v0.26.1 experimental milestone is subject to verification of the Edit button-order correction. Each later phase requires separate implementation authorization and Windows live acceptance before progression. Preserve the existing UAT command behavior as each group is moved into the popup. Navigation, other controls, interface cleanup, and workflow improvements remain for separate authorization. [Workflow Improvement Log](WORKFLOW_IMPROVEMENT_LOG.md)
