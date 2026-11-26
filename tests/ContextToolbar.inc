@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 the SimpleDAW contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-    static auto& contextEditButton(ContextToolbar& popup, ContextToolbar::Edit action)
+    static auto& contextEditButton(ContextToolbar& popup, ContextToolbar::Command action)
     {
         const auto index = std::find(ContextToolbar::edits.begin(), ContextToolbar::edits.end(), action)
             - ContextToolbar::edits.begin();
@@ -10,7 +10,7 @@
 
     static bool testContextToolbar(te::Engine& engine)
     {
-        using EditAction = ContextToolbar::Edit;
+        using EditAction = ContextToolbar::Command;
         const auto check = [](bool passed, const char* step) {
             if (!passed)
                 std::fprintf(stderr, "Context Toolbar: %s\n", step);
@@ -46,10 +46,13 @@
         const auto left = ju::ModifierKeys::leftButtonModifier;
         const auto right = ju::ModifierKeys::rightButtonModifier;
         const auto open = [&] {
+            gui.refreshContextToolbar();
+            if (popup.isVisible())
+                return true;
             auto click = mouse(gui.arrangement, { 25, 12 }, middle);
             gui.arrangement.mouseDown(click);
             gui.arrangement.mouseUp(click);
-            return popup.isVisible() && popup.page == 0;
+            return popup.isVisible() && popup.page == ContextToolbar::movePage;
         };
         const auto editGroupVisible = [&](bool expected) {
             const auto& group = gui.actionGroups.front();
@@ -72,7 +75,11 @@
             return false;
         };
         const auto escape = [&] { return gui.keyPressed(ju::KeyPress(ju::KeyPress::escapeKey), &gui); };
-        const auto invoke = [&](EditAction action) { contextEditButton(popup, action).onClick(); };
+        const auto invoke = [&](EditAction action) {
+            popup.page = ContextToolbar::editPage;
+            popup.showPage();
+            contextEditButton(popup, action).onClick();
+        };
         const auto availabilityMatchesUAT = [&] {
             for (size_t i = 0; i < ContextToolbar::edits.size(); ++i)
                 if (popup.buttons[i].isEnabled() != gui.canDispatch(contextAction(ContextToolbar::edits[i])))
@@ -92,11 +99,16 @@
         if (!check(toggleViaMenu(false), "Options offers the unchecked experimental mode"))
             return false;
         const auto focus = ju::Component::getCurrentlyFocusedComponent();
-        if (!check(editGroupVisible(false) && gui.actionGroups[1].frame.isVisible() && open()
+        if (!check(editGroupVisible(false) && !gui.actionGroups[1].frame.isVisible() && gui.actionGroups[2].frame.isVisible() && open()
             && gui.activeEditingArea() == EditingArea::timeline && gui.actionSelection.clips == originalSelection
             && gui.editCursor == seconds(6) && ju::Component::getCurrentlyFocusedComponent() == focus
             && availabilityMatchesUAT() && !contextEditButton(popup, EditAction::paste).isEnabled(), "opening over a track keeps timeline context"))
             return false;
+        if (!check(popup.page == ContextToolbar::movePage && popup.moveButtons.front().isVisible()
+            && !popup.buttons.front().isVisible(), "Move opens first"))
+            return false;
+        popup.page = ContextToolbar::editPage;
+        popup.showPage();
         const std::array<ju::String, 4> labels { "Cut", "Copy", "Paste", "Delete" };
         int previousX = -1;
         for (size_t i = 0; i < labels.size(); ++i)
@@ -128,16 +140,16 @@
             }
         };
         wheel(1, true);
-        if (!check(popup.page == 1 && !popup.buttons.front().isVisible(), "up wraps from Edit to test page"))
+        if (!check(popup.page == ContextToolbar::movePage && !popup.buttons.front().isVisible(), "up cycles from Edit to Move"))
             return false;
         wheel(-1, false);
-        if (!check(popup.page == 0 && popup.buttons.front().isVisible(), "down wraps to Edit"))
+        if (!check(popup.page == ContextToolbar::editPage && popup.buttons.front().isVisible(), "down cycles to Edit"))
             return false;
         wheel(-1, true);
-        if (!check(popup.page == 1, "down advances from Edit to test page"))
+        if (!check(popup.page == ContextToolbar::movePage, "down wraps from Edit to Move"))
             return false;
         wheel(1, false);
-        if (!check(popup.page == 0 && popup.panel == anchor && gui.firstRow == row
+        if (!check(popup.page == ContextToolbar::editPage && popup.panel == anchor && gui.firstRow == row
             && gui.viewStart == viewStart, "up returns to Edit at stable anchor without arrangement scroll"))
             return false;
 
@@ -164,8 +176,9 @@
             return false;
 
         invoke(EditAction::copy);
-        if (!check(!popup.isVisible() && gui.actionSelection.clips == originalSelection && open()
-            && contextEditButton(popup, EditAction::paste).isEnabled(), "popup Copy populates the UAT clipboard"))
+        if (!check(popup.isVisible() && popup.page == ContextToolbar::editPage && popup.panel == anchor
+            && gui.actionSelection.clips == originalSelection && contextEditButton(popup, EditAction::paste).isEnabled(),
+            "popup Copy preserves anchor, page and selection and enables Paste"))
             return false;
         invoke(EditAction::paste);
         if (!check(track->getClips().size() == 4, "popup Paste pastes both clips"))
@@ -210,6 +223,7 @@
         if (!check(gui.trackCount() == 3, "popup Paste duplicates a track below the anchor"))
             return false;
 
+        gui.dismissContextToolbar();
         gui.mouseDown(mouse(gui.inspector, { 10, 10 }, left));
         gui.mouseDown(mouse(gui.inspector, { 10, 10 }, middle));
         if (!check(popup.isVisible() && availabilityMatchesUAT()
@@ -231,7 +245,7 @@
         if (!check(!gui.pianoRoll.selected.empty() && popup.isVisible() && availabilityMatchesUAT(), "Piano Roll availability"))
             return false;
         invoke(EditAction::copy);
-        if (!check(gui.pianoRoll.clipboard.size() == 1 && open() && contextEditButton(popup, EditAction::paste).isEnabled(),
+        if (!check(gui.pianoRoll.clipboard.size() == 1 && popup.isVisible() && contextEditButton(popup, EditAction::paste).isEnabled(),
             "Piano Roll uses its own clipboard"))
             return false;
         const auto noteWheel = mouse(popup, popup.panel.getCentre(), 0);
@@ -251,13 +265,14 @@
 
         if (!check(toggleViaMenu(true), "Options marks experimental mode as enabled"))
             return false;
-        return check(!popup.isVisible() && editGroupVisible(true) && !open(), "classic restoration closes popup")
-            && testDrumContextToolbar(engine);
+        return check(!popup.isVisible() && editGroupVisible(true) && gui.actionGroups[1].frame.isVisible()
+            && !open(), "classic restoration closes the popup and restores Edit and Move")
+            && testDrumContextToolbar(engine) && testContextMove(engine);
     }
 
     static bool testDrumContextToolbar(te::Engine& engine)
     {
-        using Edit = ContextToolbar::Edit;
+        using Edit = ContextToolbar::Command;
         const auto check = [](bool ok, const char* step) {
             if (!ok)
                 std::fprintf(stderr, "Drum Context Toolbar: %s\n", step);
@@ -292,18 +307,28 @@
         };
         const auto middle = ju::ModifierKeys::middleButtonModifier;
         const auto openTrack = [&] {
+            gui.refreshContextToolbar();
+            if (popup.isVisible())
+                return true;
             gui.arrangement.mouseDown(mouse(gui.arrangement, { 30, 60 }, middle));
             return popup.isVisible();
         };
         const auto drumPoint = ju::Point<int>(drumNameWidth + 15, drumHeaderHeight + 10);
         const auto openDrum = [&] {
+            gui.refreshContextToolbar();
+            if (popup.isVisible())
+                return true;
             auto event = mouse(gui.drumEditor, drumPoint, middle);
             gui.drumEditor.mouseDown(event);
             gui.drumEditor.mouseUp(event);
             return popup.isVisible();
         };
         const auto escape = [&] { return gui.keyPressed(ju::KeyPress(ju::KeyPress::escapeKey), &gui.drumEditor); };
-        const auto invoke = [&](Edit action) { contextEditButton(popup, action).onClick(); };
+        const auto invoke = [&](Edit action) {
+            popup.page = ContextToolbar::editPage;
+            popup.showPage();
+            contextEditButton(popup, action).onClick();
+        };
         const auto matchesUAT = [&] {
             for (size_t i = 0; i < ContextToolbar::edits.size(); ++i)
                 if (popup.buttons[i].isEnabled() != gui.canDispatch(contextAction(ContextToolbar::edits[i])))
@@ -311,6 +336,14 @@
             return true;
         };
 
+        gui.edit->ensureNumberOfAudioTracks(12);
+        gui.setSize(1200, 580);
+        gui.scrollRows(2);
+        if (!check(gui.trackAt(0) == master && gui.firstRow > 0 && gui.rowTop(0) < rulerHeight,
+            "Master is pinned in order and scrolls out of view"))
+            return false;
+        gui.scrollRows(-100);
+        gui.setSize(1440, 850);
         gui.setContextMode(true);
         gui.selectTrack(0);
         if (!check(openTrack() && matchesUAT()
@@ -406,9 +439,21 @@
         if (!check(notes() == before && openDrum(), "velocity Undo restores the original hits"))
             return false;
 
+        if (!check(!popup.finer.isEnabled() && popup.snapText == "1/16 (fixed)"
+            && popup.moveButtons[1].isEnabled(), "drum movement uses a fixed sixteenth grid"))
+            return false;
+        popup.moveButtons[1].onClick();
+        if (!check(popup.isVisible() && gui.drumSteps.contains({ 36, 1 })
+            && gui.drumSteps.contains({ 38, 2 }), "drum Right shifts the selected hits and keeps popup"))
+            return false;
+        popup.moveButtons[0].onClick();
+        if (!check(popup.isVisible() && notes() == before && gui.drumSteps == selection,
+            "drum Left restores the subdivided hits"))
+            return false;
+
         invoke(Edit::copy);
         if (!check(gui.drumClipboard.size() == 3 && gui.clipClipboard.get() == clipClipboard
-            && gui.drumSteps == selection && openDrum() && contextEditButton(popup, Edit::paste).isEnabled(),
+            && gui.drumSteps == selection && popup.isVisible() && contextEditButton(popup, Edit::paste).isEnabled(),
             "drum Copy preserves selection and uses a separate clipboard"))
             return false;
         gui.drumPasteStep = 5;
@@ -457,4 +502,229 @@
         invoke(Edit::paste);
         return check(!popup.isVisible() && !gui.drumEditor.isVisible() && !master->isProcessing(false)
             && notes() == before, "disabling the Master invalidates the drum popup without editing the pattern");
+    }
+
+    static bool testContextMove(te::Engine& engine)
+    {
+        using Action = UniversalAction;
+        using Popup = ContextToolbar;
+        const auto check = [](bool ok, const char* step) {
+            if (!ok)
+                std::fprintf(stderr, "Context Move: %s\n", step);
+            return ok;
+        };
+        const ju::TemporaryFile path(".tracktionedit"), settingsFile(".settings");
+        MainGui gui(engine, settingsFile.getFile());
+        gui.setVisible(true);
+        gui.setSize(1440, 900);
+        gui.setProject(te::createEmptyEdit(engine, path.getFile()), path.getFile());
+        gui.edit->ensureNumberOfAudioTracks(12);
+        auto* track = gui.trackAt(0);
+        auto* next = gui.trackAt(1);
+        track->setName("Guitar 1");
+        next->setName("Keyboard");
+        next->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        const auto seconds = te::TimePosition::fromSeconds<double>;
+        track->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        const auto clip = te::insertMIDIClip(*track, "Clip", { seconds(2), seconds(4) });
+        if (!clip)
+            return false;
+        track->state.setProperty(trackTypeProperty, "Audio", nullptr);
+        if (!check(gui.trackListTitle(*track) == "1A Guitar 1" && gui.trackListTitle(*next) == "2M Keyboard",
+            "compact Track List identifiers preserve names"))
+            return false;
+        track->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+
+        auto& popup = gui.contextToolbar;
+        const auto mouse = [](ju::Component& component, ju::Point<int> point, int modifier) {
+            const auto now = ju::Time::getCurrentTime();
+            return ju::MouseEvent(ju::Desktop::getInstance().getMainMouseSource(), point.toFloat(),
+                ju::ModifierKeys(modifier), 0, 0, 0, 0, 0, &component, &component, now, point.toFloat(), now, 1, false);
+        };
+        const auto middle = ju::ModifierKeys::middleButtonModifier;
+        const auto click = [&](ju::Point<int> point) {
+            const auto event = mouse(gui.arrangement, point, ju::ModifierKeys::leftButtonModifier);
+            gui.arrangement.mouseDown(event);
+            gui.arrangement.mouseUp(event);
+        };
+        const auto open = [&] {
+            const auto event = mouse(gui.arrangement, { headerWidth + 25, rulerHeight + 20 }, middle);
+            gui.arrangement.mouseDown(event);
+            gui.arrangement.mouseUp(event);
+            return popup.isVisible() && popup.page == Popup::movePage;
+        };
+        gui.setContextMode(true);
+        gui.selection = 0;
+        gui.actionSelection.requestedArea = EditingArea::timeline;
+        gui.actionSelection.clips = { clip->itemID };
+        gui.editCursor = seconds(0);
+        if (!check(gui.snap.getSelectedId() == snapBar && open() && popup.snapText == "1 Bar", "startup defaults to bar snap"))
+            return false;
+        const auto anchor = popup.panel;
+        popup.coarser.onClick();
+        if (!check(gui.snap.getSelectedId() == snapOff && popup.snapText == "OFF" && popup.panel == anchor,
+            "coarser rolls from bar to OFF"))
+            return false;
+        popup.finer.onClick();
+        if (!check(gui.snap.getSelectedId() == snapBar, "finer rolls from OFF to bar"))
+            return false;
+        for (auto id : { snapHalf, 2, 3, 4, snapThirtySecond, snapOff, snapBar })
+        {
+            popup.finer.onClick();
+            if (!check(gui.snap.getSelectedId() == id && popup.isVisible(), "all seven snap choices roll in order"))
+                return false;
+        }
+        const auto original = clip->getPosition();
+        popup.moveButtons[1].onClick();
+        if (!check(popup.isVisible() && popup.panel == anchor && clip->getPosition().getStart() == gui.barTime(2),
+            "clip Right uses a whole bar and retains popup"))
+            return false;
+        popup.moveButtons[0].onClick();
+        if (!check(popup.isVisible() && clip->getPosition() == original, "clip Left reverses the bar movement"))
+            return false;
+        popup.moveButtons[3].onClick();
+        if (!check(popup.isVisible() && clip->getTrack() == next, "clip Down uses compatible placement and retains popup"))
+            return false;
+        gui.dismissContextToolbar();
+        gui.useHistory(false);
+        if (!check(clip->getTrack() == track, "Undo reverses one popup Move"))
+            return false;
+
+        gui.selectTrack(1);
+        if (!check(open() && !popup.finer.isEnabled() && !popup.moveButtons[0].isEnabled(),
+            "Track List disables snap and horizontal Move"))
+            return false;
+        popup.moveButtons[2].onClick();
+        if (!check(popup.isVisible() && gui.trackAt(0) == next && gui.trackListTitle(*next) == "1M Keyboard",
+            "Track List Up reorders and updates compact numbering"))
+            return false;
+        gui.dismissContextToolbar();
+
+        auto& meter = gui.edit->tempoSequence.getTimeSigAt(seconds(0));
+        meter.setStringTimeSig("7/8");
+        const auto firstBar = gui.barTime(1);
+        const auto wholeBar = gui.timelineMoveDelta(seconds(0), false);
+        if (!check(firstBar > seconds(0) && wholeBar && seconds(0) + *wholeBar == firstBar
+            && gui.snapSeconds(firstBar.inSeconds() * 0.8) == firstBar.inSeconds(),
+            "bar snap follows the 7/8 meter"))
+            return false;
+        meter.setStringTimeSig("4/4");
+
+        gui.snap.setSelectedId(snapOff, ju::dontSendNotification);
+        gui.editCursor = seconds(2);
+        gui.setTimeSelection({ seconds(2), seconds(4) });
+        gui.edit->getTransport().looping = true;
+        const auto selected = gui.actionSelection.clips;
+        click(gui.rulerHandle(RulerTarget::window).getCentre());
+        if (!check(gui.rulerTarget == RulerTarget::window && gui.actionSelection.clips == selected
+            && !gui.canDispatch(Action::endPlus) && open() && !popup.moveButtons[2].isEnabled(),
+            "ruler window gets independent focus and offers horizontal Move only"))
+            return false;
+        popup.moveButtons[1].onClick();
+        if (!check(popup.isVisible() && gui.timeSelection
+            && std::abs(gui.timeSelection->getStart().inSeconds() - 2.01) < 1.0e-9
+            && std::abs(gui.timeSelection->getLength().inSeconds() - 2.0) < 1.0e-9
+            && gui.edit->getTransport().getLoopRange() == *gui.timeSelection && gui.edit->getTransport().looping,
+            "Snap Off window Move preserves duration, loop markers and popup"))
+            return false;
+        popup.page = Popup::editPage;
+        popup.showPage();
+        contextEditButton(popup, Popup::Command::remove).onClick();
+        if (!check(!popup.isVisible() && !gui.timeSelection && !gui.edit->getTransport().looping
+            && gui.actionSelection.clips == selected && te::findClipForID(*gui.edit, clip->itemID),
+            "window Delete dismisses the invalidated popup without retargeting clips"))
+            return false;
+        gui.dismissContextToolbar();
+        click(gui.rulerHandle(RulerTarget::cursor).getCentre());
+        if (!check(gui.rulerTarget == RulerTarget::cursor && !gui.canDispatch(Action::remove) && open(),
+            "cursor selection is independent and cannot delete clips"))
+            return false;
+        const auto transportCursor = gui.edit->getTransport().getPosition();
+        popup.moveButtons[1].onClick();
+        if (!check(popup.isVisible() && std::abs(gui.editCursor.inSeconds() - 2.01) < 1.0e-9
+            && gui.edit->getTransport().getPosition() == transportCursor, "cursor moves 10 ms independently of playback position"))
+            return false;
+        gui.dismissContextToolbar();
+        click({ headerWidth + 40, 20 });
+        if (!check(gui.rulerTarget == RulerTarget::none && gui.editCursor < seconds(1),
+            "ordinary ruler click still seeks and clears target precedence"))
+            return false;
+
+        const auto handle = gui.rulerHandle(RulerTarget::cursor).getCentre();
+        const auto startDrag = mouse(gui.arrangement, handle, ju::ModifierKeys::leftButtonModifier);
+        const auto now = ju::Time::getCurrentTime();
+        const auto end = handle + ju::Point<int>(65, 0);
+        const auto endDrag = ju::MouseEvent(ju::Desktop::getInstance().getMainMouseSource(), end.toFloat(),
+            ju::ModifierKeys(ju::ModifierKeys::leftButtonModifier), 0, 0, 0, 0, 0, &gui.arrangement, &gui.arrangement,
+            now, handle.toFloat(), now, 1, true);
+        gui.arrangement.mouseDown(startDrag);
+        gui.arrangement.mouseDrag(endDrag);
+        gui.arrangement.mouseUp(endDrag);
+        if (!check(gui.timeSelection && gui.timeSelection->getLength().inSeconds() > 0
+            && gui.rulerTarget == RulerTarget::none, "dragging on a ruler handle still creates a range"))
+            return false;
+
+        gui.setContextMode(false);
+        gui.resized();
+        int row = 1;
+        while (row + 1 < gui.trackCount() && gui.rowTop(row + 1) + 10 < gui.arrangement.getHeight())
+            ++row;
+        auto* lowerTrack = gui.trackAt(row);
+        lowerTrack->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        const auto lowerClip = te::insertMIDIClip(*lowerTrack, "Low MIDI clip", { seconds(1), seconds(3) });
+        if (!lowerClip)
+            return false;
+        const auto column = gui.timeX(seconds(1.2));
+        const auto view = gui.viewStart;
+        const auto scale = gui.pixelsPerSecond;
+        const auto event = mouse(gui.arrangement, { column, gui.rowTop(row) + 10 }, ju::ModifierKeys::leftButtonModifier);
+        gui.openClipEditor(event);
+        if (!check(gui.pianoRollHasFocus() && gui.pianoRollClip == lowerClip->itemID
+            && gui.rowTop(row) >= rulerHeight && gui.rowTop(row) + gui.rowHeight(row) <= gui.arrangement.getHeight()
+            && gui.viewStart == view && gui.pixelsPerSecond == scale,
+            "opening Piano Roll reveals the edited row without horizontal navigation"))
+            return false;
+
+        gui.setContextMode(true);
+        const auto midiNote = MidiNoteEditor(*lowerClip).insert({ { {}, 0.5, 0.25, 60, 90 } }, "Context move fixture");
+        gui.pianoRoll.selected = midiNote;
+        const auto beforeSnap = gui.snap.getSelectedId();
+        if (!check(open() && popup.finer.isEnabled(), "Piano Roll has independent popup snap"))
+            return false;
+        const auto pianoSnap = gui.pianoRoll.snap.getSelectedId();
+        popup.finer.onClick();
+        if (!check(gui.snap.getSelectedId() == beforeSnap && gui.pianoRoll.snap.getSelectedId() != pianoSnap,
+            "Piano Roll snap rollover keeps timeline snap"))
+            return false;
+        popup.moveButtons[2].onClick();
+        const auto notes = MidiNoteEditor(*lowerClip).notes();
+        if (!check(popup.isVisible() && notes.size() == 1 && notes.front().pitch == 61,
+            "Piano Roll Up keeps the popup and transposes one semitone"))
+            return false;
+
+        gui.setContextMode(false);
+        gui.closePianoRoll();
+        gui.scrollRows(-100);
+        const auto clipPoint = [&](int index, double time) {
+            return mouse(gui.arrangement, { gui.timeX(seconds(time)), gui.rowTop(index) + 10 },
+                         ju::ModifierKeys::leftButtonModifier);
+        };
+        const auto firstRow = gui.firstRow;
+        gui.openClipEditor(clipPoint(1, 2.2));
+        if (!check(gui.pianoRollClip == clip->itemID && gui.firstRow == firstRow,
+            "opening an already-visible Piano Roll target leaves vertical scroll alone"))
+            return false;
+        gui.closePianoRoll();
+        gui.panels.tallTracks = true;
+        gui.scrollRows(-100);
+        const int tallRow = 6;
+        auto* tallTrack = gui.trackAt(tallRow);
+        tallTrack->state.setProperty(trackTypeProperty, "MIDI", nullptr);
+        const auto tallClip = te::insertMIDIClip(*tallTrack, "Tall MIDI clip", { seconds(1), seconds(3) });
+        if (!tallClip)
+            return false;
+        gui.openClipEditor(clipPoint(tallRow, 1.2));
+        return check(gui.pianoRollClip == tallClip->itemID
+            && gui.rowTop(tallRow) + gui.rowHeight(tallRow) <= gui.arrangement.getHeight(),
+            "Piano Roll reveals the full edited tall row");
     }

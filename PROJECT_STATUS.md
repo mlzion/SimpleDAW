@@ -1,5 +1,13 @@
 # SimpleDAW project status
 
+## v0.26.2 — Context UI Move CUI2
+
+Move opens first in experimental mode and cycles with Edit. The popup remains anchored across commands while its originating workspace and target remain valid. Move reuses UAT dispatch and includes the workspace-specific snap selector. Classic mode restores the permanent Edit and Move groups. [CUI2 scope and verification](docs/CONTEXT_UI_EXPERIMENT.md#v0262--cui2-move-approved-implementation-scope) · [Movement audit](docs/CONTEXT_UI_MOVE_AUDIT.md)
+
+W01–W05 are implemented within the approved scope. Piano Roll reveals its edited row after layout, ruler handles select the edit cursor and time window, Timeline snap defaults to 1 Bar, and the Track List uses compact numbered names without input-channel badges. Existing Master Drum Track positioning passed regression coverage. Time-window boundary sizing remains deferred to CUI3. [Workflow Improvement Log](docs/WORKFLOW_IMPROVEMENT_LOG.md)
+
+Debian 13 x64 Release (Clang 19, `-O1`, Xvfb) passed all 18 CTests and three additional runs of `context_toolbar`. Native X11 checks verified Move-first opening, wheel wrap, dismissal, classic restoration and the snap arrow rolling from 1 Bar to OFF without closing the popup. Windows x64 Release `/MD` CI awaits separate authorization. [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
+
 ## v0.26.1 — Context UI Foundation CUI0/CUI1 — ACCEPTED EXPERIMENTAL MILESTONE
 
 The experimental branch adds a session-only Options toggle, a middle-click Edit popup and a labeled wheel test page. The popup uses the existing UAT availability and dispatch for Cut, Delete, Copy and Paste, and validates editing focus and selection again before dispatching. Classic mode is the startup default. [Implementation brief](docs/CONTEXT_UI_EXPERIMENT.md) · [Baseline command and input audit](docs/CONTEXT_UI_AUDIT.md)

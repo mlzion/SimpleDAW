@@ -57,3 +57,12 @@ Owner authorizes implementation on experiment/context-ui only, preserving the ac
 
 ### Verification and delivery
 Audit source command inventory and report context matrix. Add regression tests for Move dispatch, snap rollover and context isolation, persistence including Edit and invalidated targets, dismissal and selection, W01–W05, classic restoration and existing regressions. Run Linux CTests and native popup smoke checks. Report implementation commit and results before requesting Windows x64 Release /MD CI authorization. Preserve matching ZIP/source delivery and stop for owner Windows live acceptance. No merge, no CUI3/CUI4 or MX0 work, no changes to main or other branches.
+
+### v0.26.2 verification checklist
+
+- Open on Move and cycle both ways between Move and Edit. Confirm the popup stays anchored and wheel events do not reach the workspace.
+- Move clips, tracks, Piano Roll notes and drum hits with eligible directions. Confirm bounds, type checks, transport restrictions and one Undo per existing undoable Move command.
+- Change Timeline snap with either arrow and check both wrap points, bar snap in different meters and the 10 ms OFF step. Check separate Piano Roll choices, fixed drum sixteenths and disabled Track List snap.
+- Perform Edit and Move actions without reopening the popup. Verify surviving selections, updated availability, stale-target dismissal, and normal input after dismissal.
+- Select each ruler handle without losing clip selection. Verify cursor Move, duration-preserving time-window Move and time-window-only Delete. Drag from the ruler to confirm range creation still works.
+- Check that opening Piano Roll keeps the edited row above the dock, the Master scrolls out while retaining first position, and ordinary Track List identifiers follow track order. Confirm classic mode restores the permanent Edit and Move groups.

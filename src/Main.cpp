@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <numeric>
 #include <set>
+#include <span>
 #include <thread>
 
 namespace te = tracktion;

@@ -57,11 +57,11 @@ Drum Mixer remains sequenced after the normal Mixer. MDT recording and monitorin
 | Version | Phase | Scope |
 | --- | --- | --- |
 | v0.26.1 | CUI0/CUI1 | Edit · Context UI Foundation, accepted experimental milestone at `e1921ec` |
-| v0.26.2 | CUI2 | Move |
+| v0.26.2 | CUI2 | Move · implemented on the experimental branch, Windows verification pending |
 | v0.26.3 | CUI3 | Size |
 | v0.26.4 | CUI4 | Modify |
 
-Edit opens first in v0.26.1. Move opens first once implemented. The eventual forward wheel order is Move → Size → Edit → Modify → Move. Each later phase requires separate authorization. [Context UI specification](../CONTEXT_UI_EXPERIMENT.md#approved-development-sequence) · [Acceptance record](../testing/context-ui-foundation.md) · [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
+Edit opens first in v0.26.1. Move opens first in v0.26.2. The eventual forward wheel order is Move → Size → Edit → Modify → Move. CUI3 and later phases require separate authorization. [Context UI specification](../CONTEXT_UI_EXPERIMENT.md#approved-development-sequence) · [Acceptance record](../testing/context-ui-foundation.md) · [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
 
 ## Deferred integration — MX0 Mixer Foundation
 

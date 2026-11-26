@@ -84,12 +84,8 @@
         void mouseWheelMove(const ju::MouseEvent& event, const ju::MouseWheelDetails& wheel) override
         {
             // JUCE may deliver the end of an inertial gesture to the old wheel target.
-            if (owner.contextToolbar.isVisible())
-            {
-                static_cast<ju::Component&>(owner.contextToolbar).mouseWheelMove(
-                    event.getEventRelativeTo(&owner.contextToolbar), wheel);
+            if (owner.routeContextWheel(event, wheel))
                 return;
-            }
             owner.focusDrumEditor();
             // Precision wheels can report both axes for an ordinary vertical
             // gesture. Give the dominant axis to the intended operation.

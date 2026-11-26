@@ -378,6 +378,7 @@ public:
     }
 
     std::function<void()> onFocus, onChange, onClose;
+    std::function<bool(const ju::MouseEvent&, const ju::MouseWheelDetails&)> interceptWheel;
     std::function<std::vector<te::MidiClip*>(te::MidiClip&)> linkedMembers;
 
 private:
@@ -964,7 +965,7 @@ private:
 
     void mouseWheelMove(const ju::MouseEvent& event, const ju::MouseWheelDetails& wheel) override
     {
-        if (!clip)
+        if ((interceptWheel && interceptWheel(event, wheel)) || !clip)
             return;
         if (wheel.deltaX != 0 || event.mods.isShiftDown())
             scrollTime(-(wheel.deltaX != 0 ? wheel.deltaX : wheel.deltaY) * visibleBeats());
