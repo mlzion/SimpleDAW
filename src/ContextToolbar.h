@@ -102,9 +102,15 @@ private:
 
             if (action == Command::finer || action == Command::coarser)
             {
+                const auto centre = getLocalBounds().toFloat().getCentre();
+                const float direction = action == Command::coarser ? 1.0f : -1.0f;
+                ju::Path chevron;
+                chevron.startNewSubPath(centre.x - direction * 3.5f, centre.y - 6.0f);
+                chevron.lineTo(centre.x + direction * 3.5f, centre.y);
+                chevron.lineTo(centre.x - direction * 3.5f, centre.y + 6.0f);
                 g.setColour(ju::Colours::white.withAlpha(isEnabled() ? 1.0f : 0.43f));
-                g.setFont(ju::FontOptions(18.0f));
-                g.drawText(getButtonText(), getLocalBounds(), ju::Justification::centred);
+                g.strokePath(chevron, ju::PathStrokeType(2.1f, ju::PathStrokeType::curved,
+                                                        ju::PathStrokeType::rounded));
                 return;
             }
 
@@ -246,7 +252,7 @@ private:
         { *this, Command::left, "Left" }, { *this, Command::right, "Right" },
         { *this, Command::up, "Up" }, { *this, Command::down, "Down" }
     }};
-    EditButton finer { *this, Command::finer, "‹" }, coarser { *this, Command::coarser, "›" };
+    EditButton finer { *this, Command::finer, "Finer snap" }, coarser { *this, Command::coarser, "Coarser snap" };
     ju::Rectangle<int> panel, snapBounds;
     ju::String snapText;
     int page = 0;

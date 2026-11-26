@@ -8,6 +8,8 @@ W01–W05 are implemented within the approved scope. Piano Roll reveals its edit
 
 Debian 13 x64 Release (Clang 19, `-O1`, Xvfb) passed all 18 CTests and three additional runs of `context_toolbar`. Native X11 checks verified Move-first opening, wheel wrap, dismissal, classic restoration and the snap arrow rolling from 1 Bar to OFF without closing the popup. Windows x64 Release `/MD` CI awaits separate authorization. [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
 
+Initial Windows x64 Release `/MD` CI at `d38f90b` passed all 18 CTests and portable verification. The owner reported eight clean passes, two passes with findings, and two failures in live testing. Corrections address snap chevrons, post-layout Piano Roll visibility, larger ruler handles, and usable short time-window drags under coarse snap. [Windows acceptance and findings](docs/testing/context-ui-move.md)
+
 ## v0.26.1 — Context UI Foundation CUI0/CUI1 — ACCEPTED EXPERIMENTAL MILESTONE
 
 The experimental branch adds a session-only Options toggle, a middle-click Edit popup and a labeled wheel test page. The popup uses the existing UAT availability and dispatch for Cut, Delete, Copy and Paste, and validates editing focus and selection again before dispatching. Classic mode is the startup default. [Implementation brief](docs/CONTEXT_UI_EXPERIMENT.md) · [Baseline command and input audit](docs/CONTEXT_UI_AUDIT.md)

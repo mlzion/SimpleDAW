@@ -890,22 +890,39 @@ public:
             inspectorLoopCount.setBounds(loopRow.reduced(2));
         }
 
-        arrangement.setBounds(area);
+        auto arrangementArea = area;
         if (effectsEditor.isVisible() || pianoRoll.isVisible() || drumEditor.isVisible())
         {
             auto timeline = area.withTrimmedLeft(headerWidth);
             ju::Component* editor = drumEditor.isVisible() ? static_cast<ju::Component*>(&drumEditor)
                 : pianoRoll.isVisible() ? static_cast<ju::Component*>(&pianoRoll) : static_cast<ju::Component*>(&effectsEditor);
             editorAnimator.cancelAnimation(editor, false);
-            editingPanelArea.setBounds(timeline.removeFromBottom(ju::roundToInt(0.8 * timeline.getHeight())));
-            editor->setBounds(editingPanelArea.getLocalBounds());
-            if (drumEditor.isVisible())
+            // Effects needs its existing dock height for the parameter controls at minimum window size.
+            auto reservedHeight = editor == &effectsEditor ? 0 : rulerHeight;
+            if (editor == &pianoRoll)
             {
-                fitDrumViewport(drumViewStart);
-                scrollDrumRows(0);
+                const auto* clip = edit ? te::findClipForID(*edit, pianoRollClip) : nullptr;
+                const auto* track = clip ? dynamic_cast<const te::AudioTrack*>(clip->getTrack()) : nullptr;
+                reservedHeight += heightForTrack(track);
             }
+            const auto dockHeight = std::min(ju::roundToInt(0.8 * timeline.getHeight()),
+                std::max(0, timeline.getHeight() - reservedHeight));
+            editingPanelArea.setBounds(timeline.removeFromBottom(dockHeight));
+            if (editor == &pianoRoll)
+                arrangementArea.setBottom(timeline.getBottom());
+            editor->setBounds(editingPanelArea.getLocalBounds());
+        }
+        arrangement.setBounds(arrangementArea);
+        if (drumEditor.isVisible())
+        {
+            fitDrumViewport(drumViewStart);
+            scrollDrumRows(0);
         }
         scrollRows(0);
+        if (pianoRoll.isVisible() && edit)
+            if (const auto* clip = te::findClipForID(*edit, pianoRollClip))
+                if (const auto row = visibleTracks().indexOf(dynamic_cast<te::AudioTrack*>(clip->getTrack())); row >= 0)
+                    revealTrack(row);
     }
 
     #include "PianoRollTest.inc"
@@ -5134,6 +5151,7 @@ private:
         pianoRoll.setVisible(false);
         if (actionSelection.requestedArea == EditingArea::window)
             actionSelection.requestedArea.reset();
+        resized();
     }
 
     void closePianoRoll()
@@ -5508,7 +5526,8 @@ private:
     }
 
     int rowHeight(int row = -1) const { return heightForTrack(row >= 0 ? trackAt(row) : nullptr); }
-    static constexpr int headerWidth = 244, rulerHeight = 42;
+    static constexpr int headerWidth = 244, rulerHeight = 102;
+    static constexpr int rulerLabelHeight = 42, rulerHandleHeight = 27;
 
     int rowTop(int row) const
     {
@@ -6401,7 +6420,7 @@ private:
                                  static_cast<float>(cursorX + 5), 0.0f,
                                  static_cast<float>(cursorX), 7.0f);
         g.fillPath(cursorMarker);
-        g.setFont(ju::FontOptions(10.0f));
+        g.setFont(ju::FontOptions(13.0f, ju::Font::bold));
         for (auto target : { RulerTarget::cursor, RulerTarget::window })
         {
             const auto bounds = rulerHandle(target).reduced(2, 1).toFloat();
@@ -6413,7 +6432,7 @@ private:
             g.setColour(ju::Colour(selected ? 0xffffdc87 : 0xffa5c5dd));
             if (selected)
                 g.drawRoundedRectangle(bounds, 4.0f, 1.5f);
-            g.drawText(target == RulerTarget::cursor ? "I" : "Range", bounds.toNearestInt(),
+            g.drawText(target == RulerTarget::cursor ? "Edit cursor" : "Time window", bounds.toNearestInt(),
                        ju::Justification::centred);
         }
         if (edit->getTransport().isPlaying() || paused)
@@ -6553,7 +6572,6 @@ private:
             pianoRoll.toFront(false);
             resized();
             focusPianoRoll();
-            revealTrack(row);
             if (entering)
                 slideEditorIn(pianoRoll);
             return;
@@ -6562,19 +6580,25 @@ private:
 
     ju::Rectangle<int> rulerHandle(RulerTarget target) const
     {
-        const auto ruler = ju::Rectangle<int>(headerWidth, 0, arrangement.getWidth() - headerWidth, rulerHeight);
-        if (target == RulerTarget::cursor)
+        const auto width = arrangement.getWidth() - headerWidth;
+        if (width <= 0 || target == RulerTarget::none
+            || (target == RulerTarget::window && (!timeSelection || timeSelection->isEmpty())))
+            return {};
+        const auto right = arrangement.getWidth() - 1;
+        auto centre = timeX(editCursor);
+        if (target == RulerTarget::window)
         {
-            const auto x = timeX(editCursor);
-            return ju::Rectangle<int>(x - 12, 0, 25, 16).getIntersection(ruler);
+            const auto leftEdge = std::clamp(timeX(timeSelection->getStart()), headerWidth, right);
+            const auto rightEdge = std::clamp(timeX(timeSelection->getEnd()), headerWidth, right);
+            centre = leftEdge + (rightEdge - leftEdge) / 2;
         }
-        if (target != RulerTarget::window || !timeSelection)
+        else if (centre < headerWidth || centre > right)
             return {};
-        const auto left = std::max(ruler.getX(), timeX(timeSelection->getStart()));
-        const auto right = std::min(ruler.getRight(), timeX(timeSelection->getEnd()));
-        if (right <= left)
-            return {};
-        return ju::Rectangle<int>(left + (right - left) / 2 - 15, rulerHeight - 17, 31, 17).getIntersection(ruler);
+
+        const auto handleWidth = std::min(width, target == RulerTarget::cursor ? 82 : 112);
+        const auto x = std::clamp(centre - handleWidth / 2, headerWidth, arrangement.getWidth() - handleWidth);
+        const auto y = rulerLabelHeight + (target == RulerTarget::window ? rulerHandleHeight + 4 : 1);
+        return { x, y, handleWidth, rulerHandleHeight };
     }
 
     RulerTarget rulerTargetAt(ju::Point<int> point) const
@@ -6709,8 +6733,15 @@ private:
     {
         if (draggingRange)
         {
-            const auto a = te::TimePosition::fromSeconds(snapSeconds(dragAnchor));
-            const auto b = te::TimePosition::fromSeconds(snapSeconds(pointerTime));
+            auto a = te::TimePosition::fromSeconds(snapSeconds(dragAnchor));
+            auto b = te::TimePosition::fromSeconds(snapSeconds(pointerTime));
+            if (a == b)
+            {
+                // Keep short drags usable when both endpoints round to the same grid line.
+                const auto limit = te::Edit::getMaximumEditEnd().inSeconds();
+                a = te::TimePosition::fromSeconds(std::clamp(dragAnchor, 0.0, limit));
+                b = te::TimePosition::fromSeconds(std::clamp(pointerTime, 0.0, limit));
+            }
             rangePreview = te::TimeRange(std::min(a, b), std::max(a, b));
         }
         else if (dragItem.isValid())

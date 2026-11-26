@@ -387,6 +387,11 @@
             return false;
 
         gui.openDrumEditor(*clip);
+        gui.setSize(1200, 580);
+        if (!check(gui.editingPanelArea.getY() >= gui.arrangement.getY() + rulerHeight,
+            "the enlarged ruler remains visible above the drum dock"))
+            return false;
+        gui.setSize(1440, 850);
         gui.actionSelection.requestedArea = EditingArea::timeline;
         if (!check(openDrum() && gui.activeEditingArea() == EditingArea::timeline && escape(),
             "middle-click over an unfocused drum grid preserves Timeline focus"))
@@ -574,6 +579,26 @@
             if (!check(gui.snap.getSelectedId() == id && popup.isVisible(), "all seven snap choices roll in order"))
                 return false;
         }
+        const auto arrowPoints = [](auto& button) {
+            ju::Image image(ju::Image::RGB, button.getWidth(), button.getHeight(), true);
+            ju::Graphics graphics(image);
+            button.paintButton(graphics, false, false);
+            const auto centre = button.getLocalBounds().getCentre();
+            const auto count = [&](int x, int y) {
+                int bright = 0;
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dx = -1; dx <= 1; ++dx)
+                        bright += image.getPixelAt(x + dx, y + dy).getBrightness() > 0.7f;
+                return bright;
+            };
+            return std::pair { count(centre.x - 3, centre.y), count(centre.x + 3, centre.y) };
+        };
+        const auto finer = arrowPoints(popup.finer);
+        const auto coarser = arrowPoints(popup.coarser);
+        if (!check(finer.first > finer.second && coarser.second > coarser.first,
+            "snap arrows paint opposing vector tips in the existing hit areas"))
+            return false;
+
         const auto original = clip->getPosition();
         popup.moveButtons[1].onClick();
         if (!check(popup.isVisible() && popup.panel == anchor && clip->getPosition().getStart() == gui.barTime(2),
@@ -610,20 +635,60 @@
             return false;
         meter.setStringTimeSig("4/4");
 
+        const auto selected = gui.actionSelection.clips;
+        const auto first = ju::Point<int>(gui.timeX(seconds(0.2)), 22);
+        const auto last = ju::Point<int>(gui.timeX(seconds(0.7)), 22);
+        const auto down = mouse(gui.arrangement, first, ju::ModifierKeys::leftButtonModifier);
+        const auto dragTime = ju::Time::getCurrentTime();
+        const auto drag = ju::MouseEvent(ju::Desktop::getInstance().getMainMouseSource(), last.toFloat(),
+            ju::ModifierKeys(ju::ModifierKeys::leftButtonModifier), 0, 0, 0, 0, 0,
+            &gui.arrangement, &gui.arrangement, dragTime, first.toFloat(), dragTime, 1, true);
+        gui.arrangement.mouseDown(down);
+        gui.arrangement.mouseDrag(drag);
+        gui.arrangement.mouseUp(drag);
+        if (!check(gui.snap.getSelectedId() == snapBar && gui.timeSelection && !gui.timeSelection->isEmpty()
+            && gui.snapSeconds(0.2) == gui.snapSeconds(0.7), "a short default-bar ruler drag creates a time window"))
+            return false;
+
+        const auto initialRange = *gui.timeSelection;
         gui.snap.setSelectedId(snapOff, ju::dontSendNotification);
         gui.editCursor = seconds(2);
-        gui.setTimeSelection({ seconds(2), seconds(4) });
         gui.edit->getTransport().looping = true;
-        const auto selected = gui.actionSelection.clips;
-        click(gui.rulerHandle(RulerTarget::window).getCentre());
+        const auto window = gui.rulerHandle(RulerTarget::window);
+        const auto cursor = gui.rulerHandle(RulerTarget::cursor);
+        if (!check(window.getWidth() >= 85 && cursor.getWidth() >= 70
+            && window.getHeight() >= 25 && cursor.getHeight() >= 25
+            && window.getY() >= cursor.getBottom() && window.getBottom() <= rulerHeight,
+            "cursor and window have large separate hit areas below the ruler labels"))
+            return false;
+        const auto windowHit = window.getPosition() + ju::Point<int>(8, window.getHeight() / 2);
+        const auto paintPixel = [&](ju::Point<int> point) {
+            ju::Image image(ju::Image::RGB, gui.arrangement.getWidth(), gui.arrangement.getHeight(), true);
+            ju::Graphics graphics(image);
+            gui.paintArrangement(graphics);
+            return image.getPixelAt(point.x, point.y);
+        };
+        const auto previousView = gui.viewStart;
+        gui.setViewStart(10.0);
+        const auto edgeHandle = gui.rulerHandle(RulerTarget::window);
+        if (!check(edgeHandle.getX() == headerWidth && gui.rulerTargetAt(edgeHandle.getCentre()) == RulerTarget::window,
+            "off-screen range keeps a reachable handle at the ruler edge"))
+            return false;
+        gui.setViewStart(previousView);
+        if (!check(paintPixel(windowHit) == ju::Colour(0xff30475b)
+            && gui.rulerTargetAt(windowHit) == RulerTarget::window, "time-window handle paints and hits off center"))
+            return false;
+        click(windowHit);
+        if (!check(paintPixel(windowHit) == ju::Colour(0xff87581e), "window selection changes the painted handle"))
+            return false;
         if (!check(gui.rulerTarget == RulerTarget::window && gui.actionSelection.clips == selected
             && !gui.canDispatch(Action::endPlus) && open() && !popup.moveButtons[2].isEnabled(),
             "ruler window gets independent focus and offers horizontal Move only"))
             return false;
         popup.moveButtons[1].onClick();
         if (!check(popup.isVisible() && gui.timeSelection
-            && std::abs(gui.timeSelection->getStart().inSeconds() - 2.01) < 1.0e-9
-            && std::abs(gui.timeSelection->getLength().inSeconds() - 2.0) < 1.0e-9
+            && std::abs((gui.timeSelection->getStart() - initialRange.getStart()).inSeconds() - 0.01) < 1.0e-9
+            && std::abs((gui.timeSelection->getLength() - initialRange.getLength()).inSeconds()) < 1.0e-9
             && gui.edit->getTransport().getLoopRange() == *gui.timeSelection && gui.edit->getTransport().looping,
             "Snap Off window Move preserves duration, loop markers and popup"))
             return false;
@@ -677,12 +742,14 @@
         const auto column = gui.timeX(seconds(1.2));
         const auto view = gui.viewStart;
         const auto scale = gui.pixelsPerSecond;
+        const auto scrollBeforeDock = gui.firstRow;
         const auto event = mouse(gui.arrangement, { column, gui.rowTop(row) + 10 }, ju::ModifierKeys::leftButtonModifier);
         gui.openClipEditor(event);
         if (!check(gui.pianoRollHasFocus() && gui.pianoRollClip == lowerClip->itemID
             && gui.rowTop(row) >= rulerHeight && gui.rowTop(row) + gui.rowHeight(row) <= gui.arrangement.getHeight()
+            && gui.arrangement.getBottom() == gui.editingPanelArea.getY() && gui.firstRow > scrollBeforeDock
             && gui.viewStart == view && gui.pixelsPerSecond == scale,
-            "opening Piano Roll reveals the edited row without horizontal navigation"))
+            "opening Piano Roll scrolls the edited row into the actual unobscured viewport"))
             return false;
 
         gui.setContextMode(true);
@@ -709,6 +776,7 @@
             return mouse(gui.arrangement, { gui.timeX(seconds(time)), gui.rowTop(index) + 10 },
                          ju::ModifierKeys::leftButtonModifier);
         };
+        gui.scrollRows(1);
         const auto firstRow = gui.firstRow;
         gui.openClipEditor(clipPoint(1, 2.2));
         if (!check(gui.pianoRollClip == clip->itemID && gui.firstRow == firstRow,
@@ -724,7 +792,11 @@
         if (!tallClip)
             return false;
         gui.openClipEditor(clipPoint(tallRow, 1.2));
-        return check(gui.pianoRollClip == tallClip->itemID
-            && gui.rowTop(tallRow) + gui.rowHeight(tallRow) <= gui.arrangement.getHeight(),
-            "Piano Roll reveals the full edited tall row");
+        gui.setSize(1060, 580);
+        const auto rowBottom = gui.arrangement.getY() + gui.rowTop(tallRow) + gui.rowHeight(tallRow);
+        if (!check(gui.pianoRollClip == tallClip->itemID && rowBottom <= gui.editingPanelArea.getY()
+            && gui.rowTop(tallRow) >= rulerHeight, "post-layout Piano Roll reserves room for a full tall row"))
+            return false;
+        gui.closePianoRoll();
+        return check(gui.arrangement.getBottom() > rowBottom, "closing Piano Roll restores the full arrangement");
     }
