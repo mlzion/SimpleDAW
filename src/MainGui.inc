@@ -10,7 +10,7 @@
     };
 
     enum class EditingArea { window, inspector, timeline, tracks };
-    enum class RulerTarget { none, cursor, window };
+    enum class RulerHandle { none, cursor, centre, start, end };
     static constexpr int snapOff = 1, snapThirtySecond = 6, snapHalf = 7, snapBar = 8;
     static constexpr std::array timelineSnapOrder { snapOff, snapThirtySecond, 4, 3, 2, snapHalf, snapBar };
     static constexpr std::array pianoSnapOrder { 1, 5, 4, 3, 2 };
@@ -32,8 +32,6 @@
         };
 
         EditingArea area;
-        RulerTarget ruler = RulerTarget::none;
-        std::optional<te::TimeRange> range;
         ju::ValueTree track, midi;
         ItemSelection clips;
         std::vector<ju::ValueTree> notes;
@@ -198,7 +196,7 @@
         }
         void mouseDrag(const ju::MouseEvent& event) override { owner.arrangementDrag(event); }
         void mouseUp(const ju::MouseEvent& event) override { owner.arrangementUp(event); }
-        void mouseDoubleClick(const ju::MouseEvent& event) override { owner.openClipEditor(event); }
+        void mouseDoubleClick(const ju::MouseEvent& event) override { owner.arrangementDoubleClick(event); }
         void mouseWheelMove(const ju::MouseEvent& event, const ju::MouseWheelDetails& wheel) override
         {
             if (owner.routeContextWheel(event, wheel))
@@ -4550,9 +4548,6 @@ private:
             if (auto* destination = trackAt(selection))
                 target.track = destination->state;
             target.cursor = editCursor;
-            target.ruler = rulerTarget;
-            if (rulerTarget == RulerTarget::window)
-                target.range = timeSelection;
             target.clips = actionSelection.clips;
             if (selectedClips().size() != target.clips.size())
                 return {};
@@ -4684,7 +4679,7 @@ private:
         }
         auto next = currentContextTarget();
         if (!contextTarget || edit.get() != project || !next || next->area != origin.area
-            || next->midi != origin.midi || next->ruler != origin.ruler
+            || next->midi != origin.midi
             || next->drum.has_value() != origin.drum.has_value())
             return dismissContextToolbar();
         contextTarget = std::move(next);
@@ -4721,13 +4716,6 @@ private:
         }
         if (!canEditTimeline())
             return false;
-        if (rulerTarget != RulerTarget::none)
-        {
-            if (action == Action::remove)
-                return rulerTarget == RulerTarget::window && timeSelection.has_value();
-            return (action == Action::left || action == Action::right)
-                && rulerMoveDelta(action == Action::left).has_value();
-        }
         if (action == Action::paste)
             return !pastePlan().empty();
         if (action == Action::split || action == Action::trim)
@@ -4797,7 +4785,7 @@ private:
     {
         using Action = UniversalAction;
         ju::String reason;
-        if (canEditTimeline() && rulerTarget == RulerTarget::none)
+        if (canEditTimeline())
         {
             if (action == Action::paste)
                 pastePlan(&reason);
@@ -4848,23 +4836,6 @@ private:
         }
         if (drumGridHasFocus())
             return dispatchDrumEdit(action);
-        if (activeEditingArea() == EditingArea::timeline && rulerTarget != RulerTarget::none)
-        {
-            if (action == Action::remove)
-                clearTimeSelection();
-            else if (const auto delta = rulerMoveDelta(action == Action::left))
-            {
-                if (rulerTarget == RulerTarget::window)
-                    setTimeSelection(*timeSelection + *delta);
-                else
-                {
-                    editCursor = editCursor + *delta;
-                    reveal(editCursor);
-                }
-            }
-            updateControls();
-            return;
-        }
         const bool tracks = activeEditingArea() == EditingArea::tracks;
         auto& history = edit->getUndoManager();
         if (action == Action::duplicate || action == Action::clone)
@@ -4948,16 +4919,12 @@ private:
 
     bool canClearTimeSelection() const
     {
-        return canEditTimeline() && timeSelection.has_value()
-            && (rulerTarget == RulerTarget::window
-                || (rulerTarget == RulerTarget::none && actionSelection.clips.empty()));
+        return canEditTimeline() && timeSelection.has_value() && actionSelection.clips.empty();
     }
 
     void clearTimeSelection()
     {
         timeSelection.reset();
-        if (rulerTarget == RulerTarget::window)
-            rulerTarget = RulerTarget::none;
         auto& transport = edit->getTransport();
         transport.looping = false;
         transport.setLoopRange({});
@@ -5199,7 +5166,7 @@ private:
     void setProject(std::unique_ptr<te::Edit> next, const ju::File& file)
     {
         dismissContextToolbar();
-        rulerTarget = pressedRulerTarget = RulerTarget::none;
+        resetRulerDrag();
         hidePianoRoll();
         hideDrumEditor();
         pianoRoll.clearProject();
@@ -5239,8 +5206,6 @@ private:
         dragPreview.reset();
         dragError.clear();
         dragRowDelta = 0;
-        rangePreview.reset();
-        draggingRange = false;
         editCursor = edit->getTransport().getPosition();
         const auto savedRange = edit->getTransport().getLoopRange();
         timeSelection = savedRange.getLength().inSeconds() > 0.001 ? std::optional(savedRange) : std::nullopt;
@@ -5419,18 +5384,6 @@ private:
         if (targetBeat < te::BeatPosition{})
             return {};
         return sequence.toTime(targetBeat) - anchor;
-    }
-
-    std::optional<te::TimeDuration> rulerMoveDelta(bool earlier) const
-    {
-        if (rulerTarget == RulerTarget::window && !timeSelection)
-            return {};
-        const auto start = rulerTarget == RulerTarget::window ? timeSelection->getStart() : editCursor;
-        const auto end = rulerTarget == RulerTarget::window ? timeSelection->getEnd() : editCursor;
-        const auto delta = timelineMoveDelta(start, earlier);
-        if (!delta || start + *delta < te::TimePosition{} || end + *delta > te::Edit::getMaximumEditEnd())
-            return {};
-        return delta;
     }
 
     static double nearestRangeDivision(double divisions, bool earlier)
@@ -6439,7 +6392,7 @@ private:
         }
         const ju::Graphics::ScopedSaveState state(g);
         g.reduceClipRegion(area.withTrimmedLeft(headerWidth));
-        if (const auto& range = rangePreview ? rangePreview : timeSelection)
+        if (const auto& range = displayedWindow())
         {
             const auto left = timeX(range->getStart());
             const auto right = timeX(range->getEnd());
@@ -6458,19 +6411,19 @@ private:
                                  static_cast<float>(cursorX), 7.0f);
         g.fillPath(cursorMarker);
         g.setFont(ju::FontOptions(13.0f, ju::Font::bold));
-        for (auto target : { RulerTarget::cursor, RulerTarget::window })
+        for (auto handle : { RulerHandle::cursor, RulerHandle::centre, RulerHandle::start, RulerHandle::end })
         {
-            const auto bounds = rulerHandle(target).reduced(2, 1).toFloat();
+            const auto bounds = rulerHandle(handle).reduced(2, 1).toFloat();
             if (bounds.isEmpty())
                 continue;
-            const bool selected = activeEditingArea() == EditingArea::timeline && rulerTarget == target;
-            g.setColour(ju::Colour(selected ? 0xff87581e : 0xff30475b));
+            g.setColour(ju::Colour(0xff30475b));
             g.fillRoundedRectangle(bounds, 4.0f);
-            g.setColour(ju::Colour(selected ? 0xffffdc87 : 0xffa5c5dd));
-            if (selected)
-                g.drawRoundedRectangle(bounds, 4.0f, 1.5f);
-            g.drawText(target == RulerTarget::cursor ? "Edit cursor" : "Time window", bounds.toNearestInt(),
-                       ju::Justification::centred);
+            g.setColour(ju::Colour(0xffa5c5dd));
+            if (handle == RulerHandle::start || handle == RulerHandle::end)
+                g.drawVerticalLine(ju::roundToInt(bounds.getCentreX()), bounds.getY() + 5.0f, bounds.getBottom() - 5.0f);
+            else
+                g.drawText(handle == RulerHandle::cursor ? "Edit cursor" : "Time window", bounds.toNearestInt(),
+                           ju::Justification::centred);
         }
         if (edit->getTransport().isPlaying() || paused)
         {
@@ -6615,35 +6568,71 @@ private:
         }
     }
 
-    ju::Rectangle<int> rulerHandle(RulerTarget target) const
+    const std::optional<te::TimeRange>& displayedWindow() const
     {
-        const auto width = arrangement.getWidth() - headerWidth;
-        if (width <= 0 || target == RulerTarget::none
-            || (target == RulerTarget::window && (!timeSelection || timeSelection->isEmpty())))
-            return {};
-        const auto right = arrangement.getWidth() - 1;
-        auto centre = timeX(editCursor);
-        if (target == RulerTarget::window)
-        {
-            const auto leftEdge = std::clamp(timeX(timeSelection->getStart()), headerWidth, right);
-            const auto rightEdge = std::clamp(timeX(timeSelection->getEnd()), headerWidth, right);
-            centre = leftEdge + (rightEdge - leftEdge) / 2;
-        }
-        else if (centre < headerWidth || centre > right)
-            return {};
-
-        const auto handleWidth = std::min(width, target == RulerTarget::cursor ? 82 : 112);
-        const auto x = std::clamp(centre - handleWidth / 2, headerWidth, arrangement.getWidth() - handleWidth);
-        const auto y = rulerLabelHeight + (target == RulerTarget::window ? rulerHandleHeight + 4 : 1);
-        return { x, y, handleWidth, rulerHandleHeight };
+        return rulerDragged && pressedRulerHandle != RulerHandle::cursor ? rangeFeedback : timeSelection;
     }
 
-    RulerTarget rulerTargetAt(ju::Point<int> point) const
+    ju::Rectangle<int> rulerHandle(RulerHandle handle) const
     {
-        for (auto target : { RulerTarget::cursor, RulerTarget::window })
-            if (rulerHandle(target).contains(point))
-                return target;
-        return RulerTarget::none;
+        const auto width = arrangement.getWidth() - headerWidth;
+        if (width <= 0 || handle == RulerHandle::none)
+            return {};
+        const auto right = arrangement.getWidth() - 1;
+        if (handle == RulerHandle::cursor)
+        {
+            const auto x = timeX(editCursor);
+            if (x < headerWidth || x > right)
+                return {};
+            const auto handleWidth = std::min(width, 82);
+            return { std::clamp(x - handleWidth / 2, headerWidth, right + 1 - handleWidth),
+                     rulerLabelHeight + 1, handleWidth, rulerHandleHeight };
+        }
+
+        const auto& range = displayedWindow();
+        constexpr int boundaryWidth = 26;
+        if (!range || range->isEmpty() || width <= 2 * boundaryWidth)
+            return {};
+        const auto left = std::clamp(timeX(range->getStart()), headerWidth, right);
+        const auto end = std::clamp(timeX(range->getEnd()), headerWidth, right);
+        const auto centreWidth = std::min(112, width - 2 * boundaryWidth);
+        const auto centreX = std::clamp(left + (end - left - centreWidth) / 2,
+            headerWidth + boundaryWidth, right + 1 - boundaryWidth - centreWidth);
+        const auto y = rulerLabelHeight + rulerHandleHeight + 4;
+        if (handle == RulerHandle::centre)
+            return { centreX, y, centreWidth, rulerHandleHeight };
+        const auto x = handle == RulerHandle::start
+            ? std::clamp(left - boundaryWidth / 2, headerWidth, centreX - boundaryWidth)
+            : std::clamp(end - boundaryWidth / 2, centreX + centreWidth, right + 1 - boundaryWidth);
+        return { x, y, boundaryWidth, rulerHandleHeight };
+    }
+
+    RulerHandle rulerHandleAt(ju::Point<int> point) const
+    {
+        for (auto handle : { RulerHandle::cursor, RulerHandle::centre, RulerHandle::start, RulerHandle::end })
+            if (rulerHandle(handle).contains(point))
+                return handle;
+        return RulerHandle::none;
+    }
+
+    void arrangementDoubleClick(const ju::MouseEvent& event)
+    {
+        if (event.mods.isLeftButtonDown() && !event.mods.isShiftDown() && editingStopped())
+        {
+            switch (rulerHandleAt(event.getPosition()))
+            {
+                case RulerHandle::cursor:
+                    editCursor = {};
+                    reveal(editCursor);
+                    updateControls();
+                    return;
+                case RulerHandle::centre:
+                    clearTimeSelection();
+                    return;
+                default: break;
+            }
+        }
+        openClipEditor(event);
     }
 
     void arrangementDown(const ju::MouseEvent& event)
@@ -6655,27 +6644,23 @@ private:
         const bool toggle = event.mods.isRightButtonDown();
         const auto area = event.x < headerWidth ? EditingArea::tracks : EditingArea::timeline;
         actionSelection.requestedArea = area;
-        draggingRange = false;
-        rangePreview.reset();
+        resetRulerDrag();
         dragPreview.reset();
         dragError.clear();
         dragRowDelta = 0;
         dragItem = {};
         boxAnchor.reset();
         selectionBox = {};
-        pressedRulerTarget = RulerTarget::none;
-        if (area == EditingArea::timeline)
+        if (area == EditingArea::timeline && !toggle && !event.mods.isShiftDown() && event.y < rulerHeight)
         {
-            if (!toggle && !event.mods.isShiftDown() && event.y < rulerHeight)
-                pressedRulerTarget = rulerTargetAt(event.getPosition());
-            if (pressedRulerTarget != RulerTarget::none)
+            pressedRulerHandle = rulerHandleAt(event.getPosition());
+            if (pressedRulerHandle != RulerHandle::none)
             {
-                dragAnchor = timeAt(event.x);
+                dragAnchor = editCursor.inSeconds();
                 updateControls();
                 return;
             }
         }
-        rulerTarget = RulerTarget::none;
         const auto row = rowAt(event.y);
         const auto y = rowTop(row);
         auto* track = event.y >= rulerHeight ? trackAt(row) : nullptr;
@@ -6700,7 +6685,7 @@ private:
         {
             if (!toggle)
             {
-                draggingRange = !edit->getTransport().isPlaying();
+                draggingRange = editingStopped();
                 dragAnchor = timeAt(event.x);
                 seek(dragAnchor);
             }
@@ -6766,25 +6751,44 @@ private:
             closeEffectsEditor();
     }
 
+    te::TimePosition snapRulerPosition(double time, bool earlier) const
+    {
+        const auto limit = te::Edit::getMaximumEditEnd().inSeconds();
+        time = std::clamp(time, 0.0, limit);
+        if (snap.getSelectedId() > snapOff)
+            return te::TimePosition::fromSeconds(snapSeconds(time, earlier));
+        constexpr double offIncrement = 0.010;
+        return te::TimePosition::fromSeconds(
+            std::min(nearestRangeDivision(time / offIncrement, earlier), std::floor(limit / offIncrement)) * offIncrement);
+    }
+
+    static std::optional<te::TimeRange> windowBetween(te::TimePosition first, te::TimePosition second)
+    {
+        if (first == second)
+            return {};
+        return te::TimeRange(std::min(first, second), std::max(first, second));
+    }
+
+    void resetRulerDrag()
+    {
+        draggingRange = rulerDragged = false;
+        pressedRulerHandle = RulerHandle::none;
+        rangePreview.reset();
+        rangeFeedback.reset();
+    }
+
     void updateDragPreview(double pointerTime, std::optional<int> pointerRow = std::nullopt)
     {
         if (draggingRange)
         {
             const auto limit = te::Edit::getMaximumEditEnd().inSeconds();
             const auto anchor = std::clamp(dragAnchor, 0.0, limit);
-            const auto displacement = std::clamp(pointerTime, 0.0, limit) - anchor;
-            constexpr double offIncrement = 0.010;
-            const bool off = snap.getSelectedId() <= snapOff;
-            const auto snapOffRange = [limit](double time, bool earlier) {
-                return std::min(nearestRangeDivision(time / offIncrement, earlier), std::floor(limit / offIncrement))
-                    * offIncrement;
-            };
-            const auto origin = off ? snapOffRange(anchor, false) : snapSeconds(anchor, false);
-            const auto moving = std::clamp(origin + displacement, 0.0, limit);
-            const auto destination = off ? snapOffRange(moving, displacement < 0.0) : snapSeconds(moving, displacement < 0.0);
-            const auto a = te::TimePosition::fromSeconds(origin);
-            const auto b = te::TimePosition::fromSeconds(std::clamp(destination, 0.0, limit));
-            rangePreview = a == b ? std::nullopt : std::optional(te::TimeRange(std::min(a, b), std::max(a, b)));
+            const auto pointer = std::clamp(pointerTime, 0.0, limit);
+            const auto displacement = pointer - anchor;
+            const auto origin = snapRulerPosition(anchor, false);
+            const auto destination = snapRulerPosition(origin.inSeconds() + displacement, displacement < 0.0);
+            rangePreview = windowBetween(origin, destination);
+            rangeFeedback = windowBetween(te::TimePosition::fromSeconds(anchor), te::TimePosition::fromSeconds(pointer));
         }
         else if (dragItem.isValid())
         {
@@ -6812,27 +6816,66 @@ private:
         return rowAt(event.y);
     }
 
+    bool updateRulerGesture(const ju::MouseEvent& event)
+    {
+        if (!draggingRange && pressedRulerHandle == RulerHandle::none)
+            return false;
+        if (!editingStopped())
+        {
+            resetRulerDrag();
+            arrangement.repaint();
+            return true;
+        }
+
+        const auto displacement = event.getDistanceFromDragStartX() / pixelsPerSecond;
+        rulerDragged = rulerDragged || displacement != 0.0;
+        if (!rulerDragged)
+            return true;
+        if (draggingRange)
+            updateDragPreview(dragAnchor + displacement);
+        else if (pressedRulerHandle == RulerHandle::cursor)
+        {
+            editCursor = displacement == 0.0 ? te::TimePosition::fromSeconds(dragAnchor)
+                : snapRulerPosition(dragAnchor + displacement, displacement < 0.0);
+        }
+        else if (timeSelection)
+        {
+            const auto start = timeSelection->getStart();
+            const auto end = timeSelection->getEnd();
+            const auto limit = te::Edit::getMaximumEditEnd();
+            rangePreview = timeSelection;
+            if (displacement != 0.0)
+            {
+                const auto anchor = pressedRulerHandle == RulerHandle::end ? end : start;
+                const auto requested = anchor.inSeconds() + displacement;
+                const auto target = snapRulerPosition(requested, displacement < 0.0);
+                if (pressedRulerHandle == RulerHandle::centre)
+                    rangePreview = *timeSelection + std::clamp(target - start, te::TimePosition{} - start, limit - end);
+                else if (pressedRulerHandle == RulerHandle::start)
+                    rangePreview = windowBetween(requested >= end.inSeconds() ? end : std::min(target, end), end);
+                else
+                    rangePreview = windowBetween(start, requested <= start.inSeconds() ? start : std::max(start, target));
+            }
+            rangeFeedback = rangePreview;
+        }
+        arrangement.repaint();
+        return true;
+    }
+
     void arrangementDrag(const ju::MouseEvent& event)
     {
         if (!edit)
             return;
-        if (pressedRulerTarget != RulerTarget::none && event.getDistanceFromDragStart() >= 5)
-        {
-            rulerTarget = pressedRulerTarget = RulerTarget::none;
-            draggingRange = !edit->getTransport().isPlaying();
-            seek(dragAnchor);
-        }
+        if (updateRulerGesture(event))
+            return;
         if (boxAnchor && event.getDistanceFromDragStart() >= 5)
         {
             updateSelectionBox(event.getPosition());
             updateControls();
         }
-        else if (editingStopped() && (draggingRange || (dragItem.isValid() ? event.getDistanceFromDragStart() >= 5
-                                                       : std::abs(event.getDistanceFromDragStartX()) >= 5)))
+        else if (editingStopped() && dragItem.isValid() && event.getDistanceFromDragStart() >= 5)
         {
-            const auto pointerTime = draggingRange ? dragAnchor + event.getDistanceFromDragStartX() / pixelsPerSecond
-                                                   : timeAt(event.x);
-            updateDragPreview(pointerTime, dragItem.isValid() ? std::optional{ dragTargetRow(event) } : std::nullopt);
+            updateDragPreview(timeAt(event.x), dragTargetRow(event));
             arrangement.repaint();
         }
     }
@@ -6866,16 +6909,20 @@ private:
 
     void arrangementUp(const ju::MouseEvent& event)
     {
-        if (pressedRulerTarget != RulerTarget::none)
+        if (updateRulerGesture(event))
         {
-            if (event.getDistanceFromDragStart() < 5)
+            const bool rangeChanged = rulerDragged && pressedRulerHandle != RulerHandle::cursor;
+            const auto next = rangePreview;
+            resetRulerDrag();
+            if (rangeChanged && next != timeSelection)
             {
-                rulerTarget = pressedRulerTarget;
-                pressedRulerTarget = RulerTarget::none;
-                updateControls();
-                return;
+                if (next)
+                    setTimeSelection(*next);
+                else
+                    clearTimeSelection();
             }
-            arrangementDrag(event);
+            updateControls();
+            return;
         }
         if (edit && boxAnchor)
         {
@@ -6884,12 +6931,9 @@ private:
             else if (*actionSelection.requestedArea == EditingArea::timeline)
                 seek(timeAt(event.x));
         }
-        else if (editingStopped() && (draggingRange || (dragItem.isValid() ? event.getDistanceFromDragStart() >= 5
-                                                        : std::abs(event.getDistanceFromDragStartX()) >= 5)))
+        else if (editingStopped() && dragItem.isValid() && event.getDistanceFromDragStart() >= 5)
         {
-            const auto pointerTime = draggingRange ? dragAnchor + event.getDistanceFromDragStartX() / pixelsPerSecond
-                                                   : timeAt(event.x);
-            updateDragPreview(pointerTime, dragItem.isValid() ? std::optional{ dragTargetRow(event) } : std::nullopt);
+            updateDragPreview(timeAt(event.x), dragTargetRow(event));
             finishDrag();
         }
         else if (dragItem.isValid() && event.getDistanceFromDragStart() < 5)
@@ -6897,9 +6941,8 @@ private:
         boxAnchor.reset();
         selectionBox = {};
         dragItem = {};
-        draggingRange = false;
         dragPreview.reset();
-        rangePreview.reset();
+        resetRulerDrag();
         updateControls();
     }
 
@@ -7354,7 +7397,8 @@ private:
     ActionSelection actionSelection;
     ContextToolbar contextToolbar;
     bool contextDispatching = false;
-    RulerTarget rulerTarget = RulerTarget::none, pressedRulerTarget = RulerTarget::none;
+    RulerHandle pressedRulerHandle = RulerHandle::none;
+    bool rulerDragged = false;
     bool contextMode = false;
     std::optional<ContextTarget> contextTarget;
     ju::Component::SafePointer<ju::Component> contextFocus;
@@ -7368,7 +7412,7 @@ private:
     std::optional<ju::Point<int>> boxAnchor;
     ju::Rectangle<int> selectionBox;
     te::TimePosition editCursor;
-    std::optional<te::TimeRange> timeSelection, rangePreview;
+    std::optional<te::TimeRange> timeSelection, rangePreview, rangeFeedback;
     std::optional<te::TimePosition> dragPreview;
     double dragAnchor = 0.0;
     int dragRowDelta = 0;

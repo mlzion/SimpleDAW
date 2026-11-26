@@ -683,60 +683,25 @@
         gui.seek(1.234);
         if (!check(gui.editCursor == seconds(1.234), "Snap Off leaves cursor positioning unquantized"))
             return false;
-        const auto dragRuler = [&](double start, double end, bool shrink = false) {
-            const auto first = ju::Point<int>(gui.timeX(seconds(start)), 22);
-            const auto down = mouse(gui.arrangement, first, ju::ModifierKeys::leftButtonModifier);
-            const auto dragTime = ju::Time::getCurrentTime();
-            const auto eventAt = [&](double time) {
-                const auto position = ju::Point<int>(gui.timeX(seconds(time)), 22);
-                return ju::MouseEvent(ju::Desktop::getInstance().getMainMouseSource(), position.toFloat(),
-                    ju::ModifierKeys(ju::ModifierKeys::leftButtonModifier), 0, 0, 0, 0, 0,
-                    &gui.arrangement, &gui.arrangement, dragTime, first.toFloat(), dragTime, 1, true);
+        gui.dismissContextToolbar();
+        using Handle = RulerHandle;
+        const auto drag = [&](ju::Point<int> start, std::initializer_list<int> offsets, auto inspect) {
+            const auto now = ju::Time::getCurrentTime();
+            const auto event = [&](int dx, bool moved) {
+                return ju::MouseEvent(ju::Desktop::getInstance().getMainMouseSource(),
+                    (start + ju::Point<int>(dx, 0)).toFloat(), ju::ModifierKeys(ju::ModifierKeys::leftButtonModifier),
+                    0, 0, 0, 0, 0, &gui.arrangement, &gui.arrangement, now, start.toFloat(), now, 1, moved);
             };
-            gui.arrangement.mouseDown(down);
-            if (shrink)
-                gui.arrangement.mouseDrag(eventAt(start + 1.2));
-            const auto drag = eventAt(end);
-            gui.arrangement.mouseDrag(drag);
-            gui.arrangement.mouseUp(drag);
+            gui.arrangement.mouseDown(event(0, false));
+            for (const auto offset : offsets)
+            {
+                gui.arrangement.mouseDrag(event(offset, true));
+                inspect(offset);
+            }
+            gui.arrangement.mouseUp(event(*(offsets.end() - 1), true));
         };
-        const auto savedScale = gui.pixelsPerSecond;
-        gui.pixelsPerSecond = 1000.0;
-        dragRuler(0.202, 0.206);
-        if (!check(!gui.timeSelection, "a real 4 ms ruler drag creates no Snap Off window"))
-            return false;
-        dragRuler(0.202, 0.207);
-        if (!check(gui.timeSelection && std::abs(gui.timeSelection->getLength().inSeconds() - 0.01) < 1.0e-9,
-            "a real 5 ms ruler drag commits a 10 ms Snap Off window"))
-            return false;
-        gui.clearTimeSelection();
-        gui.pixelsPerSecond = savedScale;
-        gui.snap.setSelectedId(snapBar, ju::dontSendNotification);
-        dragRuler(0.2, 0.7, true);
-        if (!check(!gui.timeSelection && gui.rulerHandle(RulerTarget::window).isEmpty(),
-            "releasing a ruler drag below halfway leaves no time window"))
-            return false;
-        dragRuler(0.2, 1.3);
-        if (!check(gui.timeSelection == te::TimeRange(seconds(0), gui.barTime(1)),
-            "a ruler drag past halfway commits exactly one bar"))
-            return false;
-        dragRuler(0.2, 0.7);
-        if (!check(gui.timeSelection == te::TimeRange(seconds(0), gui.barTime(1)),
-            "a sub-threshold drag keeps the previously committed time window"))
-            return false;
-
-        const auto initialRange = *gui.timeSelection;
-        gui.snap.setSelectedId(snapOff, ju::dontSendNotification);
-        gui.editCursor = seconds(2);
-        gui.edit->getTransport().looping = true;
-        const auto window = gui.rulerHandle(RulerTarget::window);
-        const auto cursor = gui.rulerHandle(RulerTarget::cursor);
-        if (!check(window.getWidth() >= 85 && cursor.getWidth() >= 70
-            && window.getHeight() >= 25 && cursor.getHeight() >= 25
-            && window.getY() >= cursor.getBottom() && window.getBottom() <= rulerHeight,
-            "cursor and window have large separate hit areas below the ruler labels"))
-            return false;
-        const auto windowHit = window.getPosition() + ju::Point<int>(8, window.getHeight() / 2);
+        const auto ignorePreview = [](int) {};
+        const auto rulerPoint = [&](double time) { return ju::Point<int>(gui.timeX(seconds(time)), 22); };
         const auto paintPixel = [&](ju::Point<int> point) {
             ju::Image image(ju::Image::RGB, gui.arrangement.getWidth(), gui.arrangement.getHeight(), true);
             {
@@ -745,66 +710,117 @@
             }
             return image.getPixelAt(point.x, point.y);
         };
-        const auto previousView = gui.viewStart;
-        gui.setViewStart(10.0);
-        const auto edgeHandle = gui.rulerHandle(RulerTarget::window);
-        if (!check(edgeHandle.getX() == headerWidth && gui.rulerTargetAt(edgeHandle.getCentre()) == RulerTarget::window,
-            "off-screen range keeps a reachable handle at the ruler edge"))
+        const auto savedScale = gui.pixelsPerSecond;
+        gui.pixelsPerSecond = 1000.0;
+        drag(rulerPoint(0.202), {4}, ignorePreview);
+        if (!check(!gui.timeSelection, "a real 4 ms ruler drag creates no Snap Off window"))
             return false;
-        gui.setViewStart(previousView);
-        if (!check(paintPixel(windowHit) == ju::Colour(0xff30475b)
-            && gui.rulerTargetAt(windowHit) == RulerTarget::window, "time-window handle paints and hits off center"))
+        drag(rulerPoint(0.202), {5}, ignorePreview);
+        if (!check(gui.timeSelection && std::abs(gui.timeSelection->getLength().inSeconds() - 0.01) < 1.0e-9,
+            "a real 5 ms ruler drag commits a 10 ms Snap Off window"))
             return false;
-        click(windowHit);
-        if (!check(paintPixel(windowHit) == ju::Colour(0xff87581e), "window selection changes the painted handle"))
+        gui.pixelsPerSecond = 100.0;
+        gui.snap.setSelectedId(snapBar, ju::dontSendNotification);
+        auto previewFollowed = true;
+        const auto first = rulerPoint(0.2);
+        drag(first, {50, 110, 50}, [&](int offset) {
+            const auto feedback = gui.displayedWindow();
+            previewFollowed &= feedback
+                && gui.timeX(feedback->getStart()) == first.x
+                && gui.timeX(feedback->getEnd()) == first.x + offset
+                && paintPixel({first.x + offset, rulerHeight + 3}) == ju::Colour(0xff6b9ce0);
+        });
+        if (!check(previewFollowed && !gui.timeSelection,
+            "rendered feedback follows the raw pointer across halfway and reversal; short release clears the old range"))
             return false;
-        if (!check(gui.rulerTarget == RulerTarget::window && gui.actionSelection.clips == selected
-            && !gui.canDispatch(Action::endPlus) && open() && !popup.moveButtons[2].isEnabled(),
-            "ruler window gets independent focus and offers horizontal Move only"))
+        drag(rulerPoint(4.0), {-90, -110}, ignorePreview);
+        if (!check(gui.timeSelection == te::TimeRange(seconds(2), seconds(4)),
+            "leftward ruler drag past halfway commits one snapped bar"))
             return false;
-        popup.moveButtons[1].onClick();
-        if (!check(popup.isVisible() && gui.timeSelection
-            && std::abs((gui.timeSelection->getStart() - initialRange.getStart()).inSeconds() - 0.01) < 1.0e-9
-            && std::abs((gui.timeSelection->getLength() - initialRange.getLength()).inSeconds()) < 1.0e-9
-            && gui.edit->getTransport().getLoopRange() == *gui.timeSelection && gui.edit->getTransport().looping,
-            "Snap Off window Move preserves duration, loop markers and popup"))
-            return false;
-        popup.page = Popup::editPage;
-        popup.showPage();
-        contextEditButton(popup, Popup::Command::remove).onClick();
-        if (!check(!popup.isVisible() && !gui.timeSelection && !gui.edit->getTransport().looping
-            && gui.actionSelection.clips == selected && te::findClipForID(*gui.edit, clip->itemID),
-            "window Delete dismisses the invalidated popup without retargeting clips"))
-            return false;
-        gui.dismissContextToolbar();
-        click(gui.rulerHandle(RulerTarget::cursor).getCentre());
-        if (!check(gui.rulerTarget == RulerTarget::cursor && !gui.canDispatch(Action::remove) && open(),
-            "cursor selection is independent and cannot delete clips"))
-            return false;
-        const auto transportCursor = gui.edit->getTransport().getPosition();
-        popup.moveButtons[1].onClick();
-        if (!check(popup.isVisible() && std::abs(gui.editCursor.inSeconds() - 2.01) < 1.0e-9
-            && gui.edit->getTransport().getPosition() == transportCursor, "cursor moves 10 ms independently of playback position"))
-            return false;
-        gui.dismissContextToolbar();
-        click({ headerWidth + 40, 20 });
-        if (!check(gui.rulerTarget == RulerTarget::none && gui.editCursor < seconds(1),
-            "ordinary ruler click still seeks and clears target precedence"))
+        drag(rulerPoint(0.2), {110, 0}, ignorePreview);
+        if (!check(!gui.timeSelection, "returning to the origin clears the previous window"))
             return false;
 
-        const auto handle = gui.rulerHandle(RulerTarget::cursor).getCentre();
-        const auto startDrag = mouse(gui.arrangement, handle, ju::ModifierKeys::leftButtonModifier);
-        const auto now = ju::Time::getCurrentTime();
-        const auto end = handle + ju::Point<int>(65, 0);
-        const auto endDrag = ju::MouseEvent(ju::Desktop::getInstance().getMainMouseSource(), end.toFloat(),
-            ju::ModifierKeys(ju::ModifierKeys::leftButtonModifier), 0, 0, 0, 0, 0, &gui.arrangement, &gui.arrangement,
-            now, handle.toFloat(), now, 1, true);
-        gui.arrangement.mouseDown(startDrag);
-        gui.arrangement.mouseDrag(endDrag);
-        gui.arrangement.mouseUp(endDrag);
-        if (!check(gui.timeSelection && gui.timeSelection->getLength().inSeconds() > 0
-            && gui.rulerTarget == RulerTarget::none, "dragging on a ruler handle still creates a range"))
+        gui.snap.setSelectedId(snapOff, ju::dontSendNotification);
+        gui.setTimeSelection({seconds(2), seconds(4)});
+        gui.editCursor = seconds(1);
+        auto& transport = gui.edit->getTransport();
+        transport.looping = true;
+        const auto centre = gui.rulerHandle(Handle::centre);
+        const auto cursor = gui.rulerHandle(Handle::cursor);
+        const auto left = gui.rulerHandle(Handle::start);
+        const auto right = gui.rulerHandle(Handle::end);
+        if (!check(centre.getWidth() >= 85 && cursor.getWidth() >= 70 && centre.getHeight() >= 25
+            && left.getWidth() >= 25 && right.getWidth() >= 25
+            && centre.getY() == left.getY() && centre.getY() == right.getY()
+            && centre.getY() >= cursor.getBottom() && centre.getBottom() <= rulerHeight
+            && gui.rulerHandleAt(left.getCentre()) == Handle::start
+            && gui.rulerHandleAt(right.getCentre()) == Handle::end,
+            "cursor, centre and aligned resize handles have generous distinct hit areas"))
             return false;
+        const auto viewBeforeEdge = gui.viewStart;
+        gui.setViewStart(10);
+        if (!check(gui.rulerHandleAt(gui.rulerHandle(Handle::centre).getCentre()) == Handle::centre,
+            "off-screen range keeps a reachable centre handle"))
+            return false;
+        gui.setViewStart(viewBeforeEdge);
+
+        drag(centre.getCentre(), {50, 100}, ignorePreview);
+        if (!check(gui.timeSelection == te::TimeRange(seconds(3), seconds(5))
+            && transport.getLoopRange() == *gui.timeSelection && transport.looping,
+            "centre drag retains duration and updates the active loop"))
+            return false;
+        drag(gui.rulerHandle(Handle::start).getCentre(), {50, 70, 50}, ignorePreview);
+        drag(gui.rulerHandle(Handle::end).getCentre(), {50, 70, 50}, ignorePreview);
+        if (!check(gui.timeSelection == te::TimeRange(seconds(3.5), seconds(5.5)),
+            "either boundary can resize with direction reversal"))
+            return false;
+        drag(gui.rulerHandle(Handle::end).getCentre(), {-200}, ignorePreview);
+        if (!check(!gui.timeSelection && !transport.looping, "coincident boundaries clear the window and disable looping"))
+            return false;
+
+        gui.setTimeSelection({seconds(2), seconds(4)});
+        drag(gui.rulerHandle(Handle::start).getCentre(), {200}, ignorePreview);
+        if (!check(!gui.timeSelection, "the left boundary can also collapse the window"))
+            return false;
+
+        const auto doubleClick = [&](Handle handle) {
+            const auto position = gui.rulerHandle(handle).getCentre();
+            click(position);
+            click(position);
+            gui.arrangement.mouseDoubleClick(mouse(gui.arrangement, position, ju::ModifierKeys::leftButtonModifier));
+        };
+        gui.setTimeSelection({seconds(2), seconds(4)});
+        doubleClick(Handle::centre);
+        const auto playback = transport.getPosition();
+        drag(gui.rulerHandle(Handle::cursor).getCentre(), {40, 100}, ignorePreview);
+        if (!check(!gui.timeSelection && gui.editCursor == seconds(2) && transport.getPosition() == playback,
+            "centre double-click clears the range and cursor drag moves independently of playback"))
+            return false;
+        doubleClick(Handle::cursor);
+        if (!check(gui.editCursor == seconds(0) && transport.getPosition() == playback
+            && gui.actionSelection.clips == selected && gui.canDispatch(Action::remove)
+            && gui.canDispatch(Action::copy) && open() && popup.moveButtons[1].isEnabled(),
+            "cursor double-click resets to zero and ruler gestures preserve existing clip command routing"))
+            return false;
+        gui.dismissContextToolbar();
+        click({headerWidth + 40, 20});
+        if (!check(gui.editCursor > seconds(0) && gui.editCursor < seconds(1), "ordinary ruler click still positions the cursor"))
+            return false;
+        gui.setTimeSelection({seconds(2), seconds(4)});
+        const auto stoppedCursor = gui.editCursor;
+        transport.play(false);
+        const auto playing = transport.isPlaying();
+        drag(gui.rulerHandle(Handle::cursor).getCentre(), {100}, ignorePreview);
+        drag(gui.rulerHandle(Handle::centre).getCentre(), {100}, ignorePreview);
+        drag(gui.rulerHandle(Handle::start).getCentre(), {200}, ignorePreview);
+        doubleClick(Handle::centre);
+        if (!check(playing && gui.timeSelection == te::TimeRange(seconds(2), seconds(4))
+            && gui.editCursor == stoppedCursor, "active transport blocks direct handle editing"))
+            return false;
+        transport.stop(false, false);
+        gui.clearTimeSelection();
+        gui.pixelsPerSecond = savedScale;
 
         gui.setContextMode(false);
         gui.resized();

@@ -11,7 +11,7 @@ The owner reported eight clean passes, two passes with findings, and two failure
 | F03 | The edit-cursor handle worked but was too small. | The ruler keeps its bar and elapsed-time labels above a dedicated handle area. Check the larger cursor hit area, selection feedback, ordinary ruler seeking, and range dragging. |
 | F04 | The time-window handle was absent, preventing selection and Move. | Make a short drag within one bar using startup 1 Bar snap. Confirm a labeled time-window handle appears and highlights when clicked. Move it in both directions and verify duration and loop state. Delete must clear the window and loop markers while leaving selected or enclosed clips intact. Retest the handle with the range near the window edge. |
 
-The initial F04 correction created an unsnapped range when both snapped endpoints coincided. F05 supersedes that behavior. Window boundary sizing remains deferred.
+The initial F04 correction created an unsnapped range when both snapped endpoints coincided. See the revised W03 record below for current behavior.
 
 ## Correction verification
 
@@ -35,8 +35,15 @@ The post-investigation build passed all 18 Linux Release CTests under Xvfb and 2
 
 The owner passed F01–F04 on `e1f9ed9`. Windows CI at that revision passed all 18 CTests and all 10 additional Inspector Clone runs, then verified runtime imports and isolated startup. [Windows CI](https://github.com/mlzion/SimpleDAW/actions/runs/45769122990) · [Live-tested ZIP and matching source](https://github.com/mlzion/SimpleDAW/actions/runs/45769122990/artifacts/15094125741)
 
-**F05 remains pending Windows verification.** Dragging below the first halfway threshold leaves the existing selection intact or creates no window if none exists. At each halfway threshold, the moving end snaps one increment farther in that direction. The same divisions apply in reverse and while shrinking a drag. On Snap OFF the increment for creating a window is 10 ms. Ordinary cursor positioning, selected-window Move and Delete, and ruler handle sizes retain their existing behavior.
+**F05 failed live at `efa4ed2`.** The pointer-following preview was lost and a drag returning to zero length restored the previous window. Revised W03 replaces the F04 selection and popup interaction with direct manipulation. F01–F03 retain their owner PASS results.
 
-For the focused retest, create ranges from an off-grid start in both directions. Check just below, at and above the first, second and third halfway thresholds, then shrink the drag through them before releasing. Repeat with 1 Bar and a finer grid. At a zoom that makes 5 ms selectable, repeat with Snap OFF. Confirm coincident snapped endpoints never create an unsnapped window, and then select, move and delete a valid range.
+**Revised W03 and F05 — pending Windows CI and focused owner verification.**
 
-The F05 correction passed all 18 Linux Release CTests under Xvfb. The Context UI test checks the first three halfway thresholds in both directions while extending and shrinking, with 1 Bar, 1/16 and Snap OFF. Mouse-event coverage verifies 4 ms creates no range and 5 ms commits a 10 ms range at high zoom. It also verifies preserving a previously committed range, ordinary cursor positioning, handle rendering and hit testing, and selected-window Move and Delete.
+- Click the ruler to position the edit cursor. Drag its handle horizontally with snap and double-click it to reset to zero. Direct handle gestures leave the playback position alone.
+- Create a time window from an off-grid point in each direction. The painted edge follows the pointer between thresholds. On release, the length rounds from the snapped origin at each successive halfway threshold, in either direction and while shrinking. Release below the first threshold or after returning to the start. Verify an existing window is cleared in both cases. Repeat with 1 Bar, a finer grid and Snap OFF (10 ms).
+- Drag the center handle to move the window. Verify duration and enabled looping are preserved and loop markers follow. Double-click the center to delete. Resize each boundary separately, then drag one onto the other to clear the window and disable looping.
+- Verify ruler readability and hit areas at different zoom levels and viewport edges. Check that active transport blocks handle edits and that ruler position clicks retain their existing behavior. Confirm the selected clips remain available to Edit and Move after using ruler handles. Retest time-window-dependent editing operations.
+
+**F06 — command audit.** The former selected ruler target took precedence over a retained Timeline clip selection, which could suppress or redirect Edit and Move. Removing that path restores ordinary clip command dispatch. Linux regression coverage exercises Timeline, Track List, Piano Roll and Drum Pattern Editor dispatch, and checks Inspector and Effects Editor restrictions. No additional command regression was reproduced. [Command audit](../CONTEXT_UI_MOVE_AUDIT.md)
+
+Debian 13 x64 Release passed all 18 Linux CTests under Xvfb. The ruler regression drives mouse-down, multiple drag events, reversal and mouse-up. It checks painted preview pixels, threshold arithmetic for 1 Bar, 1/16 and Snap OFF, direct cursor positioning and reset, moving and resizing, deletion from both boundaries, transport restrictions and loop markers. Native X11 input verified the painted range edge while dragging and reversing, the snapped release position, center movement, resizing and collapse, and both double-click actions.

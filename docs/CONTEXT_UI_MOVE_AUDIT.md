@@ -14,4 +14,14 @@ Audit input `208cff7`. The popup uses the existing stopped-transport gate and UA
 
 The Master already appears first in the visible row list, followed by its lanes. Vertical scrolling treats it as a normal row, so it can leave the viewport. CUI2 retains that code and adds regression coverage. [Visible track order](https://github.com/mlzion/SimpleDAW/blob/208cff7/src/MainGui.inc#L3047-L3067) · [Vertical scrolling](https://github.com/mlzion/SimpleDAW/blob/208cff7/src/MainGui.inc#L5385-L5409)
 
-CUI2 adds explicit cursor and time-window targets using separate ruler handles. An explicitly selected ruler target takes precedence over retained clip selection when Timeline has focus. A normal arrangement click returns to clip commands. The cursor allows horizontal Move. The window allows horizontal Move and Delete. Movement respects timeline bounds, and window Move preserves duration and updates the existing loop markers. Boundary sizing is deferred. Legacy mixed tracks retain a Mixed identifier because they have neither an Audio nor MIDI-only type.
+## Revised W03 and F06 review
+
+The former ruler target took precedence over even a valid, retained Timeline clip selection. The revised ruler handles act directly and leave the existing clip selection available to UAT and the popup. The edit cursor remains the paste and split reference, and the committed window remains available to looping and time-window-dependent operations. Existing keyboard/menu Delete fallback with no clip selection remains available. Legacy mixed tracks retain the Mixed identifier.
+
+| Workspace | Edit dispatch checked alongside Move |
+| --- | --- |
+| Timeline | Cut, Copy, Paste and Delete use the clip selection, existing clipboard, compatible destination and existing undo behavior. The ruler no longer intercepts these commands or directional clip moves. |
+| Track List | Copy/Paste duplicate eligible tracks. Delete stays subject to track protection. Cut remains unavailable. Up/Down use the existing eligible-sibling rules. |
+| Piano Roll | Edit commands use the selected notes and note clipboard. Movement stays on selected notes with the independent grid. |
+| Drum Pattern Editor | Edit commands use the selected cells and drum clipboard. Move preserves existing lane validation and fixed horizontal snap. The Master and its lanes retain their Track List protections. |
+| Inspector and Effects Editor | UAT Edit and Move are unavailable with editor focus. Inspector actions, including clip Clone, are independent. |

@@ -12,12 +12,12 @@ Status: Windows live PASS; retain regression coverage.
 Requirement: Master Drum Track remains above ordinary Track #1, cannot be reordered among ordinary tracks, and participates in normal vertical scrolling so it can scroll entirely out of view. Child lanes remain attached to parent. Verify existing behavior before changing code; preserve lane reorder within parent and existing numbering rules.
 
 ## W03 — Direct manipulation of timeline edit cursor and time window
-Status: APPROVED redesign for v0.26.2; implementation and Windows acceptance pending. Supersedes previous selectable UAT/CUI target design and CUI3 sizing deferral.
+Status: Implemented for v0.26.2. Windows verification and owner acceptance pending. Supersedes previous selectable UAT/CUI target design and CUI3 sizing deferral.
 - Edit cursor: click ruler to position as before; drag cursor icon horizontally following timeline snap; double-click icon returns to time zero. No selection step or UAT/CUI command targeting.
 - Time window: drag ruler to create with continuous pointer-following visual preview between snap thresholds. Final range rounds drag distance from snapped start to nearest division, ties away from start, in either direction and at every successive threshold, including shrinking. Below first halfway threshold or returning to start and releasing leaves no window, even if a previous window existed. Never commit an unsnapped fallback range.
 - Drag center icon to move entire window following snap, preserving duration. Double-click center icon deletes window. Provide vertical boundary handles aligned with center icon; drag either to resize only that boundary following nearest-division snap. Reaching the opposite boundary deletes the window.
 - Remove cursor/window as UAT and CUI command targets; retain independent clip selection, existing loop semantics, timeline bounds, transport restrictions, ruler height and generous hit areas. Preserve time-window-dependent clip operations. Playback cursor is not a target. Snap OFF uses 10 ms. Changing snap does not resize existing window.
-- F05 failed live at efa4ed2: lost continuous preview and previous range restored after zero-length drag. F06 possible other command regressions remain unconfirmed; audit and retest existing Move/Edit commands. F01–F04 passed focused retests at e1f9ed9; F04 interaction superseded by redesign.
+- F05 failed live at efa4ed2: lost continuous preview and previous range restored after zero-length drag. The revised implementation restores continuous feedback and clears zero-length drags. F06 review confirmed and removed ruler command precedence over retained clip selection. No additional command regression was reproduced in Linux verification. F01–F04 passed focused retests at e1f9ed9; F04 interaction superseded by redesign.
 
 ## W04 — Timeline snap increments and startup default
 Status: Windows live PASS, including corrected snap arrows; retain regression coverage.
