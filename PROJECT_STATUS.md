@@ -1,8 +1,16 @@
 # SimpleDAW project status
 
+## v0.26.3 — Direct Manipulation & Interaction Standardization
+
+W06 applies in Classic and Experimental modes. Timeline clips and Piano Roll notes support direct group movement and edge sizing. Drum Pattern Editor has Draw and Select modes, direct group move with atomic replacement, and a bottom velocity panel for active hits. Both musical editors use a shared velocity delta for selected events. The wheel navigates, including right-wheel horizontal pan started over empty editor space. The Size toolbar is removed. Experimental Context UI still opens on Move, cycles with Edit, and retains the snap selector.
+
+The F07 implementation confines Timeline cursor and range gestures to presses in the ruler and preserves the current editing focus and clip selection. Windows CI and live acceptance remain pending. [W06 requirements](docs/WORKFLOW_IMPROVEMENT_LOG.md#w06--global-mouse-interaction-and-direct-editing-v0263) · [Input and engine audit](docs/CONTEXT_UI_MOVE_AUDIT.md#v0263-interaction-audit)
+
+Debian 13 x64 Release under Xvfb passed all 18 CTests. Regression coverage includes ruler isolation in both modes, empty-area wheel ownership, Inspector scrolling, group note and clip sizing with Undo, group velocity limits, and atomic drum replacement and restoration. Native X11 checks verified popup cycling and dismissal, ruler cursor and range gestures, clip-area isolation, Drum Draw/Select, group velocity, and two-axis drum movement. Windows CI awaits authorization.
+
 ## v0.26.2 — Context UI Move CUI2 — ACCEPTED EXPERIMENTAL MILESTONE
 
-The owner accepted `a8fcd4b` as `v0.26.2-experimental`. All A–J Windows live checks passed except G05. F01–F06 are closed. W01–W05 are accepted with one W03 exception, F07 (Timeline ruler interaction isolation), deferred to v0.26.3. CUI3 awaits design review and separate authorization. [Acceptance record](docs/testing/context-ui-move.md#final-owner-acceptance) · [Accepted Windows ZIP and matching source](https://github.com/mlzion/SimpleDAW/actions/runs/45890602357/artifacts/15152520441)
+The owner accepted `a8fcd4b` as `v0.26.2-experimental`. All A–J Windows live checks passed except G05. F01–F06 are closed. W01–W05 are accepted with one W03 exception, F07 (Timeline ruler interaction isolation), deferred to v0.26.3. [Acceptance record](docs/testing/context-ui-move.md#final-owner-acceptance) · [Accepted Windows ZIP and matching source](https://github.com/mlzion/SimpleDAW/actions/runs/45890602357/artifacts/15152520441)
 
 Move opens first in experimental mode and cycles with Edit. The popup remains anchored across commands while its originating workspace and target remain valid. Move reuses UAT dispatch and includes the workspace-specific snap selector. Classic mode restores the permanent Edit and Move groups. [CUI2 scope and verification](docs/CONTEXT_UI_EXPERIMENT.md#v0262--cui2-move-approved-implementation-scope) · [Movement audit](docs/CONTEXT_UI_MOVE_AUDIT.md)
 

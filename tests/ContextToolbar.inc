@@ -436,12 +436,7 @@
             "first Escape dismisses Context UI and keeps the Drum Pattern Editor open"))
             return false;
         wheel(gui.drumEditor, drumPoint, 0.05f, 1.0f);
-        const auto louder = notes();
-        if (!check(louder.size() == 3 && louder[0].velocity == 96 && louder[1].velocity == 96
-            && louder[2].velocity == 75, "closed popup restores grouped velocity wheel behavior"))
-            return false;
-        gui.useHistory(false);
-        if (!check(notes() == before && openDrum(), "velocity Undo restores the original hits"))
+        if (!check(notes() == before && openDrum(), "wheel navigation leaves hit velocities unchanged"))
             return false;
 
         if (!check(!popup.finer.isEnabled() && popup.snapText == "1/16 (fixed)"
@@ -684,6 +679,7 @@
         if (!check(gui.editCursor == seconds(1.234), "Snap Off leaves cursor positioning unquantized"))
             return false;
         gui.dismissContextToolbar();
+        gui.actionSelection.requestedArea = EditingArea::timeline;
         using Handle = RulerHandle;
         const auto drag = [&](ju::Point<int> start, std::initializer_list<int> offsets, auto inspect) {
             const auto now = ju::Time::getCurrentTime();
@@ -819,7 +815,63 @@
             && gui.editCursor == stoppedCursor, "active transport blocks direct handle editing"))
             return false;
         transport.stop(false, false);
+        for (const bool experimental : {false, true})
+        {
+            gui.setContextMode(experimental);
+            gui.actionSelection.requestedArea = EditingArea::tracks;
+            gui.actionSelection.clips = selected;
+            click({headerWidth + 60, 22});
+            if (!check(gui.activeEditingArea() == EditingArea::tracks && gui.actionSelection.clips == selected,
+                "ruler click preserves effective focus and selected clips in either mode"))
+                return false;
+            const auto cursorBefore = gui.editCursor;
+            const auto rangeBefore = gui.timeSelection;
+            const auto point = ju::Point<int>(headerWidth + 15, rulerHeight + 15);
+            const auto shiftClick = mouse(gui.arrangement, point,
+                ju::ModifierKeys::leftButtonModifier | ju::ModifierKeys::shiftModifier);
+            gui.arrangement.mouseDown(shiftClick);
+            gui.arrangement.mouseUp(shiftClick);
+            click(point);
+            if (!check(gui.editCursor == cursorBefore && gui.timeSelection == rangeBefore,
+                "ordinary and Shift clicks in the clip area leave the ruler alone"))
+                return false;
+        }
+
+        gui.setContextMode(false);
         gui.clearTimeSelection();
+        const auto second = te::insertMIDIClip(*track, "Off-grid clip", {seconds(5.03), seconds(6.03)});
+        if (!second)
+            return false;
+        const auto rowForClip = gui.visibleTracks().indexOf(track);
+        const auto rowY = gui.rowTop(rowForClip) + 12;
+        const auto firstBefore = clip->getPosition().time;
+        const auto secondBefore = second->getPosition().time;
+        gui.actionSelection.clips = {clip->itemID, second->itemID};
+        drag({gui.timeX(firstBefore.getEnd()) - 3, rowY}, {12, 32, 25}, ignorePreview);
+        if (!check(clip->getPosition().time == firstBefore.withEnd(firstBefore.getEnd() + te::TimeDuration::fromSeconds(0.25))
+            && second->getPosition().time == secondBefore.withEnd(secondBefore.getEnd() + te::TimeDuration::fromSeconds(0.25)),
+            "direct group resize preserves opposite edges and off-grid spacing"))
+            return false;
+        gui.useHistory(false);
+        if (!check(clip->getPosition().time == firstBefore && second->getPosition().time == secondBefore,
+            "one Undo restores both resized clips"))
+            return false;
+
+        gui.actionSelection.clips = {clip->itemID, second->itemID};
+        const auto empty = ju::Point<int>(gui.timeX(seconds(7)), rowY);
+        const auto emptyPress = mouse(gui.arrangement, empty, ju::ModifierKeys::rightButtonModifier);
+        const auto onClip = mouse(gui.arrangement, {gui.timeX(firstBefore.getStart()) + 15, rowY},
+            ju::ModifierKeys::rightButtonModifier);
+        const auto beforePan = gui.viewStart;
+        gui.arrangement.mouseDown(emptyPress);
+        gui.arrangement.mouseWheelMove(onClip, {0, -0.1f, false, false, false});
+        gui.arrangement.mouseUp(onClip);
+        if (!check(gui.viewStart > beforePan && gui.actionSelection.clips.size() == 2,
+            "right-wheel stays horizontal when a clip crosses the pointer and release preserves selection"))
+            return false;
+        gui.setViewStart(beforePan);
+        second->removeFromParent();
+        gui.actionSelection.clips = selected;
         gui.pixelsPerSecond = savedScale;
 
         gui.setContextMode(false);
@@ -827,6 +879,15 @@
         int row = 1;
         while (row + 1 < gui.trackCount() && gui.rowTop(row + 1) + 10 < gui.arrangement.getHeight())
             ++row;
+        gui.panels.inspectorOpen = true;
+        gui.resized();
+        gui.inspectorViewport.setSize(gui.inspectorViewport.getWidth(), 70);
+        gui.inspectorViewport.setViewPosition(0, 0);
+        const auto inspectorWheel = mouse(gui.inspectorViewport, {30, 25}, 0);
+        gui.inspectorViewport.mouseWheelMove(inspectorWheel, {0, -1, false, false, false});
+        if (!check(gui.inspectorViewport.getViewPositionY() > 0, "wheel scrolls the Inspector viewport"))
+            return false;
+        gui.resized();
         auto* lowerTrack = gui.trackAt(row);
         lowerTrack->state.setProperty(trackTypeProperty, "MIDI", nullptr);
         const auto lowerClip = te::insertMIDIClip(*lowerTrack, "Low MIDI clip", { seconds(1), seconds(3) });

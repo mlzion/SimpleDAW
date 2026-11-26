@@ -68,7 +68,7 @@ public:
     }
 
     bool change(const std::vector<GridNote>& changes, const ju::String& label,
-                const std::vector<GridNote>& additions = {})
+                const std::vector<GridNote>& additions = {}, const std::vector<ju::ValueTree>& removals = {})
     {
         if (!std::all_of(additions.begin(), additions.end(), [this](const auto& note) { return valid(note); }))
             return false;
@@ -93,10 +93,25 @@ public:
                     pending.emplace_back(match, change);
             }
         }
-        if (pending.empty() && additions.empty())
+        std::vector<std::pair<te::MidiList*, te::MidiNote*>> displaced;
+        for (const auto& id : removals)
+        {
+            auto* note = sequence.getNoteFor(id);
+            if (!note)
+                return false;
+            const auto matches = matchingNotes(*note);
+            if (matches.empty())
+                return false;
+            displaced.emplace_back(&sequence, note);
+            for (size_t i = 0; i < linkedClips.size(); ++i)
+                displaced.emplace_back(&linkedClips[i]->getSequence(), matches[i + 1]);
+        }
+        if (pending.empty() && additions.empty() && displaced.empty())
             return false;
         auto& history = clip.edit.getUndoManager();
         history.beginNewTransaction(label);
+        for (const auto& [list, note] : displaced)
+            list->removeNote(*note, &history);
         for (const auto& [note, value] : pending)
             write(*note, value, history);
         for (const auto& note : additions)
@@ -237,6 +252,7 @@ public:
     {
         setTitle("Piano Roll");
         setWantsKeyboardFocus(true);
+        setMouseClickGrabsKeyboardFocus(false);
         for (auto* child : std::array<ju::Component*, 8> {
                 &name, &close, &mode, &snap, &quantize, &velocity, &horizontal, &vertical })
             addAndMakeVisible(*child);
@@ -261,6 +277,7 @@ public:
         };
         velocity.setName("Note velocity");
         velocity.setSliderStyle(ju::Slider::IncDecButtons);
+        velocity.setScrollWheelEnabled(false);
         velocity.setTextBoxStyle(ju::Slider::TextBoxLeft, false, 38, 24);
         velocity.setRange(1.0, 127.0, 1.0);
         velocity.setTooltip("Set note velocity, or right-drag a note vertically");
@@ -306,7 +323,8 @@ public:
         if (!editable || (active && !focused))
         {
             stopAudition();
-            cancelGesture();
+            if (gesture != Gesture::none || (active && !focused))
+                cancelGesture();
         }
 
         active = focused;
@@ -384,7 +402,7 @@ public:
 private:
     friend class MainGui;
 
-    enum class Gesture { none, draw, move, resize, box, addBox, velocity, rightVelocity };
+    enum class Gesture { none, draw, move, resizeStart, resizeEnd, box, velocity, rightVelocity, rightToggle };
     using G = NoteGrid;
 
     MidiNoteEditor mutation() const
@@ -670,7 +688,10 @@ private:
             g.setColour(ju::Colour(0xff141b24));
             g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
             g.setColour(ju::Colours::white);
-            g.drawText(ju::String(velocityReadout->value), bounds, ju::Justification::centred);
+            const auto& values = *velocityReadout;
+            const auto text = values.low == values.high ? ju::String(values.value)
+                : ju::String(values.low) + "–" + ju::String(values.high);
+            g.drawText(text, bounds, ju::Justification::centred);
         }
         if (active)
         {
@@ -742,10 +763,15 @@ private:
             }
     }
 
-    bool onResizeEdge(const ju::Rectangle<float>& bounds, ju::Point<int> point, double end) const
+    Gesture resizeGesture(const ju::Rectangle<float>& bounds, ju::Point<int> point, ju::Range<double> limits) const
     {
-        return bounds.getWidth() >= 10 && point.x >= bounds.getRight() - 6
-            && bounds.getRight() <= grid.x(end) + 0.01f;
+        if (bounds.getWidth() < 14)
+            return Gesture::move;
+        if (point.x < bounds.getX() + 6 && bounds.getX() >= grid.x(limits.getStart()) - 0.01f)
+            return Gesture::resizeStart;
+        if (point.x >= bounds.getRight() - 6 && bounds.getRight() <= grid.x(limits.getEnd()) + 0.01f)
+            return Gesture::resizeEnd;
+        return Gesture::move;
     }
 
     void mouseMove(const ju::MouseEvent& event) override
@@ -761,8 +787,7 @@ private:
                 const auto bounds = grid.bounds(*it);
                 if (!bounds.contains(point.toFloat()))
                     continue;
-                if (onResizeEdge(bounds, point, model.range().getEnd())
-                    && (!contains(it->id) || selected.size() <= 1))
+                if (contains(it->id) && resizeGesture(bounds, point, model.range()) != Gesture::move)
                     cursorType = ju::MouseCursor::LeftRightResizeCursor;
                 break;
             }
@@ -774,15 +799,20 @@ private:
     {
         if (!event.mods.isLeftButtonDown() && !event.mods.isRightButtonDown())
             return;
-        if (isShowing())
-            grabKeyboardFocus();
-        if (onFocus)
-            onFocus();
+        const auto focus = [this] {
+            if (isShowing())
+                grabKeyboardFocus();
+            if (onFocus)
+                onFocus();
+        };
         cancelGesture();
         if (!clip)
             return;
         const auto point = event.getPosition() - canvas().getPosition();
         const auto right = event.mods.isRightButtonDown();
+        rightPress = right;
+        if (!right)
+            focus();
         const auto area = noteArea();
         const auto model = MidiNoteEditor(*clip);
         const auto limits = model.range();
@@ -791,15 +821,23 @@ private:
             audition(grid.pitch(static_cast<float>(point.y)), 96);
             return;
         }
-        if (point.x < G::keys || point.x >= area.getRight() || !limits.contains(grid.beat(static_cast<float>(point.x))))
+        const bool inLane = point.y >= laneY() && point.y < laneY() + G::lane;
+        if (point.x < G::keys || point.x >= area.getRight())
             return;
+        if (!limits.contains(grid.beat(static_cast<float>(point.x))))
+        {
+            rightPan = right && (area.contains(point) || inLane);
+            return;
+        }
         anchor = point;
         const auto beat = grid.beat(static_cast<float>(point.x));
-        editCursor = snapped(beat);
-        if (editCursor >= limits.getEnd() && step() > 0.0)
-            editCursor = std::max(limits.getStart(), editCursor - step());
+        if (!right)
+        {
+            editCursor = snapped(beat);
+            if (editCursor >= limits.getEnd() && step() > 0.0)
+                editCursor = std::max(limits.getStart(), editCursor - step());
+        }
         auto notes = model.notes();
-        const bool inLane = point.y >= laneY() && point.y < laneY() + G::lane;
         if (inLane)
             std::stable_partition(notes.begin(), notes.end(), [this](const auto& note) { return !contains(note.id); });
         for (auto it = notes.rbegin(); it != notes.rend(); ++it)
@@ -807,22 +845,27 @@ private:
             const auto& note = *it;
             const auto bounds = grid.bounds(note);
             if (!(area.contains(point) && bounds.contains(point.toFloat()))
-                && !(inLane && limits.contains(note.start) && velocityHandle(note).expanded(3).contains(point.toFloat())))
+                && !(inLane && limits.contains(note.start)
+                    && velocityHandle(note).expanded(3).withBottom(static_cast<float>(laneY() + G::lane))
+                        .contains(point.toFloat())))
                 continue;
             if (right)
+                focus();
+            rightPress = right;
+            clicked = note;
+            const bool wasSelected = contains(note.id);
+            if (right)
             {
-                clicked = note;
-                originals = { note };
-                gesture = Gesture::rightVelocity;
+                gesture = wasSelected ? Gesture::rightVelocity : Gesture::rightToggle;
+                if (wasSelected)
+                    originals = selectedNotes();
             }
             else
             {
-                clicked = note;
-                const bool resize = !inLane && onResizeEdge(bounds, point, limits.getEnd());
-                if (!contains(note.id) || inLane)
+                if (!wasSelected)
                     selected = { note.id };
                 gesture = inLane ? Gesture::velocity
-                    : resize && selected.size() == 1 ? Gesture::resize : Gesture::move;
+                    : wasSelected ? resizeGesture(bounds, point, limits) : Gesture::move;
                 originals = selectedNotes();
                 if (!inLane)
                 {
@@ -833,12 +876,12 @@ private:
             notify();
             return;
         }
-        if (area.contains(point))
+        if (right)
+            rightPan = area.contains(point) || inLane;
+        else if (area.contains(point))
         {
-            if (!right)
-                selected.clear();
-            boxSelection = selected;
-            gesture = right ? Gesture::addBox : mode.getToggleState() ? Gesture::box : Gesture::draw;
+            selected.clear();
+            gesture = mode.getToggleState() ? Gesture::box : Gesture::draw;
             if (gesture == Gesture::draw && editable)
                 updatePreview(point, false);
         }
@@ -851,12 +894,12 @@ private:
             return;
         const auto model = MidiNoteEditor(*clip);
         const auto limits = model.range();
-        if (gesture == Gesture::box || gesture == Gesture::addBox)
+        if (gesture == Gesture::box)
         {
             const auto gridBounds = noteArea().withRight(
                 std::min(noteArea().getRight(), ju::roundToInt(grid.x(limits.getEnd()))));
             box = ju::Rectangle<int>(anchor, point).expanded(1).getIntersection(gridBounds);
-            selected = boxSelection;
+            selected.clear();
             for (const auto& note : model.notes())
                 if (!contains(note.id) && note.end() > limits.getStart() && note.start < limits.getEnd()
                     && grid.bounds(note).intersects(box.toFloat()))
@@ -866,6 +909,7 @@ private:
         if (!editable)
             return;
         preview = originals;
+        bool timingChanged = false;
         const auto raw = grid.beat(static_cast<float>(point.x));
         if (gesture == Gesture::draw)
         {
@@ -876,30 +920,61 @@ private:
             preview = {{ {}, start, std::min(limits.getEnd() - start, std::max(MidiNoteEditor::minimumLength, length)),
                          grid.pitch(static_cast<float>(anchor.y)), rememberedVelocity }};
         }
-        else if (gesture == Gesture::move)
+        else if (gesture == Gesture::move || gesture == Gesture::resizeStart || gesture == Gesture::resizeEnd)
         {
-            const auto shift = point.x == anchor.x ? 0.0 : snapped(clicked.start + (point.x - anchor.x) / grid.scale) - clicked.start;
-            const auto pitches = grid.pitch(static_cast<float>(point.y)) - grid.pitch(static_cast<float>(anchor.y));
+            auto shift = (point.x - anchor.x) / grid.scale;
+            if (step() > 0.0)
+                shift = std::round(shift / step()) * step();
+            auto pitches = gesture == Gesture::move
+                ? grid.pitch(static_cast<float>(point.y)) - grid.pitch(static_cast<float>(anchor.y)) : 0;
+            double lower = -std::numeric_limits<double>::infinity(), upper = -lower;
+            for (const auto& note : originals)
+            {
+                const auto minimum = std::min(note.length, MidiNoteEditor::minimumLength);
+                if (gesture == Gesture::move || gesture == Gesture::resizeStart)
+                    lower = std::max(lower, std::max(0.0, limits.getStart()) - note.start);
+                if (gesture == Gesture::move || gesture == Gesture::resizeEnd)
+                    upper = std::min(upper, limits.getEnd() - note.end());
+                if (gesture == Gesture::resizeStart)
+                    upper = std::min(upper, note.length - minimum);
+                if (gesture == Gesture::resizeEnd)
+                    lower = std::max(lower, minimum - note.length);
+                pitches = std::clamp(pitches, -note.pitch, 127 - note.pitch);
+            }
+            shift = std::clamp(shift, std::min(0.0, lower), std::max(0.0, upper));
+            timingChanged = shift != 0.0;
             for (auto& note : preview)
             {
-                note.start += shift;
+                if (gesture != Gesture::resizeEnd)
+                    note.start += shift;
+                if (gesture == Gesture::resizeStart)
+                    note.length -= shift;
+                if (gesture == Gesture::resizeEnd)
+                    note.length += shift;
                 note.pitch += pitches;
             }
         }
-        else if (gesture == Gesture::resize)
-            preview.front().length = std::min(limits.getEnd(), snapped(clicked.end() + (point.x - anchor.x) / grid.scale)) - clicked.start;
-        else if (gesture == Gesture::velocity)
-            preview.front().velocity = ju::jlimit(1, 127, ju::roundToInt(1.0 + 126.0 * (laneY() + G::lane - 4 - point.y) / (G::lane - 8)));
-        else if (gesture == Gesture::rightVelocity)
-            preview.front().velocity = ju::jlimit(1, 127, clicked.velocity + anchor.y - point.y);
+        else if (gesture == Gesture::velocity || gesture == Gesture::rightVelocity)
+        {
+            const auto dy = anchor.y - point.y;
+            auto delta = gesture == Gesture::velocity ? ju::roundToInt(dy * 126.0 / (G::lane - 8)) : dy;
+            for (const auto& note : originals)
+                delta = std::clamp(delta, 1 - note.velocity, 127 - note.velocity);
+            for (auto& note : preview)
+                note.velocity += delta;
+        }
         if (!std::all_of(preview.begin(), preview.end(), [&](const auto& note) {
-                if (gesture == Gesture::velocity || gesture == Gesture::rightVelocity || (gesture == Gesture::move && point.x == anchor.x))
+                if (gesture == Gesture::velocity || gesture == Gesture::rightVelocity || (gesture == Gesture::move && !timingChanged))
                     return note.pitch >= 0 && note.pitch <= 127;
                 return model.valid(note);
             }))
             preview.clear();
         if ((gesture == Gesture::velocity || gesture == Gesture::rightVelocity) && !preview.empty())
-            velocityReadout = VelocityReadout { preview.front().velocity, point };
+        {
+            const auto [low, high] = std::minmax_element(preview.begin(), preview.end(),
+                [](const auto& a, const auto& b) { return a.velocity < b.velocity; });
+            velocityReadout = VelocityReadout { previewFor(clicked).velocity, point, low->velocity, high->velocity };
+        }
         if (gesture == Gesture::move && !preview.empty())
         {
             const auto& note = previewFor(clicked);
@@ -913,7 +988,7 @@ private:
 
     void mouseDrag(const ju::MouseEvent& event) override
     {
-        if (gesture != Gesture::none && (gestureDragged || event.getDistanceFromDragStart() >= 4))
+        if (!rightWheel && gesture != Gesture::none && (gestureDragged || event.getDistanceFromDragStart() >= 4))
         {
             gestureDragged = true;
             updatePreview(event.getPosition() - canvas().getPosition(), true);
@@ -923,8 +998,11 @@ private:
 
     void mouseUp(const ju::MouseEvent& event) override
     {
-        if (!clip || gesture == Gesture::none)
+        if (!clip || gesture == Gesture::none || rightWheel)
+        {
+            cancelGesture();
             return;
+        }
         const bool dragged = gestureDragged || event.getDistanceFromDragStart() >= 4;
         if (dragged)
             updatePreview(event.getPosition() - canvas().getPosition(), true);
@@ -945,19 +1023,20 @@ private:
             {
                 const bool adjustingVelocity = gesture == Gesture::velocity || gesture == Gesture::rightVelocity;
                 const auto label = adjustingVelocity ? "Set MIDI velocity"
-                    : gesture == Gesture::resize ? "Resize MIDI note" : "Move MIDI notes";
+                    : (gesture == Gesture::resizeStart || gesture == Gesture::resizeEnd) ? "Resize MIDI notes" : "Move MIDI notes";
                 if (model.change(preview, label) && adjustingVelocity)
-                    rememberedVelocity = preview.front().velocity;
+                    rememberedVelocity = previewFor(clicked).velocity;
             }
         }
-        if (!dragged && gesture == Gesture::rightVelocity)
+        if (!dragged && (gesture == Gesture::rightVelocity || gesture == Gesture::rightToggle))
         {
             if (contains(clicked.id))
                 std::erase(selected, clicked.id);
             else
                 selected.push_back(clicked.id);
         }
-        if (!dragged && (gesture == Gesture::move || gesture == Gesture::resize))
+        if (!dragged && (gesture == Gesture::move || gesture == Gesture::resizeStart
+            || gesture == Gesture::resizeEnd || gesture == Gesture::velocity))
             selected = { clicked.id };
         cancelGesture();
         notify();
@@ -967,10 +1046,22 @@ private:
     {
         if ((interceptWheel && interceptWheel(event, wheel)) || !clip)
             return;
-        if (wheel.deltaX != 0 || event.mods.isShiftDown())
-            scrollTime(-(wheel.deltaX != 0 ? wheel.deltaX : wheel.deltaY) * visibleBeats());
-        else
+        if (rightPress)
+        {
+            rightWheel = true;
+            preview.clear();
+            velocityReadout.reset();
+            repaint();
+            if (rightPan)
+            {
+                scrollTime(-(wheel.deltaY != 0 ? wheel.deltaY : wheel.deltaX) * visibleBeats());
+                return;
+            }
+        }
+        if (wheel.deltaY != 0)
             scrollPitch(-ju::roundToInt(wheel.deltaY * 12));
+        else if (wheel.deltaX != 0)
+            scrollTime(-wheel.deltaX * visibleBeats());
     }
 
     void timerCallback() override { stopAudition(); }
@@ -1003,7 +1094,7 @@ private:
         gestureDragged = false;
         originals.clear();
         preview.clear();
-        boxSelection.clear();
+        rightPress = rightWheel = rightPan = false;
         clicked = {};
         box = {};
         lastAudition = -1;
@@ -1018,14 +1109,15 @@ private:
     GridNote clicked {};
     ju::Point<int> anchor;
     ju::Rectangle<int> box;
-    struct VelocityReadout { int value; ju::Point<int> pointer; };
+    struct VelocityReadout { int value; ju::Point<int> pointer; int low, high; };
     std::optional<VelocityReadout> velocityReadout;
     std::optional<double> playbackCursor;
     double editCursor = 0.0, followResumeTime = 0.0, rememberedLength = 0.25;
     static constexpr int defaultVelocity = 96;
     int lastAudition = -1, rememberedVelocity = defaultVelocity;
     bool gestureDragged = false;
-    std::vector<ju::ValueTree> selected, boxSelection;
+    std::vector<ju::ValueTree> selected;
+    bool rightPress = false, rightWheel = false, rightPan = false;
     std::vector<GridNote> originals, preview, clipboard;
     ju::Label name;
     ju::TextButton close { "×" }, mode { "DRAW" }, quantize { "QUANTIZE" };

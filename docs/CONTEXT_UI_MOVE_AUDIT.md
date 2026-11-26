@@ -25,3 +25,17 @@ The former ruler target took precedence over even a valid, retained Timeline cli
 | Piano Roll | Edit commands use the selected notes and note clipboard. Movement stays on selected notes with the independent grid. |
 | Drum Pattern Editor | Edit commands use the selected cells and drum clipboard. Move preserves existing lane validation and fixed horizontal snap. The Master and its lanes retain their Track List protections. |
 | Inspector and Effects Editor | UAT Edit and Move are unavailable with editor focus. Inspector actions, including clip Clone, are independent. |
+
+## v0.26.3 interaction audit
+
+Audit input `cc2c558`. The accepted v0.26.2 bindings exposed the following differences before W06.
+
+| Workspace | Existing behavior | W06 implementation |
+| --- | --- | --- |
+| Timeline and Track List | One arrangement component owns the shared vertical viewport. Timeline right press toggled clip selection immediately. Shift in the clip area created a range, and clicking empty clip space could seek. Clip drag used the existing placement engine. | Right release toggles the latched object after a click. A right-wheel gesture started over empty Timeline space pans horizontally. Ruler handling is isolated from clip input and preserves effective focus. Direct clip drags use a common relative snap displacement and reuse placement or source-resize validation. |
+| Inspector | A vertical JUCE viewport hosts the controls. The volume slider could consume wheel input. | Disable slider wheel value changes and let the wheel reach the viewport. Context UI retains wheel ownership while open. |
+| Piano Roll | Draw/Select, body movement, single-note trailing-edge resize and right drag already existed. Right drag could affect an unselected note and velocity bars changed one note. The note editor permits pitch/time overlaps. | Keep overlap behavior and the existing note transaction. Selected edges resize the group. Selected-note and velocity-bar drags apply one bounded velocity delta. Right-wheel pan starts in empty space. |
+| Drum Pattern Editor | Left click toggled cells, left drag boxed, and the wheel changed selected velocities. UAT movement rejected occupied destinations. The velocity panel showed one lane at a time. | Draw/Select and direct drag share the editor selection. Direct drag atomically replaces occupied unselected cells while retaining subdivision data. UAT movement retains its existing validation. The bottom panel displays active hit velocities and paints selected bars last. |
+| Command groups | Permanent Size buttons called the single-item sizing operations. There was no active popup Size page. | Remove Size buttons and retain the underlying sizing operations. Experimental mode continues to open on Move and cycle with Edit. |
+
+Direct clip resizing reuses existing source, loop, frozen-track, and linked-family restrictions. A group gesture with incompatible sizing plans for the same linked family makes no edit. Live content edits remain subject to the existing playback and recording gates.

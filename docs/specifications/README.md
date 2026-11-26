@@ -58,10 +58,10 @@ Drum Mixer remains sequenced after the normal Mixer. MDT recording and monitorin
 | --- | --- | --- |
 | v0.26.1 | CUI0/CUI1 | Edit · Context UI Foundation, accepted experimental milestone at `e1921ec` |
 | v0.26.2 | CUI2 | Move · accepted experimental milestone at `a8fcd4b`, with F07 deferred |
-| v0.26.3 | CUI3 | Size and F07 Timeline ruler interaction isolation · awaiting design review and authorization |
+| v0.26.3 | CUI3 | Direct Manipulation & Interaction Standardization, including W06 and F07 · Windows verification pending |
 | v0.26.4 | CUI4 | Modify |
 
-Edit opens first in v0.26.1. Move opens first in v0.26.2. The eventual forward wheel order is Move → Size → Edit → Modify → Move. CUI3 and later phases require separate authorization. [Context UI specification](../CONTEXT_UI_EXPERIMENT.md#approved-development-sequence) · [Foundation acceptance](../testing/context-ui-foundation.md) · [Move acceptance](../testing/context-ui-move.md#final-owner-acceptance) · [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
+Edit opens first in v0.26.1. Move opens first in v0.26.2. v0.26.3 keeps Move and Edit, removes Size commands from the toolbar, and sets the eventual wheel order to Move → Edit → Modify → Move. Modify requires separate authorization. [Context UI specification](../CONTEXT_UI_EXPERIMENT.md#approved-development-sequence) · [Foundation acceptance](../testing/context-ui-foundation.md) · [Move acceptance](../testing/context-ui-move.md#final-owner-acceptance) · [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
 
 ## Deferred integration — MX0 Mixer Foundation
 

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(SimpleDAW VERSION 0.26.2 LANGUAGES C CXX)
+project(SimpleDAW VERSION 0.26.3 LANGUAGES C CXX)
 
 include(FetchContent)
 # Use the JUCE revision recorded by Tracktion Engine v3.2.0.
