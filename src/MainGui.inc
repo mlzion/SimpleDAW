@@ -5433,7 +5433,15 @@ private:
         return delta;
     }
 
-    double snapSeconds(double seconds) const
+    static double nearestRangeDivision(double divisions, bool earlier)
+    {
+        const auto lower = std::floor(divisions);
+        if (std::abs(divisions - lower - 0.5) <= 1.0e-9)
+            return lower + (earlier ? 0.0 : 1.0);
+        return std::round(divisions);
+    }
+
+    double snapSeconds(double seconds, std::optional<bool> rangeEarlier = {}) const
     {
         seconds = ju::jlimit(0.0, te::Edit::getMaximumEditEnd().inSeconds(), seconds);
         if (!edit || snap.getSelectedId() <= 1)
@@ -5446,14 +5454,23 @@ private:
         if (snap.getSelectedId() == snapBar)
         {
             const auto next = barTime(bar + 1);
-            return ju::jmin(te::Edit::getMaximumEditEnd(),
-                time - barStart < next - time ? barStart : next).inSeconds();
+            const auto distance = ((time - barStart) - (next - time)).inSeconds();
+            const bool useEarlier = rangeEarlier && std::abs(distance) <= 1.0e-9
+                ? *rangeEarlier : distance < 0.0;
+            const auto limit = te::Edit::getMaximumEditEnd();
+            if (rangeEarlier && next > limit)
+                return barStart.inSeconds();
+            return ju::jmin(limit, useEarlier ? barStart : next).inSeconds();
         }
         const auto beat = sequence.toBeats(time);
         const auto origin = sequence.toBeats(barStart);
         const auto increment = sequence.getTimeSigAt(time).denominator.get() / (4.0 * subdivisions);
-        const auto steps = std::round((beat - origin).inBeats() / increment);
-        return sequence.toTime(origin + te::BeatDuration::fromBeats(steps * increment)).inSeconds();
+        const auto divisions = (beat - origin).inBeats() / increment;
+        const auto steps = rangeEarlier ? nearestRangeDivision(divisions, *rangeEarlier) : std::round(divisions);
+        const auto snapped = sequence.toTime(origin + te::BeatDuration::fromBeats(steps * increment));
+        if (rangeEarlier && snapped > te::Edit::getMaximumEditEnd())
+            return sequence.toTime(origin + te::BeatDuration::fromBeats((steps - 1.0) * increment)).inSeconds();
+        return snapped.inSeconds();
     }
 
     void seek(double seconds, bool quantise = true)
@@ -6753,16 +6770,21 @@ private:
     {
         if (draggingRange)
         {
-            auto a = te::TimePosition::fromSeconds(snapSeconds(dragAnchor));
-            auto b = te::TimePosition::fromSeconds(snapSeconds(pointerTime));
-            if (a == b)
-            {
-                // Keep short drags usable when both endpoints round to the same grid line.
-                const auto limit = te::Edit::getMaximumEditEnd().inSeconds();
-                a = te::TimePosition::fromSeconds(std::clamp(dragAnchor, 0.0, limit));
-                b = te::TimePosition::fromSeconds(std::clamp(pointerTime, 0.0, limit));
-            }
-            rangePreview = te::TimeRange(std::min(a, b), std::max(a, b));
+            const auto limit = te::Edit::getMaximumEditEnd().inSeconds();
+            const auto anchor = std::clamp(dragAnchor, 0.0, limit);
+            const auto displacement = std::clamp(pointerTime, 0.0, limit) - anchor;
+            constexpr double offIncrement = 0.010;
+            const bool off = snap.getSelectedId() <= snapOff;
+            const auto snapOffRange = [limit](double time, bool earlier) {
+                return std::min(nearestRangeDivision(time / offIncrement, earlier), std::floor(limit / offIncrement))
+                    * offIncrement;
+            };
+            const auto origin = off ? snapOffRange(anchor, false) : snapSeconds(anchor, false);
+            const auto moving = std::clamp(origin + displacement, 0.0, limit);
+            const auto destination = off ? snapOffRange(moving, displacement < 0.0) : snapSeconds(moving, displacement < 0.0);
+            const auto a = te::TimePosition::fromSeconds(origin);
+            const auto b = te::TimePosition::fromSeconds(std::clamp(destination, 0.0, limit));
+            rangePreview = a == b ? std::nullopt : std::optional(te::TimeRange(std::min(a, b), std::max(a, b)));
         }
         else if (dragItem.isValid())
         {
@@ -6805,10 +6827,12 @@ private:
             updateSelectionBox(event.getPosition());
             updateControls();
         }
-        else if (editingStopped() && (dragItem.isValid() ? event.getDistanceFromDragStart() >= 5
-                                                       : std::abs(event.getDistanceFromDragStartX()) >= 5))
+        else if (editingStopped() && (draggingRange || (dragItem.isValid() ? event.getDistanceFromDragStart() >= 5
+                                                       : std::abs(event.getDistanceFromDragStartX()) >= 5)))
         {
-            updateDragPreview(timeAt(event.x), dragItem.isValid() ? std::optional{ dragTargetRow(event) } : std::nullopt);
+            const auto pointerTime = draggingRange ? dragAnchor + event.getDistanceFromDragStartX() / pixelsPerSecond
+                                                   : timeAt(event.x);
+            updateDragPreview(pointerTime, dragItem.isValid() ? std::optional{ dragTargetRow(event) } : std::nullopt);
             arrangement.repaint();
         }
     }
@@ -6860,10 +6884,12 @@ private:
             else if (*actionSelection.requestedArea == EditingArea::timeline)
                 seek(timeAt(event.x));
         }
-        else if (editingStopped() && (dragItem.isValid() ? event.getDistanceFromDragStart() >= 5
-                                                        : std::abs(event.getDistanceFromDragStartX()) >= 5))
+        else if (editingStopped() && (draggingRange || (dragItem.isValid() ? event.getDistanceFromDragStart() >= 5
+                                                        : std::abs(event.getDistanceFromDragStartX()) >= 5)))
         {
-            updateDragPreview(timeAt(event.x), dragItem.isValid() ? std::optional{ dragTargetRow(event) } : std::nullopt);
+            const auto pointerTime = draggingRange ? dragAnchor + event.getDistanceFromDragStartX() / pixelsPerSecond
+                                                   : timeAt(event.x);
+            updateDragPreview(pointerTime, dragItem.isValid() ? std::optional{ dragTargetRow(event) } : std::nullopt);
             finishDrag();
         }
         else if (dragItem.isValid() && event.getDistanceFromDragStart() < 5)

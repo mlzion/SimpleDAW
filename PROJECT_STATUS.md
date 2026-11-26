@@ -12,6 +12,8 @@ Initial Windows x64 Release `/MD` CI at `d38f90b` passed all 18 CTests and porta
 
 Correction CI at `c9a89fd` passed 16 of 18 Windows CTests. The chevron test now closes the graphics session before retrieving pixels. The Inspector Clone fail-fast remains unclassified from the available log. Checkpoints and a Windows-only diagnostic path are ready for the next authorized run. All 18 Linux CTests and 20 additional runs each of the two focused cases passed. [Failure investigation](docs/testing/context-ui-move.md#windows-failure-investigation-at-c9a89fd)
 
+The owner passed F01–F04 at `e1f9ed9`. F05 corrects time-window creation so a drag advances at each halfway threshold and coincident snapped ends create no window. Corrected Windows CI and live verification await separate authorization. [F05 acceptance record](docs/testing/context-ui-move.md#f01f05-owner-results)
+
 ## v0.26.1 — Context UI Foundation CUI0/CUI1 — ACCEPTED EXPERIMENTAL MILESTONE
 
 The experimental branch adds a session-only Options toggle, a middle-click Edit popup and a labeled wheel test page. The popup uses the existing UAT availability and dispatch for Cut, Delete, Copy and Paste, and validates editing focus and selection again before dispatching. Classic mode is the startup default. [Implementation brief](docs/CONTEXT_UI_EXPERIMENT.md) · [Baseline command and input audit](docs/CONTEXT_UI_AUDIT.md)

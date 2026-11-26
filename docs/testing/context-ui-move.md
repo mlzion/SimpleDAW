@@ -11,7 +11,7 @@ The owner reported eight clean passes, two passes with findings, and two failure
 | F03 | The edit-cursor handle worked but was too small. | The ruler keeps its bar and elapsed-time labels above a dedicated handle area. Check the larger cursor hit area, selection feedback, ordinary ruler seeking, and range dragging. |
 | F04 | The time-window handle was absent, preventing selection and Move. | Make a short drag within one bar using startup 1 Bar snap. Confirm a labeled time-window handle appears and highlights when clicked. Move it in both directions and verify duration and loop state. Delete must clear the window and loop markers while leaving selected or enclosed clips intact. Retest the handle with the range near the window edge. |
 
-If snapping would collapse both ends of a real range drag to the same point, the correction uses the pointer endpoints. Horizontal Move still uses the selected snap increment. Window boundary sizing remains deferred.
+The initial F04 correction created an unsnapped range when both snapped endpoints coincided. F05 supersedes that behavior. Window boundary sizing remains deferred.
 
 ## Correction verification
 
@@ -29,3 +29,14 @@ Windows x64 Release `/MD` compiled, then 16 of 18 CTests passed. The failed test
 The clone test now emits flushed checkpoints before each major operation and teardown. On the next authorized Windows run the workflow repeats the case ten times after the full suite passes. If the case fails in either step, the workflow prints matching Application events and attempts a bounded debugger rerun where Windows SDK `cdb` is available. The debugger records exception parameters and a stack if the fail-fast recurs. The original failure remains a failure and blocks publication. The exact crash cause remains open pending Windows evidence.
 
 The post-investigation build passed all 18 Linux Release CTests under Xvfb and 20 additional consecutive runs each of `context_toolbar` and `inspector_clone`. Review of F01–F04 found no changes needed to their application behavior. The diagnostics and chevron readback correction are pending Windows verification.
+
+
+### F01–F05 owner results
+
+The owner passed F01–F04 on `e1f9ed9`. Windows CI at that revision passed all 18 CTests and all 10 additional Inspector Clone runs, then verified runtime imports and isolated startup. [Windows CI](https://github.com/mlzion/SimpleDAW/actions/runs/45769122990) · [Live-tested ZIP and matching source](https://github.com/mlzion/SimpleDAW/actions/runs/45769122990/artifacts/15094125741)
+
+**F05 remains pending Windows verification.** Dragging below the first halfway threshold leaves the existing selection intact or creates no window if none exists. At each halfway threshold, the moving end snaps one increment farther in that direction. The same divisions apply in reverse and while shrinking a drag. On Snap OFF the increment for creating a window is 10 ms. Ordinary cursor positioning, selected-window Move and Delete, and ruler handle sizes retain their existing behavior.
+
+For the focused retest, create ranges from an off-grid start in both directions. Check just below, at and above the first, second and third halfway thresholds, then shrink the drag through them before releasing. Repeat with 1 Bar and a finer grid. At a zoom that makes 5 ms selectable, repeat with Snap OFF. Confirm coincident snapped endpoints never create an unsnapped window, and then select, move and delete a valid range.
+
+The F05 correction passed all 18 Linux Release CTests under Xvfb. The Context UI test checks the first three halfway thresholds in both directions while extending and shrinking, with 1 Bar, 1/16 and Snap OFF. Mouse-event coverage verifies 4 ms creates no range and 5 ms commits a 10 ms range at high zoom. It also verifies preserving a previously committed range, ordinary cursor positioning, handle rendering and hit testing, and selected-window Move and Delete.

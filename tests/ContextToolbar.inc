@@ -642,18 +642,87 @@
         meter.setStringTimeSig("4/4");
 
         const auto selected = gui.actionSelection.clips;
-        const auto first = ju::Point<int>(gui.timeX(seconds(0.2)), 22);
-        const auto last = ju::Point<int>(gui.timeX(seconds(0.7)), 22);
-        const auto down = mouse(gui.arrangement, first, ju::ModifierKeys::leftButtonModifier);
-        const auto dragTime = ju::Time::getCurrentTime();
-        const auto drag = ju::MouseEvent(ju::Desktop::getInstance().getMainMouseSource(), last.toFloat(),
-            ju::ModifierKeys(ju::ModifierKeys::leftButtonModifier), 0, 0, 0, 0, 0,
-            &gui.arrangement, &gui.arrangement, dragTime, first.toFloat(), dragTime, 1, true);
-        gui.arrangement.mouseDown(down);
-        gui.arrangement.mouseDrag(drag);
-        gui.arrangement.mouseUp(drag);
-        if (!check(gui.snap.getSelectedId() == snapBar && gui.timeSelection && !gui.timeSelection->isEmpty()
-            && gui.snapSeconds(0.2) == gui.snapSeconds(0.7), "a short default-bar ruler drag creates a time window"))
+        const auto checkThresholds = [&](int grid, double increment, double anchor) {
+            gui.snap.setSelectedId(grid, ju::dontSendNotification);
+            gui.draggingRange = true;
+            gui.dragAnchor = anchor;
+            const auto fixed = seconds(8.0);
+            // Increase and then decrease the same drag without resetting its anchor.
+            for (const auto direction : { 1, -1 })
+                for (const auto& [steps, length] : std::array<std::pair<double, int>, 13> {{
+                    { 0.49, 0 }, { 0.50, 1 }, { 0.51, 1 }, { 1.49, 1 }, { 1.50, 2 }, { 1.51, 2 },
+                    { 2.49, 2 }, { 2.50, 3 }, { 2.51, 3 }, { 2.49, 2 }, { 1.49, 1 }, { 0.49, 0 }, { 0.0, 0 }
+                }})
+                {
+                    gui.updateDragPreview(anchor + direction * steps * increment);
+                    const auto& range = gui.rangePreview;
+                    if (length == 0)
+                    {
+                        if (!check(!range, "below halfway creates no range, including when shrinking"))
+                            return false;
+                    }
+                    else
+                    {
+                        const auto endpoint = seconds(8.0 + direction * length * increment);
+                        if (!check(range
+                            && std::abs((range->getStart() - std::min(fixed, endpoint)).inSeconds()) < 1.0e-9
+                            && std::abs((range->getEnd() - std::max(fixed, endpoint)).inSeconds()) < 1.0e-9,
+                            "halfway snaps to the next division in either direction"))
+                            return false;
+                    }
+                }
+            gui.draggingRange = false;
+            return true;
+        };
+        if (!checkThresholds(snapBar, gui.barTime(1).inSeconds(), 8.2)
+            || !checkThresholds(4, 0.125, 8.02)
+            || !checkThresholds(snapOff, 0.010, 8.002))
+            return false;
+
+        gui.snap.setSelectedId(snapOff, ju::dontSendNotification);
+        gui.seek(1.234);
+        if (!check(gui.editCursor == seconds(1.234), "Snap Off leaves cursor positioning unquantized"))
+            return false;
+        const auto dragRuler = [&](double start, double end, bool shrink = false) {
+            const auto first = ju::Point<int>(gui.timeX(seconds(start)), 22);
+            const auto down = mouse(gui.arrangement, first, ju::ModifierKeys::leftButtonModifier);
+            const auto dragTime = ju::Time::getCurrentTime();
+            const auto eventAt = [&](double time) {
+                const auto position = ju::Point<int>(gui.timeX(seconds(time)), 22);
+                return ju::MouseEvent(ju::Desktop::getInstance().getMainMouseSource(), position.toFloat(),
+                    ju::ModifierKeys(ju::ModifierKeys::leftButtonModifier), 0, 0, 0, 0, 0,
+                    &gui.arrangement, &gui.arrangement, dragTime, first.toFloat(), dragTime, 1, true);
+            };
+            gui.arrangement.mouseDown(down);
+            if (shrink)
+                gui.arrangement.mouseDrag(eventAt(start + 1.2));
+            const auto drag = eventAt(end);
+            gui.arrangement.mouseDrag(drag);
+            gui.arrangement.mouseUp(drag);
+        };
+        const auto savedScale = gui.pixelsPerSecond;
+        gui.pixelsPerSecond = 1000.0;
+        dragRuler(0.202, 0.206);
+        if (!check(!gui.timeSelection, "a real 4 ms ruler drag creates no Snap Off window"))
+            return false;
+        dragRuler(0.202, 0.207);
+        if (!check(gui.timeSelection && std::abs(gui.timeSelection->getLength().inSeconds() - 0.01) < 1.0e-9,
+            "a real 5 ms ruler drag commits a 10 ms Snap Off window"))
+            return false;
+        gui.clearTimeSelection();
+        gui.pixelsPerSecond = savedScale;
+        gui.snap.setSelectedId(snapBar, ju::dontSendNotification);
+        dragRuler(0.2, 0.7, true);
+        if (!check(!gui.timeSelection && gui.rulerHandle(RulerTarget::window).isEmpty(),
+            "releasing a ruler drag below halfway leaves no time window"))
+            return false;
+        dragRuler(0.2, 1.3);
+        if (!check(gui.timeSelection == te::TimeRange(seconds(0), gui.barTime(1)),
+            "a ruler drag past halfway commits exactly one bar"))
+            return false;
+        dragRuler(0.2, 0.7);
+        if (!check(gui.timeSelection == te::TimeRange(seconds(0), gui.barTime(1)),
+            "a sub-threshold drag keeps the previously committed time window"))
             return false;
 
         const auto initialRange = *gui.timeSelection;
