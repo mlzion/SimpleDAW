@@ -1,18 +1,20 @@
 # SimpleDAW project status
 
-## v0.26.2 — Context UI Move CUI2
+## v0.26.2 — Context UI Move CUI2 — ACCEPTED EXPERIMENTAL MILESTONE
+
+The owner accepted `a8fcd4b` as `v0.26.2-experimental`. All A–J Windows live checks passed except G05. F01–F06 are closed. W01–W05 are accepted with one W03 exception, F07 (Timeline ruler interaction isolation), deferred to v0.26.3. CUI3 awaits design review and separate authorization. [Acceptance record](docs/testing/context-ui-move.md#final-owner-acceptance) · [Accepted Windows ZIP and matching source](https://github.com/mlzion/SimpleDAW/actions/runs/45890602357/artifacts/15152520441)
 
 Move opens first in experimental mode and cycles with Edit. The popup remains anchored across commands while its originating workspace and target remain valid. Move reuses UAT dispatch and includes the workspace-specific snap selector. Classic mode restores the permanent Edit and Move groups. [CUI2 scope and verification](docs/CONTEXT_UI_EXPERIMENT.md#v0262--cui2-move-approved-implementation-scope) · [Movement audit](docs/CONTEXT_UI_MOVE_AUDIT.md)
 
 W01–W05 are implemented within the approved scope. Piano Roll reveals its edited row after layout, ruler handles directly move the edit cursor and move or resize the time window, Timeline snap defaults to 1 Bar, and the Track List uses compact numbered names without input-channel badges. Existing Master Drum Track positioning passed regression coverage. [Workflow Improvement Log](docs/WORKFLOW_IMPROVEMENT_LOG.md)
 
-Debian 13 x64 Release (Clang 19, `-O1`, Xvfb) passed all 18 CTests and three additional runs of `context_toolbar`. Native X11 checks verified Move-first opening, wheel wrap, dismissal, classic restoration and the snap arrow rolling from 1 Bar to OFF without closing the popup. Windows x64 Release `/MD` CI awaits separate authorization. [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
+Debian 13 x64 Release (Clang 19, `-O1`, Xvfb) passed all 18 CTests and three additional runs of `context_toolbar`. Native X11 checks verified Move-first opening, wheel wrap, dismissal, classic restoration and the snap arrow rolling from 1 Bar to OFF without closing the popup. Accepted Windows x64 Release `/MD` CI passed all 18 CTests, ten additional Inspector Clone runs, and runtime and startup verification. [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
 
 Initial Windows x64 Release `/MD` CI at `d38f90b` passed all 18 CTests and portable verification. The owner reported eight clean passes, two passes with findings, and two failures in live testing. Corrections address snap chevrons, post-layout Piano Roll visibility, larger ruler handles, and usable short time-window drags under coarse snap. [Windows acceptance and findings](docs/testing/context-ui-move.md)
 
-Correction CI at `c9a89fd` passed 16 of 18 Windows CTests. The chevron test now closes the graphics session before retrieving pixels. The Inspector Clone fail-fast remains unclassified from the available log. Checkpoints and a Windows-only diagnostic path are ready for the next authorized run. All 18 Linux CTests and 20 additional runs each of the two focused cases passed. [Failure investigation](docs/testing/context-ui-move.md#windows-failure-investigation-at-c9a89fd)
+Correction CI at `c9a89fd` passed 16 of 18 Windows CTests. The chevron test now closes the graphics session before retrieving pixels. The Inspector Clone fail-fast remains unclassified from the available log. The subsequent accepted run used instrumented checkpoints and the termination did not recur. All 18 Linux CTests and 20 additional runs each of the two focused cases passed. [Failure investigation](docs/testing/context-ui-move.md#windows-failure-investigation-at-c9a89fd)
 
-The owner passed F01–F04 at `e1f9ed9` and reported F05 at `efa4ed2`. Revised W03 restores continuous ruler drag feedback, snaps the committed length, clears zero-length drags and adds direct handle movement, resizing and deletion. The F06 audit confirmed and removed ruler targeting that could override clip commands. Windows CI and focused live verification await separate authorization. [Acceptance record](docs/testing/context-ui-move.md#f01f05-owner-results)
+The owner passed F01–F04 at `e1f9ed9` and reported F05 at `efa4ed2`. Revised W03 restores continuous ruler drag feedback, snaps the committed length, clears zero-length drags and adds direct handle movement, resizing and deletion. The F06 audit confirmed and removed ruler targeting that could override clip commands. The owner closed F05 and F06 in the final acceptance. [Acceptance record](docs/testing/context-ui-move.md#f01f05-owner-results)
 
 ## v0.26.1 — Context UI Foundation CUI0/CUI1 — ACCEPTED EXPERIMENTAL MILESTONE
 

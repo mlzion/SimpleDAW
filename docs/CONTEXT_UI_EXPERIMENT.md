@@ -38,11 +38,11 @@ The owner reported all C01–C10 passed on `790f532`, including appearance and u
 | Version | Phase | Popup page |
 | --- | --- | --- |
 | v0.26.1 | CUI0/CUI1 — Context UI Foundation | Edit |
-| v0.26.2 | CUI2 | Move |
-| v0.26.3 | CUI3 | Size |
+| v0.26.2 | CUI2 | Move · accepted at `a8fcd4b` |
+| v0.26.3 | CUI3 | Size · includes deferred F07 ruler interaction isolation |
 | v0.26.4 | CUI4 | Modify |
 
-v0.26.1 is the first accepted experimental milestone. Each later phase requires separate implementation authorization and Windows live acceptance before progression. Preserve the existing UAT command behavior as each group is moved into the popup. Navigation, other controls, interface cleanup, and workflow improvements remain for separate authorization. [Workflow Improvement Log](WORKFLOW_IMPROVEMENT_LOG.md)
+v0.26.1 is the first accepted experimental milestone. v0.26.2 is the accepted Move milestone, with F07 deferred. CUI3 awaits design review and separate implementation authorization. Each later phase requires its own Windows live acceptance before progression. [CUI2 acceptance](testing/context-ui-move.md#final-owner-acceptance) Preserve the existing UAT command behavior as each group is moved into the popup. Navigation, other controls, interface cleanup, and workflow improvements remain for separate authorization. [Workflow Improvement Log](WORKFLOW_IMPROVEMENT_LOG.md)
 
 ## v0.26.2 — CUI2 Move: approved implementation scope
 
@@ -66,5 +66,5 @@ Audit source command inventory and report context matrix. Add regression tests f
 - Perform Edit and Move actions without reopening the popup. Verify surviving selections, updated availability, stale-target dismissal, and normal input after dismissal.
 - Verify direct cursor drag, ruler click positioning and double-click reset to zero; no cursor/window UAT or CUI targeting.
 - Verify continuous pointer-following range preview and nearest-division final snapping at successive halfway thresholds, reverse and shrinking drags, zero-length release clearing previous range, and 10 ms OFF. Verify center drag preserves duration, double-click deletes, both boundary handles resize and reaching opposite boundary deletes. Preserve clip selection, loop semantics and time-window-dependent commands.
-- Recheck existing Move/Edit commands across workspaces for possible F06 regressions; reproduce and report any failures. F05 failed Windows live at efa4ed2; revised W03 requires fresh live acceptance.
+- Recheck existing Move/Edit commands across workspaces for possible F06 regressions; reproduce and report any failures. The owner closed F05 and F06 on `a8fcd4b` and deferred only G05 (F07).
 - Check that opening Piano Roll keeps the edited row above the dock, the Master scrolls out while retaining first position, and ordinary Track List identifiers follow track order. Confirm classic mode restores the permanent Edit and Move groups.

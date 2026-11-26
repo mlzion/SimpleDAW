@@ -1,6 +1,6 @@
 # SimpleDAW — Workflow Improvement Log
 
-Living experimental-branch decision log. Entries are approved design requirements unless otherwise marked; implementation requires separate phase authorization. CUI0/CUI1 is accepted. W01–W05 are authorized for v0.26.2, including revised W03 direct manipulation and boundary sizing. Do not change main/MX0.
+Living experimental-branch decision log. Entries are approved design requirements unless otherwise marked; implementation requires separate phase authorization. CUI0/CUI1 is accepted. W01–W05 were accepted for v0.26.2 at `a8fcd4b`, with F07 deferred as the W03 exception. [Owner acceptance](testing/context-ui-move.md#final-owner-acceptance) Do not change main/MX0.
 
 ## W01 — Piano Roll automatic vertical scrolling
 Status: Windows live PASS; retain regression coverage.
@@ -12,7 +12,7 @@ Status: Windows live PASS; retain regression coverage.
 Requirement: Master Drum Track remains above ordinary Track #1, cannot be reordered among ordinary tracks, and participates in normal vertical scrolling so it can scroll entirely out of view. Child lanes remain attached to parent. Verify existing behavior before changing code; preserve lane reorder within parent and existing numbering rules.
 
 ## W03 — Direct manipulation of timeline edit cursor and time window
-Status: Implemented for v0.26.2. Windows verification and owner acceptance pending. Supersedes previous selectable UAT/CUI target design and CUI3 sizing deferral.
+Status: Windows live accepted for v0.26.2 with the G05 exception. F07 — Timeline ruler interaction isolation — is deferred to v0.26.3 for correction during CUI3.
 - Edit cursor: click ruler to position as before; drag cursor icon horizontally following timeline snap; double-click icon returns to time zero. No selection step or UAT/CUI command targeting.
 - Time window: drag ruler to create with continuous pointer-following visual preview between snap thresholds. Final range rounds drag distance from snapped start to nearest division, ties away from start, in either direction and at every successive threshold, including shrinking. Below first halfway threshold or returning to start and releasing leaves no window, even if a previous window existed. Never commit an unsnapped fallback range.
 - Drag center icon to move entire window following snap, preserving duration. Double-click center icon deletes window. Provide vertical boundary handles aligned with center icon; drag either to resize only that boundary following nearest-division snap. Reaching the opposite boundary deletes the window.
@@ -24,5 +24,5 @@ Status: Windows live PASS, including corrected snap arrows; retain regression co
 Ensure Timeline snap options include 1 Bar and 1/2 (half note), alongside 1/4, 1/8, 1/16, 1/32 and OFF (10 ms). Verify existing options before adding duplicates. Set 1 Bar as the default on program startup. Preserve meter-aware bar length and existing editor-specific snap behavior unless separately approved. Use compact left/right snap arrows above Move buttons, with bidirectional rollover and persistent popup. Future Size page reuses selector; separate Snap page deferred.
 
 ## W05 — Track List visual cleanup
-Status: IMPLEMENTED in v0.26.2; Windows verification pending.
+Status: Windows live PASS for v0.26.2.
 Remove Input 1 and Input 2 display icons from Track List rows; retain input configuration and routing functionality in Inspector. Restore approved compact ordinary track title format: track number immediately followed by A (Audio) or M (MIDI), space, user-assigned name (example: 3A Guitar 1). Do not append redundant Audio/MIDI type labels. Derive identifier from current track order and type; update after insert/delete/reorder, without changing stored user name. Preserve Master Drum Track and child lane numbering exemptions and existing functional controls. Implementation authorized in CUI2.

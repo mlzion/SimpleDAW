@@ -6,7 +6,7 @@ SimpleDAW is free and open-source software. Its original code is released under 
 
 ## v0.26.2 Context UI Move experiment
 
-On this branch, **Options → Experimental Context UI** enables the middle-click Move and Edit popup. Move opens first and offers context-specific snap arrows. The v0.26.2 Windows build awaits authorization. [CUI2 specification and verification checklist](docs/CONTEXT_UI_EXPERIMENT.md#v0262--cui2-move-approved-implementation-scope)
+On this branch, **Options → Experimental Context UI** enables the middle-click Move and Edit popup. Move opens first and offers context-specific snap arrows. The owner accepted this experimental milestone at `a8fcd4b` (`v0.26.2-experimental)). The G05 ruler isolation finding is deferred to v0.26.3. [Acceptance record](docs/testing/context-ui-move.md#final-owner-acceptance) · [Windows ZIP and matching source](https://github.com/mlzion/SimpleDAW/actions/runs/45890602357/artifacts/15152520441)
 
 ## v0.26.1 Context UI Foundation experiment
 
