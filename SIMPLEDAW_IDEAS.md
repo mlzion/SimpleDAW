@@ -24,6 +24,7 @@ Branch: `design-sandbox`
 | IDEA-002 | Audio Quantization Editor | Advanced Audio Editing; late-stage, post core-feature completion | APPROVED | Guitar, piano, vocals; automatic/manual timing correction, pitch preservation, non-destructive; technical feasibility investigation required. |
 | IDEA-003 | Shapeable Automation Clips for Tremolo / Vibrato | Automation Editor / audio and MIDI modulation; after core DAW operational | PROPOSED | Place movable, resizable modulation clips on automation lane; shape rate and depth over time; design details pending. |
 | IDEA-004 | MIDI Step Sequencer / Arpeggiator | MIDI editing / post-core DAW | PROPOSED | Reuse Drum Pattern Editor concepts; manual and automatic sequencing; capture to MIDI clip. |
+| IDEA-005 | Recent Projects | File menu / pre-release application polish | APPROVED | Persistent Open Recent submenu; last 10 projects. |
 
 ## Implementation phase index
 
@@ -53,6 +54,12 @@ This index groups sandbox ideas by **recommended** phase for future planning. A 
 | --- | --- | --- | --- |
 | [IDEA-004 — MIDI Step Sequencer / Arpeggiator](#idea-004--midi-step-sequencer--arpeggiator-2026-11-24) | PROPOSED | Not promoted | Not authorized; revisit after core DAW completion |
 
+### Pre-release — General Application Polish
+
+| Idea | Sandbox status | Canonical spec | Implementation |
+| --- | --- | --- | --- |
+| [IDEA-005 — Recent Projects](#idea-005--recent-projects-2026-11-26) | APPROVED | Not promoted | Not authorized |
+
 ### Unscheduled / awaiting phase assignment
 
 No ideas currently assigned.
@@ -67,6 +74,7 @@ Use the same idea ID throughout discussion, specification promotion, implementat
 | IDEA-002 | Not promoted | Not authorized | — | — | Sandbox approved; late-stage feasibility review pending |
 | IDEA-003 | Not promoted | Not authorized | — | — | Proposed; revisit after core DAW completion |
 | IDEA-004 | Not promoted | Not authorized | — | — | Proposed; post-core design and reuse review pending |
+| IDEA-005 | Not promoted | Not authorized | — | — | Sandbox approved; pre-release polish |
 
 When an idea progresses, record the canonical spec document and section, promotion PR/commit, explicit implementation authorization, implementation PR/commit, release version, and acceptance result. Never label an idea implemented solely because its sandbox status is APPROVED. Preserve history after delivery rather than removing completed ideas.
 
@@ -168,6 +176,24 @@ Add an entry for each idea with its ID, date, status, scope, behavior, tradeoffs
 **Open decisions:** Pattern length, pitch range and scrolling, gate/subdivision semantics, chord source and capture workflow, live versus offline generation, timing and note termination, and exact shared editor architecture. Detailed design and acceptance criteria deferred.
 
 **Authority:** PROPOSED sandbox idea only. No changes to current MD0 requirements, canonical specs, application code, or implementation authorization. No Codex notification needed now.
+
+### IDEA-005 — Recent Projects (2026-11-26)
+
+**Status:** APPROVED (sandbox only)  
+**Subsystem:** File menu / application preferences / project lifecycle  
+**Recommended phase:** General application polish before first full release.
+
+**Approved behavior:**
+- Add an Open Recent submenu to the File menu.
+- Remember the last 10 successfully opened or saved projects, most recent first.
+- Persist the list across application sessions; avoid duplicate entries.
+- Provide Clear Recent Projects.
+- Warn if a selected project has moved or been deleted.
+- Use the existing unsaved-changes prompt before switching projects.
+
+**Open implementation details:** Path normalization, missing-entry cleanup, and exact menu labels can be resolved during specification promotion.
+
+**Authority:** Sandbox approval only; no canonical changes or implementation authorization.
 
 ## Promotion log
 
