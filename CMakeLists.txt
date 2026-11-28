@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(SimpleDAW VERSION 0.25.1 LANGUAGES C CXX)
+project(SimpleDAW VERSION 0.26.3 LANGUAGES C CXX)
 
 include(FetchContent)
 # Use the JUCE revision recorded by Tracktion Engine v3.2.0.
@@ -52,7 +52,7 @@ if(MSVC)
     endif()
 endif()
 juce_generate_juce_header(SimpleDAW)
-target_sources(SimpleDAW PRIVATE src/Main.cpp src/PianoRoll.h src/PianoRollTest.inc tests/EffectsFoundation.cpp)
+target_sources(SimpleDAW PRIVATE src/Main.cpp src/ContextToolbar.h src/PianoRoll.h src/PianoRollTest.inc tests/EffectsFoundation.cpp)
 target_compile_features(SimpleDAW PRIVATE cxx_std_20)
 target_include_directories(SimpleDAW PRIVATE src)
 target_compile_definitions(SimpleDAW PRIVATE
@@ -90,6 +90,7 @@ if(BUILD_TESTING)
     add_test(NAME main_gui COMMAND SimpleDAW --gui-test)
     add_test(NAME gui_corrections COMMAND SimpleDAW --correction-test)
     add_test(NAME universal_actions COMMAND SimpleDAW --uat-test)
+    add_test(NAME context_toolbar COMMAND SimpleDAW --context-toolbar-test)
     add_test(NAME effects_foundation COMMAND SimpleDAW --effects-foundation-test)
     add_test(NAME midi_import COMMAND SimpleDAW --midi-import-test)
     add_test(NAME midi_inspector COMMAND SimpleDAW --midi-inspector-test)
@@ -102,7 +103,7 @@ if(BUILD_TESTING)
     add_test(NAME drum_master COMMAND SimpleDAW --drum-master-test)
     add_test(NAME device_setup COMMAND SimpleDAW --device-setup-test)
     add_test(NAME piano_roll COMMAND SimpleDAW --piano-roll-test)
-    set_tests_properties(project_round_trip main_gui gui_corrections universal_actions
+    set_tests_properties(project_round_trip main_gui gui_corrections universal_actions context_toolbar
         effects_foundation effects_editor midi_import midi_inspector inspector_loop inspector_clone
         inspector_effects audio_overlap device_setup drum_master drum_grid piano_roll
         PROPERTIES TIMEOUT 60)

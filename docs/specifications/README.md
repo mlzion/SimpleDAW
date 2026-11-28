@@ -52,8 +52,19 @@ MD0 shipped in v0.25.1 after Piano Roll P0. The accepted implementation covers t
 
 Drum Mixer remains sequenced after the normal Mixer. MDT recording and monitoring remain scoped to MD1. The dated phase-plan PDF remains the original planning record.
 
-## Next integration — MX0 Mixer Foundation
+## Context UI experimental development plan
 
-Draft PR #28 is the next integration phase after MD0. Its foundation covers the mixer workspace, channel scrolling, pinned FX1, FX2 and Master strips, and native Tracktion mixer controls and meters. Integration against accepted MD0, Windows CI, and live acceptance await separate authorization. [MX0 Mixer Foundation PR #28](https://github.com/mlzion/SimpleDAW/pull/28)
+| Version | Phase | Scope |
+| --- | --- | --- |
+| v0.26.1 | CUI0/CUI1 | Edit · Context UI Foundation, accepted experimental milestone at `e1921ec` |
+| v0.26.2 | CUI2 | Move · accepted experimental milestone at `a8fcd4b`, with F07 deferred |
+| v0.26.3 | CUI3 | Direct Manipulation & Interaction Standardization, including W06 and F07 · Windows verification pending |
+| v0.26.4 | CUI4 | Modify |
+
+Edit opens first in v0.26.1. Move opens first in v0.26.2. v0.26.3 keeps Move and Edit, removes Size commands from the toolbar, and sets the eventual wheel order to Move → Edit → Modify → Move. Modify requires separate authorization. [Context UI specification](../CONTEXT_UI_EXPERIMENT.md#approved-development-sequence) · [Foundation acceptance](../testing/context-ui-foundation.md) · [Move acceptance](../testing/context-ui-move.md#final-owner-acceptance) · [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
+
+## Deferred integration — MX0 Mixer Foundation
+
+MX0 integration is deferred while CUI0/CUI1 takes priority on the experimental branch. Draft PR #28 retains the Mixer Foundation. Its foundation covers the mixer workspace, channel scrolling, pinned FX1, FX2 and Master strips, and native Tracktion mixer controls and meters. Integration against accepted MD0, Windows CI, and live acceptance await separate authorization. [MX0 Mixer Foundation PR #28](https://github.com/mlzion/SimpleDAW/pull/28)
 
 FX return routing remains in MX1. Drum Mixer lane expansion remains in MX2, after the normal Mixer. Master Drum Track recording and monitoring remain in MD1. Experimental Context UI CUI0/CUI1 stays on its separate branch and draft PR. [Context UI PR #29](https://github.com/mlzion/SimpleDAW/pull/29)

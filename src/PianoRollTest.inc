@@ -188,6 +188,19 @@
         if (!check(roll.selectedNotes().size() == 2 && gui.canDispatch(Action::copy) && gui.canDispatch(Action::right) && !gui.canDispatch(Action::endPlus),
                    "right click adds a note to selection, with MOVE and single-note SIZE rules"))
             return false;
+        const auto beforeGroupResize = notes();
+        gesture(at(0.49, 60), at(0.74, 60));
+        if (!check(near(notes()[0].length, 0.75) && near(notes()[1].length, 0.75)
+            && near(notes()[1].start, 1.0), "trailing edge resizes both selected notes"))
+            return false;
+        gui.useHistory(false);
+        if (!check(notes() == beforeGroupResize, "one Undo restores both note lengths"))
+            return false;
+        gesture(at(0.1, 60), at(0.1, 60).translated(0, -100), right);
+        if (!check(notes()[0].velocity == 127 && notes()[1].velocity == 127 && roll.selected.size() == 2,
+                   "selected note right-drag adjusts the full group and stops at the velocity ceiling"))
+            return false;
+        gui.useHistory(false);
         const auto original = notes();
         auto* midiTrack = gui.trackAt(midiRow);
         const auto effectID = audioInserts(midiTrack).front()->itemID;
@@ -277,6 +290,7 @@
         gui.useHistory(false);
 
         const auto editedPoint = at(1.35, 64);
+        gesture(editedPoint, editedPoint);
         const auto beforeVelocityDrag = roll.selected;
         const auto priorVelocity = notes()[0].velocity;
         const auto rightEnd = editedPoint.translated(0, 16);

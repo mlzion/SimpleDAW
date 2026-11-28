@@ -135,29 +135,35 @@
             return false;
         gui.useHistory(true);
 
-        gesture(cell, cell, right);
-        ju::MouseWheelDetails wheel {};
-        wheel.deltaX = 0.05f;
-        wheel.deltaY = 1.0f;
-        gui.drumEditor.mouseWheelMove(event(next, next, 0), wheel);
-        if (!check(gui.drumEditor.velocityFeedback == "Velocity 112"
-            && hitState()[0].velocity == 112 && hitState()[1].velocity == 112
+        const auto unchanged = gui.makeDrumEditor(*clip).notes();
+        gui.drumEditor.mouseWheelMove(event(next, next, 0), { 0.05f, 1.0f, false, false, false });
+        if (!check(gui.makeDrumEditor(*clip).notes() == unchanged, "wheel scrolls without adjusting velocity"))
+            return false;
+
+        gesture(cell, cell, left);
+        gesture(cell, cell.translated(0, -12), right);
+        if (!check(hitState()[0].velocity == 112 && hitState()[1].velocity == 112
             && clip->getSequence().getNotes().getLast()->getVelocity() == 100,
-            "wheel adjusts only the selected step and all its subdivisions, with numeric feedback"))
+            "right drag adjusts a selected hit and all subdivisions"))
             return false;
-        gui.useHistory(false);
-        if (!check(gui.drumEditor.velocityFeedback == "Velocity 100", "velocity undo restores numeric feedback"))
-            return false;
-        gui.useHistory(true);
-        gesture(cell, next, left);
-        wheel.deltaY = -0.1f;
-        gui.drumEditor.mouseWheelMove(event(next, next, 0), wheel);
-        if (!check(gui.drumSteps.size() == 2 && gui.drumEditor.velocityFeedback == "Velocity 96 - 108"
+        gesture(next, next, right);
+        gesture(cell, cell.translated(0, 4), right);
+        if (!check(gui.drumSteps.size() == 2
             && hitState()[0].velocity == 108 && hitState()[1].velocity == 108
-            && clip->getSequence().getNotes().getLast()->getVelocity() == 96, "box and wheel adjust the selected group"))
+            && clip->getSequence().getNotes().getLast()->getVelocity() == 96,
+            "right drag applies one relative delta to the group"))
             return false;
         using Action = UniversalAction;
         const auto beforeMoves = gui.makeDrumEditor(*clip).notes();
+        gesture(cell, next, left);
+        const auto directGroup = gui.makeDrumEditor(*clip).notes();
+        if (!check(directGroup.size() == 3 && directGroup[0].start == .25 && directGroup[1].start == .3125
+            && directGroup[2].start == .5 && gui.drumSteps.contains({36, 1}) && gui.drumSteps.contains({36, 2}),
+            "group drag preserves notes in selected cells vacated by the same gesture"))
+            return false;
+        gui.useHistory(false);
+        if (!check(gui.makeDrumEditor(*clip).notes() == beforeMoves, "one Undo restores the full direct move"))
+            return false;
         if (!check(!gui.canDispatch(Action::left) && !gui.canDispatch(Action::up)
             && !gui.canDispatch(Action::endPlus) && !gui.canDispatch(Action::clone),
             "grid edges, SIZE and MODIFY disable their commands"))
@@ -194,13 +200,15 @@
         layered.setProperty(drumMaster::noteProperty, originalPitch, nullptr);
         if (!check(!ambiguousMove, "a shared pitch with ambiguous lane ownership blocks vertical movement"))
             return false;
-        gesture(next, next, left);
-        settle();
-        if (!check(clip->getSequence().getNotes().size() == 2, "single-click removes the occupied step"))
+        gesture(cell, next, left);
+        if (!check(clip->getSequence().getNotes().size() == 2 && hitState().empty()
+            && gui.drumSteps.contains({36, 1}), "direct drag replaces an occupied destination atomically"))
             return false;
         gui.useHistory(false);
-        if (!check(clip->getSequence().getNotes().size() == 3, "single-click removal is undoable"))
+        if (!check(gui.makeDrumEditor(*clip).notes() == beforeMoves && hitState().size() == 2,
+            "one Undo restores displaced hit and both moving subdivisions"))
             return false;
+        gesture(cell, cell, left);
         const ju::Point<int> velocityPoint(cell.x, gui.drumVelocityY(82));
         const auto previous = velocityPoint.withY(gui.drumVelocityY(108));
         gui.drumEditor.mouseDown(event(previous, previous, left));

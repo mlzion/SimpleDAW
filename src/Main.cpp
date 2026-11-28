@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <numeric>
 #include <set>
+#include <span>
 #include <thread>
 
 namespace te = tracktion;
@@ -355,9 +356,10 @@ bool DeviceSetup::test(te::Engine& engine)
 
 #include "../tests/DrumMaster.inc"
 #include "EffectsEditor.h"
+#include "ContextToolbar.h"
 
 class MainGui final : public ju::Component, private ju::Timer, private ju::MenuBarModel,
-                      private ju::ApplicationCommandTarget
+                      private ju::ApplicationCommandTarget, private ju::KeyListener
 {
     #include "MainGui.inc"
 
@@ -893,12 +895,14 @@ public:
             return;
 
         const bool testing = command == "--smoke-test" || command == "--gui-test"
-            || command == "--correction-test" || command == "--uat-test"
+            || command == "--correction-test" || command == "--uat-test" || command == "--context-toolbar-test"
             || command == "--effects-foundation-test" || command == "--effects-editor-test"
             || command == "--midi-import-test" || command == "--midi-inspector-test"
             || command == "--inspector-loop-test" || command == "--inspector-clone-test"
             || command == "--inspector-effects-test" || command == "--audio-overlap-test"
             || command == "--device-setup-test" || command == "--drum-master-test" || command == "--piano-roll-test" || command == "--drum-grid-test";
+        if (command == "--inspector-clone-test")
+            std::fputs("Inspector Clone: initialize test engine\n", stderr);
         engine = std::make_unique<te::Engine>(testing ? "SimpleDAWSmokeTest" : "SimpleDAW",
             std::make_unique<SimpleDawUIBehaviour>(), std::make_unique<SimpleDawEngineBehaviour>(testing));
         engine->getPluginManager().createBuiltInType<drumMaster::Sampler>();
@@ -911,6 +915,8 @@ public:
                 passed = MainGui::testCorrections(*engine);
             else if (command == "--uat-test")
                 passed = MainGui::testUniversalActions(*engine);
+            else if (command == "--context-toolbar-test")
+                passed = MainGui::testContextToolbar(*engine);
             else if (command == "--drum-grid-test")
                 passed = MainGui::testDrumGrid(*engine);
             else if (command == "--drum-master-test")
@@ -922,7 +928,10 @@ public:
             else if (command == "--inspector-effects-test")
                 passed = MainGui::testInspectorEffects(*engine);
             else if (command == "--inspector-clone-test")
+            {
                 passed = MainGui::testInspectorClone(*engine);
+                std::fputs("Inspector Clone: fixture returned, shutting down test engine\n", stderr);
+            }
             else if (command == "--inspector-loop-test")
                 passed = MainGui::testInspectorLoop(*engine);
             else if (command == "--midi-inspector-test")

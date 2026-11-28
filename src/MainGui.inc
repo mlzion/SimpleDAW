@@ -10,6 +10,11 @@
     };
 
     enum class EditingArea { window, inspector, timeline, tracks };
+    enum class RulerHandle { none, cursor, centre, start, end };
+    enum class ClipDragEdge { none, start, end };
+    static constexpr int snapOff = 1, snapThirtySecond = 6, snapHalf = 7, snapBar = 8;
+    static constexpr std::array timelineSnapOrder { snapOff, snapThirtySecond, 4, 3, 2, snapHalf, snapBar };
+    static constexpr std::array pianoSnapOrder { 1, 5, 4, 3, 2 };
     enum class UniversalAction
     {
         cut, remove, copy, paste, up, down, left, right,
@@ -17,6 +22,25 @@
     };
 
     using ItemSelection = std::set<te::EditItemID>;
+
+    struct ContextTarget
+    {
+        struct DrumSelection
+        {
+            std::set<DrumStep> steps;
+            std::optional<int> pasteStep;
+            bool operator==(const DrumSelection&) const = default;
+        };
+
+        EditingArea area;
+        ju::ValueTree track, midi;
+        ItemSelection clips;
+        std::vector<ju::ValueTree> notes;
+        te::TimePosition cursor;
+        double noteCursor = 0.0;
+        std::optional<DrumSelection> drum;
+        bool operator==(const ContextTarget&) const = default;
+    };
 
     struct ActionSelection
     {
@@ -146,6 +170,7 @@
             formats.registerBasicFormats();
             setWantsKeyboardFocus(true);
             setTitle("Track list and arrangement");
+            setMouseClickGrabsKeyboardFocus(false);
         }
 
         struct Wave
@@ -166,16 +191,39 @@
         void paint(ju::Graphics& g) override { owner.paintArrangement(g); }
         void paintOverChildren(ju::Graphics& g) override { owner.paintArrangementSelection(g); }
         void changeListenerCallback(ju::ChangeBroadcaster*) override { repaint(); }
-        void mouseDown(const ju::MouseEvent& event) override { owner.arrangementDown(event); }
+        void mouseDown(const ju::MouseEvent& event) override
+        {
+            if (!owner.tryOpenContextToolbar(event))
+                owner.arrangementDown(event);
+        }
+        void mouseMove(const ju::MouseEvent& event) override
+        {
+            const auto* clip = owner.arrangementClipAt(event.getPosition());
+            const bool resize = clip && owner.editingStopped() && owner.actionSelection.clips.contains(clip->itemID)
+                && owner.clipEdgeAt(*clip, event.x) != ClipDragEdge::none;
+            setMouseCursor(resize ? ju::MouseCursor::LeftRightResizeCursor : ju::MouseCursor::NormalCursor);
+        }
         void mouseDrag(const ju::MouseEvent& event) override { owner.arrangementDrag(event); }
         void mouseUp(const ju::MouseEvent& event) override { owner.arrangementUp(event); }
-        void mouseDoubleClick(const ju::MouseEvent& event) override { owner.openClipEditor(event); }
-        void mouseWheelMove(const ju::MouseEvent&, const ju::MouseWheelDetails& wheel) override
+        void mouseDoubleClick(const ju::MouseEvent& event) override { owner.arrangementDoubleClick(event); }
+        void mouseWheelMove(const ju::MouseEvent& event, const ju::MouseWheelDetails& wheel) override
         {
-            if (wheel.deltaX != 0.0f)
-                owner.scrollTime(-wheel.deltaX * getWidth() / owner.pixelsPerSecond);
-            else if (wheel.deltaY != 0.0f)
+            if (owner.routeContextWheel(event, wheel))
+                return;
+            if (owner.arrangementRightPress)
+            {
+                owner.arrangementRightWheel = true;
+                if (owner.arrangementRightPan)
+                {
+                    owner.scrollTime(-(wheel.deltaY != 0.0f ? wheel.deltaY : wheel.deltaX)
+                        * getWidth() / owner.pixelsPerSecond);
+                    return;
+                }
+            }
+            if (wheel.deltaY != 0.0f)
                 owner.scrollRows(wheel.deltaY > 0 ? -1 : 1);
+            else if (wheel.deltaX != 0.0f)
+                owner.scrollTime(-wheel.deltaX * getWidth() / owner.pixelsPerSecond);
         }
 
         ju::AudioThumbnail& waveform(te::EditItemID id, const ju::File& file)
@@ -191,6 +239,19 @@
         ju::AudioFormatManager formats;
         ju::AudioThumbnailCache cache { 48 };
         std::map<te::EditItemID, std::unique_ptr<Wave>> waves;
+    };
+
+    struct InspectorViewport final : ju::Viewport
+    {
+        explicit InspectorViewport(MainGui& gui) : owner(gui) {}
+
+        void mouseWheelMove(const ju::MouseEvent& event, const ju::MouseWheelDetails& wheel) override
+        {
+            if (!owner.routeContextWheel(event, wheel))
+                ju::Viewport::mouseWheelMove(event, wheel);
+        }
+
+        MainGui& owner;
     };
 
     enum class Arrow { screenLeft, screenRight, left, right, up, down };
@@ -266,6 +327,9 @@ public:
         commandManager.setFirstCommandTarget(this);
         setApplicationCommandManagerToWatch(&commandManager);
         addAndMakeVisible(menuBar);
+        addChildComponent(contextToolbar);
+        contextToolbar.onAction = [this](ContextToolbar::Command action) { invokeContextAction(action); };
+        contextToolbar.onDismiss = [this] { dismissContextToolbar(); };
         addAndMakeVisible(arrangement);
         addAndMakeVisible(inspector);
         addAndMakeVisible(inspectorDivider);
@@ -280,6 +344,9 @@ public:
         drumEditor.addMouseListener(this, true);
         pianoRoll.addMouseListener(this, true);
         pianoRoll.onFocus = [this] { focusPianoRoll(); };
+        pianoRoll.interceptWheel = [this](const ju::MouseEvent& event, const ju::MouseWheelDetails& wheel) {
+            return routeContextWheel(event, wheel);
+        };
         pianoRoll.onChange = [this] { updateControls(); };
         pianoRoll.onClose = [this] { closePianoRoll(); };
         pianoRoll.linkedMembers = [this](te::MidiClip& clip) {
@@ -352,17 +419,19 @@ public:
                 edit->setCountInMode(edit->getCountInMode() == te::Edit::CountIn::none
                     ? te::Edit::CountIn::oneBar : te::Edit::CountIn::none);
         });
-        combo(snap, second, { "SNAP OFF", "SNAP 1/4", "SNAP 1/8", "SNAP 1/16" }, "Timeline snap");
-        snap.setSelectedId(4, ju::dontSendNotification);
+        combo(snap, second, {}, "Timeline snap");
+        const std::array<ju::String, 7> snapNames { "SNAP OFF", "SNAP 1/32", "SNAP 1/16",
+                                                    "SNAP 1/8", "SNAP 1/4", "SNAP 1/2", "SNAP 1 Bar" };
+        for (size_t i = 0; i < timelineSnapOrder.size(); ++i)
+            snap.addItem(snapNames[i], timelineSnapOrder[i]);
+        snap.setSelectedId(snapBar, ju::dontSendNotification);
 
         using Action = UniversalAction;
         addActionGroup(0, "EDIT", 0xff263e53, { { "CUT", Action::cut }, { "DELETE", Action::remove },
                                                 { "COPY", Action::copy }, { "PASTE", Action::paste } });
         addActionGroup(1, "MOVE", 0xff2b4257, { { "↑  UP", Action::up }, { "↓  DOWN", Action::down },
                                                 { "←  LEFT", Action::left }, { "→  RIGHT", Action::right } });
-        addActionGroup(2, "SIZE", 0xff30465a, { { "START −", Action::startMinus }, { "START +", Action::startPlus },
-                                                { "END −", Action::endMinus }, { "END +", Action::endPlus } });
-        addActionGroup(3, "MODIFY", 0xff354a5e, { { "DUPLICATE", Action::duplicate }, { "CLONE", Action::clone },
+        addActionGroup(2, "MODIFY", 0xff354a5e, { { "DUPLICATE", Action::duplicate }, { "CLONE", Action::clone },
                                                   { "SPLIT", Action::split }, { "TRIM", Action::trim } });
         undoButton = &button(historyButtons, "UNDO", [this] { useHistory(false); });
         redoButton = &button(historyButtons, "REDO", [this] { useHistory(true); });
@@ -500,6 +569,7 @@ public:
                              &inspectorFadeIn, &inspectorFadeOut })
             slider->setTooltip(slider->getName());
         inspectorVolume.setSliderStyle(ju::Slider::LinearVertical);
+        inspectorVolume.setScrollWheelEnabled(false);
         inspectorVolume.setRange(-60, 6, 0.1);
         inspectorVolume.setTextValueSuffix(" dB");
         inspectorPan.setRange(-100, 100, 1);
@@ -702,9 +772,13 @@ public:
     ~MainGui() override
     {
         stopTimer();
+        dismissContextToolbar();
         pianoRoll.clearProject();
         if (shortcutHost != nullptr)
+        {
+            shortcutHost->removeKeyListener(this);
             shortcutHost->removeKeyListener(commandManager.getKeyMappings());
+        }
         setApplicationCommandManagerToWatch(nullptr);
         menuBar.setModel(nullptr);
         stop();
@@ -743,6 +817,7 @@ public:
     {
         shortcutHost = &host;
         host.addKeyListener(commandManager.getKeyMappings());
+        host.addKeyListener(this);
     }
 
     bool prepareToQuit()
@@ -756,6 +831,9 @@ public:
 
     void resized() override
     {
+        if (contextToolbar.getBounds() != getLocalBounds())
+            dismissContextToolbar();
+        contextToolbar.setBounds(getLocalBounds());
         auto area = getLocalBounds().reduced(5);
         menuBar.setBounds(area.removeFromTop(28));
         layoutRow(first, area.removeFromTop(42), { 10, 10, 10, 10, 10, 25, 12, 13 }, { 5, 6 });
@@ -774,7 +852,7 @@ public:
             control->setBounds(historyControls.removeFromTop(42).reduced(2));
             historyControls.removeFromTop(4);
         }
-        for (size_t i = 0; i < actionGroups.size(); ++i)
+        for (size_t i = contextMode ? 2 : 0; i < actionGroups.size(); ++i)
         {
             auto& group = actionGroups[i];
             auto bounds = toolbar.removeFromLeft(toolbar.getWidth() / static_cast<int>(actionGroups.size() - i));
@@ -841,22 +919,39 @@ public:
             inspectorLoopCount.setBounds(loopRow.reduced(2));
         }
 
-        arrangement.setBounds(area);
+        auto arrangementArea = area;
         if (effectsEditor.isVisible() || pianoRoll.isVisible() || drumEditor.isVisible())
         {
             auto timeline = area.withTrimmedLeft(headerWidth);
             ju::Component* editor = drumEditor.isVisible() ? static_cast<ju::Component*>(&drumEditor)
                 : pianoRoll.isVisible() ? static_cast<ju::Component*>(&pianoRoll) : static_cast<ju::Component*>(&effectsEditor);
             editorAnimator.cancelAnimation(editor, false);
-            editingPanelArea.setBounds(timeline.removeFromBottom(ju::roundToInt(0.8 * timeline.getHeight())));
-            editor->setBounds(editingPanelArea.getLocalBounds());
-            if (drumEditor.isVisible())
+            // Effects needs its existing dock height for the parameter controls at minimum window size.
+            auto reservedHeight = editor == &effectsEditor ? 0 : rulerHeight;
+            if (editor == &pianoRoll)
             {
-                fitDrumViewport(drumViewStart);
-                scrollDrumRows(0);
+                const auto* clip = edit ? te::findClipForID(*edit, pianoRollClip) : nullptr;
+                const auto* track = clip ? dynamic_cast<const te::AudioTrack*>(clip->getTrack()) : nullptr;
+                reservedHeight += heightForTrack(track);
             }
+            const auto dockHeight = std::min(ju::roundToInt(0.8 * timeline.getHeight()),
+                std::max(0, timeline.getHeight() - reservedHeight));
+            editingPanelArea.setBounds(timeline.removeFromBottom(dockHeight));
+            if (editor == &pianoRoll)
+                arrangementArea.setBottom(timeline.getBottom());
+            editor->setBounds(editingPanelArea.getLocalBounds());
+        }
+        arrangement.setBounds(arrangementArea);
+        if (drumEditor.isVisible())
+        {
+            fitDrumViewport(drumViewStart);
+            scrollDrumRows(0);
         }
         scrollRows(0);
+        if (pianoRoll.isVisible() && edit)
+            if (const auto* clip = te::findClipForID(*edit, pianoRollClip))
+                if (const auto row = visibleTracks().indexOf(dynamic_cast<te::AudioTrack*>(clip->getTrack())); row >= 0)
+                    revealTrack(row);
     }
 
     #include "PianoRollTest.inc"
@@ -976,7 +1071,7 @@ public:
         if (!writeTestWave(sample.getFile()) || missingDrumSample(*duplicate))
             return fail(__LINE__);
         const auto restoredHeader = drawHeader();
-        auto nameBounds = gui.trackPaintBounds(*duplicate, 0, 44).withTrimmedRight(24 + 46).reduced(5, 3);
+        auto nameBounds = gui.trackPaintBounds(*duplicate, 0, 44).withTrimmedRight(24).reduced(5, 3);
         nameBounds = nameBounds.withTrimmedBottom(8).withTrimmedLeft(7);
         bool changedName = false;
         for (int y = 0; y < availableHeader.getHeight(); ++y)
@@ -1076,6 +1171,8 @@ public:
 
     static bool testEffectsEditor(te::Engine& engine);
 
+    #include "../tests/ContextToolbar.inc"
+
     static bool testUniversalActions(te::Engine& engine)
     {
         using Action = UniversalAction;
@@ -1092,8 +1189,8 @@ public:
             return passed;
         };
         MainGui gui(engine, dir.getChildFile("gui.settings"));
-        if (!check(gui.actionButtons.size() == 16 && std::none_of(gui.actionButtons.begin(), gui.actionButtons.end(),
-                [](const auto& slot) { return slot.button->isEnabled(); }), "four fixed groups and inert initial state"))
+        if (!check(gui.actionButtons.size() == 12 && std::none_of(gui.actionButtons.begin(), gui.actionButtons.end(),
+                [](const auto& slot) { return slot.button->isEnabled(); }), "three fixed groups without Size and inert initial state"))
             return false;
 
         gui.setProject(te::createEmptyEdit(engine, project), project);
@@ -1167,6 +1264,12 @@ public:
                    "only the inspected track pulses and timeline selections are retained"))
             return false;
         click({ gui.timeX(seconds(1.0)), 10 });
+        if (!check(gui.activeEditingArea() == EditingArea::inspector && gui.actionSelection.clips.size() == 2,
+                   "ruler click preserves the inspected target and retained clip group"))
+            return false;
+        gui.arrangement.mouseDown(mouse(gui.arrangement, from, ju::ModifierKeys::leftButtonModifier, from));
+        gui.arrangement.mouseDrag(mouse(gui.arrangement, to, ju::ModifierKeys::leftButtonModifier, from, true));
+        gui.arrangement.mouseUp(mouse(gui.arrangement, to, 0, from, true));
         if (!check(gui.actionSelection.track == second->itemID && gui.trackIsHighlighted(*first)
                 && gui.trackIsHighlighted(*second) && gui.inspector.getText().contains("2 clips selected")
                 && gui.canDispatch(Action::copy),
@@ -1213,6 +1316,7 @@ public:
                 && !gui.trackIsHighlighted(*first) && !gui.trackIsHighlighted(*second),
                    "empty Timeline selection sets paste destination without a stale track highlight"))
             return false;
+        click({ gui.timeX(seconds(4.13)), 10 });
         const auto destination = gui.editCursor;
         gui.dispatchAction(Action::paste);
         auto* pasted = gui.selectedClip();
@@ -1863,10 +1967,15 @@ public:
 
     static bool testInspectorClone(te::Engine& engine)
     {
+        const auto checkpoint = [](const char* operation) {
+            std::fprintf(stderr, "Inspector Clone: %s\n", operation);
+            std::fflush(stderr);
+        };
         const auto fail = [](int line) {
             std::fprintf(stderr, "Inspector regression failed at MainGui.inc:%d\n", line);
             return false;
         };
+        checkpoint("create fixture and GUI");
         const auto dir = ju::File::getSpecialLocation(ju::File::tempDirectory)
             .getNonexistentChildFile("SimpleDAW-inspector-clone", {});
         if (dir.createDirectory().failed())
@@ -1890,12 +1999,13 @@ public:
         gui.actionSelection.requestedArea = EditingArea::timeline;
         gui.editCursor = start + duration * 2;
         gui.updateControls();
-        auto& modify = gui.actionGroups[3].buttons;
+        auto& modify = gui.actionGroups[2].buttons;
         if (modify.size() != 4)
             return fail(__LINE__);
         auto& cloneButton = *static_cast<ju::TextButton*>(modify[1]);
         if (!cloneButton.isEnabled() || cloneButton.getButtonText() != "CLONE")
             return fail(__LINE__);
+        checkpoint("create linked MIDI child");
         gui.dispatchAction(UniversalAction::clone);
         auto* clone = gui.selectedClip();
         if (!clone || clone == source.get() || clone->getPosition().getStart() != gui.editCursor
@@ -1904,6 +2014,7 @@ public:
         if (cloneButton.getButtonText() != "UNCLONE" || !cloneButton.isEnabled())
             return fail(__LINE__);
         const auto cloneID = clone->itemID;
+        checkpoint("move linked child, Undo and Redo");
         const auto move = gui.movePlan({ clone }, 1, duration);
         if (!gui.applyClipChanges(move, "Move clone") || clone->getTrack() != gui.trackAt(sourceRow + 1)
             || source->getPosition().getStart() != start || !gui.movePlan({ clone }, 1, {}).empty())
@@ -1914,6 +2025,7 @@ public:
         gui.useHistory(true);
         if (clone->getTrack() != gui.trackAt(sourceRow + 1))
             return fail(__LINE__);
+        checkpoint("apply linked Inspector velocity, colour and mute");
         gui.setMidiInspectorValue(midiVelocityProperty, 50, 100, "Velocity");
         if (static_cast<int>(source->state.getProperty(midiVelocityProperty)) != 50)
             return fail(__LINE__);
@@ -1926,6 +2038,7 @@ public:
         if (!source->isMuted() || !clone->isMuted())
             return fail(__LINE__);
         gui.useHistory(false);
+        checkpoint("check linked Split/Trim restrictions and unlink");
         for (auto* linked : std::array<te::Clip*, 2> { source.get(), clone })
         {
             const auto range = linked->getPosition().time;
@@ -1944,12 +2057,14 @@ public:
         gui.useHistory(false);
         if (gui.cloneMembers(*source).size() != 2)
             return fail(__LINE__);
+        checkpoint("remove and restore original parent");
         gui.edit->getUndoManager().beginNewTransaction("Remove parent");
         source->removeFromParent();
         if (gui.cloneMembers(*clone).size() != 1 || gui.cloneMembers(*clone).front() != clone)
             return fail(__LINE__);
         gui.useHistory(false);
         gui.editCursor = start + duration * 6;
+        checkpoint("duplicate clip independently and save");
         gui.dispatchAction(UniversalAction::duplicate);
         auto* duplicate = gui.selectedClip();
         if (!duplicate || duplicate->itemID == cloneID || gui.cloneMembers(*duplicate).size() != 1
@@ -1965,6 +2080,7 @@ public:
         };
         if (gui.cloneRole(*duplicate) != CloneRole::independent || gui.inspector.role != CloneRole::independent)
             return fail(__LINE__);
+        checkpoint("clone from parent and check history");
         selectClip(*source);
         gui.editCursor = start + duration * 7;
         if (cloneButton.getButtonText() != "CLONE" || gui.inspector.role != CloneRole::parent)
@@ -1984,6 +2100,7 @@ public:
         if (!secondClone || gui.cloneMembers(*source).size() != 3)
             return fail(__LINE__);
 
+        checkpoint("unclone child and undo");
         selectClip(*secondClone);
         cloneButton.onClick();
         if (gui.cloneRole(*secondClone) != CloneRole::independent || gui.cloneMembers(*source).size() != 2)
@@ -1992,6 +2109,7 @@ public:
         if (gui.cloneRole(*secondClone) != CloneRole::child || gui.cloneMembers(*source).size() != 3)
             return fail(__LINE__);
 
+        checkpoint("delete parent, verify promotion and save");
         const auto clonePosition = clone->getPosition();
         const auto secondPosition = secondClone->getPosition();
         selectClip(*source);
@@ -2010,6 +2128,7 @@ public:
         if (gui.cloneRole(*clone) != CloneRole::parent || cloneButton.getButtonText() != "CLONE" || !gui.save())
             return fail(__LINE__);
 
+        checkpoint("reopen project and verify restored clone family");
         MainGui reloaded(engine, dir.getChildFile("reload.settings"));
         auto reopened = te::loadEditFromFile(engine, project);
         if (!reopened)
@@ -2022,6 +2141,7 @@ public:
             || static_cast<int>(restoredSecond->state[midiVelocityProperty]) != 50)
             return fail(__LINE__);
 
+        checkpoint("render Inspector parent and child badges");
         const auto hasBadgeColour = [](CloneRole role, ju::Colour colour) {
             ju::Image badge(ju::Image::ARGB, 20, 16, true);
             {
@@ -2038,6 +2158,7 @@ public:
             || hasBadgeColour(CloneRole::independent, ju::Colours::gold) || hasBadgeColour(CloneRole::independent, ju::Colours::orange))
             return fail(__LINE__);
 
+        checkpoint("insert source WAV and clone audio");
         const auto wave = dir.getChildFile("sample.wav");
         auto* audioTrack = gui.trackAt(sourceRow + 2);
         if (!writeTestWave(wave) || !insertAudio(*audioTrack, wave, start))
@@ -2047,10 +2168,13 @@ public:
         gui.editCursor = start + duration;
         cloneButton.onClick();
         auto* audioChild = dynamic_cast<te::WaveAudioClip*>(gui.selectedClip());
-        return audioChild && audioChild != audio && audioChild->getOriginalFile() == wave
+        const bool passed = audioChild && audioChild != audio && audioChild->getOriginalFile() == wave
             && gui.cloneRole(*audio) == CloneRole::parent && gui.cloneRole(*audioChild) == CloneRole::child
             && cloneButton.getButtonText() == "UNCLONE";
-
+        if (!passed)
+            return fail(__LINE__);
+        checkpoint("checks passed, releasing test fixtures");
+        return true;
     }
 
     static bool testInspectorEffects(te::Engine& engine)
@@ -2369,6 +2493,7 @@ public:
             || !check(!gui.hasProjectChanges(), "saving clears dirty state"))
             return false;
 
+        gui.snap.setSelectedId(4, ju::dontSendNotification);
         const auto from = te::TimePosition::fromSeconds(gui.snapSeconds(0.68));
         if (!check(insertAudio(*firstTrack, audio, from), "import WAV"))
             return false;
@@ -2823,7 +2948,15 @@ private:
                 add({ synth, reverb, vst3 });
                 break;
             }
-            case 3: add({ devices, armAudio, armMidi, monitoringReport }); break;
+            case 3:
+                add({ devices, armAudio, armMidi, monitoringReport });
+                menu.addSeparator();
+                menu.addItem("Experimental Context UI", true, contextMode,
+                    [safe = ju::Component::SafePointer<MainGui>(this)] {
+                        if (safe != nullptr)
+                            safe->setContextMode(!safe->contextMode);
+                    });
+                break;
             case 4: add({ about }); break;
             case 5:
             {
@@ -3866,32 +3999,30 @@ private:
         const bool move = action == Action::left || action == Action::right;
         const bool start = action == Action::startMinus || action == Action::startPlus;
         const bool earlier = action == Action::left || action == Action::startMinus || action == Action::endMinus;
-        const auto grid = snap.getSelectedId();
-        auto delta = te::TimeDuration::fromSeconds(earlier ? -0.010 : 0.010);
-        if (grid > 1)
+        auto anchor = te::Edit::getMaximumEditEnd();
+        for (auto* clip : clips)
         {
-            auto anchor = te::Edit::getMaximumEditEnd();
-            for (auto* clip : clips)
-            {
-                auto pos = clip->getPosition();
-                if (!move && clip->isLooping() && canControlLoop(*clip))
-                    pos = singleLoopPattern(*clip);
-                anchor = std::min(anchor, (move || start) ? pos.getStart() : pos.getEnd());
-            }
-            const auto& sequence = edit->tempoSequence;
-            const auto step = sequence.getTimeSigAt(anchor).denominator.get() / (4.0 * (1 << (grid - 2)));
-            const auto targetBeat = sequence.toBeats(anchor) + te::BeatDuration::fromBeats(earlier ? -step : step);
-            if (targetBeat < te::BeatPosition{})
-                return {};
-            delta = sequence.toTime(targetBeat) - anchor;
+            auto pos = clip->getPosition();
+            if (!move && clip->isLooping() && canControlLoop(*clip))
+                pos = singleLoopPattern(*clip);
+            anchor = std::min(anchor, (move || start) ? pos.getStart() : pos.getEnd());
         }
+        const auto step = timelineMoveDelta(anchor, earlier);
+        if (!step)
+            return {};
+        const auto delta = *step;
 
         if (move)
             return movePlan(clips, 0, delta);
 
-        auto* clip = clips.front();
+        return clips.size() == 1 ? resizeClip(*clips.front(), start, delta) : std::vector<ClipChange>{};
+    }
+
+    std::vector<ClipChange> resizeClip(te::Clip& target, bool start, te::TimeDuration delta) const
+    {
+        auto* clip = &target;
         auto* source = dynamic_cast<te::AudioTrack*>(clip->getTrack());
-        if (clips.size() != 1 || !ordinaryClip(*clip) || !source || source->isFrozen(te::Track::anyFreeze)
+        if (!ordinaryClip(*clip) || !source || source->isFrozen(te::Track::anyFreeze)
             || (clip->isLooping() && !canControlLoop(*clip)) || clip->getNumTakes(true) > 1)
             return {};
 
@@ -4391,6 +4522,212 @@ private:
         return pianoRoll.isVisible() && activeEditingArea() == EditingArea::window;
     }
 
+    void setContextMode(bool enabled)
+    {
+        dismissContextToolbar();
+        contextMode = enabled;
+        for (size_t index : { 0u, 1u })
+        {
+            auto& group = actionGroups[index];
+            group.frame.setVisible(!enabled);
+            for (auto* button : group.buttons)
+                button->setVisible(!enabled);
+        }
+        // Arrangement and Piano Roll already take focus explicitly on left/right clicks.
+        for (auto* surface : { static_cast<ju::Component*>(&effectsEditor),
+                               static_cast<ju::Component*>(&inspector),
+                               &inspectorControls })
+            surface->setMouseClickGrabsKeyboardFocus(!enabled);
+        resized();
+    }
+
+    static UniversalAction contextAction(ContextToolbar::Command action)
+    {
+        switch (action)
+        {
+            case ContextToolbar::Command::cut: return UniversalAction::cut;
+            case ContextToolbar::Command::remove: return UniversalAction::remove;
+            case ContextToolbar::Command::copy: return UniversalAction::copy;
+            case ContextToolbar::Command::paste: return UniversalAction::paste;
+            case ContextToolbar::Command::left: return UniversalAction::left;
+            case ContextToolbar::Command::right: return UniversalAction::right;
+            case ContextToolbar::Command::up: return UniversalAction::up;
+            case ContextToolbar::Command::down: return UniversalAction::down;
+            case ContextToolbar::Command::finer: case ContextToolbar::Command::coarser: break;
+        }
+        std::terminate();
+    }
+
+    std::optional<ContextTarget> currentContextTarget() const
+    {
+        ContextTarget target {};
+        target.area = activeEditingArea();
+        if (!edit)
+            return target;
+        if (pianoRollHasFocus())
+        {
+            auto* clip = dynamic_cast<te::MidiClip*>(te::findClipForID(*edit, pianoRollClip));
+            if (!clip || pianoRoll.clip.get() != clip)
+                return {};
+            target.midi = clip->state;
+            target.notes = pianoRoll.selected;
+            target.noteCursor = pianoRoll.editCursor;
+            for (const auto& note : target.notes)
+                if (!clip->getSequence().getNoteFor(note))
+                    return {};
+        }
+        else if (drumGridHasFocus())
+        {
+            auto* clip = selectedDrumPattern();
+            if (!clip->getTrack() || !drumMaster::isMaster(*clip->getTrack()) || !clip->getTrack()->isProcessing(false))
+                return {};
+            target.midi = clip->state;
+            target.notes = selectedDrumNoteIDs();
+            target.drum = ContextTarget::DrumSelection { drumSteps, drumPasteStep };
+        }
+        else if (target.area == EditingArea::timeline)
+        {
+            if (auto* destination = trackAt(selection))
+                target.track = destination->state;
+            target.cursor = editCursor;
+            target.clips = actionSelection.clips;
+            if (selectedClips().size() != target.clips.size())
+                return {};
+        }
+        else if (target.area == EditingArea::tracks)
+        {
+            if (auto* track = actionTrack())
+                target.track = track->state;
+        }
+        return target;
+    }
+
+    bool tryOpenContextToolbar(const ju::MouseEvent& event)
+    {
+        if (!contextMode || contextTarget || !event.mods.isMiddleButtonDown() || event.mods.isLeftButtonDown()
+            || event.mods.isRightButtonDown() || ju::Component::getCurrentlyModalComponent())
+            return false;
+        auto target = currentContextTarget();
+        if (!target)
+            return false;
+        auto available = getLocalBounds();
+        const auto screenPointer = event.getScreenPosition();
+        if (const auto* display = ju::Desktop::getInstance().getDisplays().getDisplayForPoint(screenPointer))
+            available = available.getIntersection(getLocalArea(nullptr, display->userArea));
+        if (available.isEmpty())
+            return false;
+        contextTarget = std::move(target);
+        contextFocus = ju::Component::getCurrentlyFocusedComponent();
+        contextHadFocus = contextFocus != nullptr;
+        if (contextHadFocus && contextFocus.getComponent() != shortcutHost.getComponent())
+            contextFocus->addKeyListener(this);
+        contextToolbar.open(getLocalPoint(nullptr, screenPointer), available);
+        refreshContextToolbar();
+        return true;
+    }
+
+    bool routeContextWheel(const ju::MouseEvent& event, const ju::MouseWheelDetails& wheel)
+    {
+        if (!contextToolbar.isVisible())
+            return false;
+        contextToolbar.mouseWheelMove(event.getEventRelativeTo(&contextToolbar), wheel);
+        return true;
+    }
+
+    void dismissContextToolbar()
+    {
+        contextToolbar.setVisible(false);
+        contextTarget.reset();
+        if (contextFocus != nullptr && contextFocus.getComponent() != shortcutHost.getComponent())
+            contextFocus->removeKeyListener(this);
+        contextFocus = nullptr;
+    }
+
+    bool keyPressed(const ju::KeyPress& key, ju::Component*) override
+    {
+        if (key.getKeyCode() != ju::KeyPress::escapeKey || !contextTarget)
+            return false;
+        dismissContextToolbar();
+        return true;
+    }
+
+    bool contextStillValid() const
+    {
+        auto* focused = ju::Component::getCurrentlyFocusedComponent();
+        return contextTarget && !ju::Component::getCurrentlyModalComponent()
+            && (!contextHadFocus || contextFocus != nullptr)
+            && contextFocus.getComponent() == focused && currentContextTarget() == contextTarget
+            && (!isShowing() || !getPeer() || getPeer()->isFocused());
+    }
+
+    ju::ComboBox* contextSnapControl()
+    {
+        if (pianoRollHasFocus())
+            return &pianoRoll.snap;
+        return edit && activeEditingArea() == EditingArea::timeline ? &snap : nullptr;
+    }
+
+    void refreshContextToolbar()
+    {
+        if (!contextTarget || contextDispatching)
+            return;
+        if (!contextStillValid())
+            return dismissContextToolbar();
+        for (size_t i = 0; i < ContextToolbar::edits.size(); ++i)
+        {
+            contextToolbar.setEditEnabled(i, canDispatch(contextAction(ContextToolbar::edits[i])));
+            contextToolbar.setMoveEnabled(i, canDispatch(contextAction(ContextToolbar::moves[i])));
+        }
+        auto* control = contextSnapControl();
+        const auto text = control ? control->getText().fromFirstOccurrenceOf(" ", false, false)
+            : drumGridHasFocus() ? ju::String("1/16 (fixed)") : ju::String("—");
+        contextToolbar.setSnap(text, control != nullptr);
+    }
+
+    void invokeContextAction(ContextToolbar::Command editAction)
+    {
+        using Edit = ContextToolbar::Command;
+        if (contextDispatching)
+            return;
+        if (!contextStillValid())
+            return dismissContextToolbar();
+        if (editAction == Edit::finer || editAction == Edit::coarser)
+        {
+            if (contextToolbar.page != ContextToolbar::movePage)
+                return;
+            if (auto* control = contextSnapControl())
+            {
+                const std::span<const int> order = control == &snap ? std::span<const int>(timelineSnapOrder)
+                    : std::span<const int>(pianoSnapOrder);
+                const auto index = std::find(order.begin(), order.end(), control->getSelectedId()) - order.begin();
+                const auto count = static_cast<std::ptrdiff_t>(order.size());
+                control->setSelectedId(order[static_cast<size_t>((index + count + (editAction == Edit::finer ? -1 : 1)) % count)],
+                                       ju::dontSendNotification);
+                updateControls();
+                refreshContextToolbar();
+            }
+            return;
+        }
+
+        const auto action = contextAction(editAction);
+        const auto page = editAction >= Edit::left ? ContextToolbar::movePage : ContextToolbar::editPage;
+        if (contextToolbar.page != page || !canDispatch(action))
+            return;
+        const auto* project = edit.get();
+        const auto origin = *contextTarget;
+        {
+            const ju::ScopedValueSetter<bool> dispatching(contextDispatching, true);
+            dispatchAction(action);
+        }
+        auto next = currentContextTarget();
+        if (!contextTarget || edit.get() != project || !next || next->area != origin.area
+            || next->midi != origin.midi
+            || next->drum.has_value() != origin.drum.has_value())
+            return dismissContextToolbar();
+        contextTarget = std::move(next);
+        refreshContextToolbar();
+    }
+
     bool canDispatch(UniversalAction action) const
     {
         using Action = UniversalAction;
@@ -4624,7 +4961,7 @@ private:
 
     bool canClearTimeSelection() const
     {
-        return !drumGridHasFocus() && canEditTimeline() && actionSelection.clips.empty() && timeSelection.has_value();
+        return canEditTimeline() && timeSelection.has_value() && actionSelection.clips.empty();
     }
 
     void clearTimeSelection()
@@ -4635,6 +4972,7 @@ private:
         transport.setLoopRange({});
         edit->markAsChanged();
         report("Time selection cleared");
+        updateControls();
     }
 
     static ju::StringArray unavailablePlugins(te::Edit& target)
@@ -4842,6 +5180,7 @@ private:
         pianoRoll.setVisible(false);
         if (actionSelection.requestedArea == EditingArea::window)
             actionSelection.requestedArea.reset();
+        resized();
     }
 
     void closePianoRoll()
@@ -4868,6 +5207,8 @@ private:
 
     void setProject(std::unique_ptr<te::Edit> next, const ju::File& file)
     {
+        dismissContextToolbar();
+        resetRulerDrag();
         hidePianoRoll();
         hideDrumEditor();
         pianoRoll.clearProject();
@@ -4904,11 +5245,12 @@ private:
         boxAnchor.reset();
         selectionBox = {};
         dragItem = {};
+        clipDragPlan.clear();
+        clipDragSelection.reset();
+        arrangementRightPress = false;
         dragPreview.reset();
         dragError.clear();
         dragRowDelta = 0;
-        rangePreview.reset();
-        draggingRange = false;
         editCursor = edit->getTransport().getPosition();
         const auto savedRange = edit->getTransport().getLoopRange();
         timeSelection = savedRange.getLength().inSeconds() > 0.001 ? std::optional(savedRange) : std::nullopt;
@@ -5054,20 +5396,79 @@ private:
         updateControls();
     }
 
-    double snapSeconds(double seconds) const
+    double timelineSubdivisions() const
+    {
+        switch (snap.getSelectedId())
+        {
+            case snapHalf: return 0.5;
+            case snapThirtySecond: return 8.0;
+            default: return 1 << std::clamp(snap.getSelectedId() - 2, 0, 2);
+        }
+    }
+
+    std::optional<te::TimeDuration> timelineMoveDelta(te::TimePosition anchor, bool earlier) const
+    {
+        const auto grid = snap.getSelectedId();
+        if (grid <= snapOff)
+            return te::TimeDuration::fromSeconds(earlier ? -0.010 : 0.010);
+        const auto& sequence = edit->tempoSequence;
+        const auto beat = sequence.toBeats(anchor);
+        double increment;
+        if (grid == snapBar)
+        {
+            auto bar = sequence.toBarsAndBeats(anchor).bars;
+            if (earlier && anchor == barTime(bar))
+                --bar;
+            if (bar < 0)
+                return {};
+            increment = (sequence.toBeats(barTime(bar + 1)) - sequence.toBeats(barTime(bar))).inBeats();
+        }
+        else
+            increment = sequence.getTimeSigAt(anchor).denominator.get() / (4.0 * timelineSubdivisions());
+        const auto targetBeat = beat + te::BeatDuration::fromBeats(earlier ? -increment : increment);
+        if (targetBeat < te::BeatPosition{})
+            return {};
+        return sequence.toTime(targetBeat) - anchor;
+    }
+
+    static double nearestRangeDivision(double divisions, bool earlier)
+    {
+        const auto lower = std::floor(divisions);
+        if (std::abs(divisions - lower - 0.5) <= 1.0e-9)
+            return lower + (earlier ? 0.0 : 1.0);
+        return std::round(divisions);
+    }
+
+    double snapSeconds(double seconds, std::optional<bool> rangeEarlier = {}) const
     {
         seconds = ju::jlimit(0.0, te::Edit::getMaximumEditEnd().inSeconds(), seconds);
         if (!edit || snap.getSelectedId() <= 1)
             return seconds;
-        const double subdivisions = 1 << (snap.getSelectedId() - 2);
+        const double subdivisions = timelineSubdivisions();
         auto& sequence = edit->tempoSequence;
         const auto time = te::TimePosition::fromSeconds(seconds);
-        const auto barStart = barTime(sequence.toBarsAndBeats(time).bars);
+        const auto bar = sequence.toBarsAndBeats(time).bars;
+        const auto barStart = barTime(bar);
+        if (snap.getSelectedId() == snapBar)
+        {
+            const auto next = barTime(bar + 1);
+            const auto distance = ((time - barStart) - (next - time)).inSeconds();
+            const bool useEarlier = rangeEarlier && std::abs(distance) <= 1.0e-9
+                ? *rangeEarlier : distance < 0.0;
+            const auto limit = te::Edit::getMaximumEditEnd();
+            if (rangeEarlier && next > limit)
+                return barStart.inSeconds();
+            return ju::jmin(limit, useEarlier ? barStart : next).inSeconds();
+        }
         const auto beat = sequence.toBeats(time);
         const auto origin = sequence.toBeats(barStart);
         const auto increment = sequence.getTimeSigAt(time).denominator.get() / (4.0 * subdivisions);
-        const auto steps = std::round((beat - origin).inBeats() / increment);
-        return sequence.toTime(origin + te::BeatDuration::fromBeats(steps * increment)).inSeconds();
+        const auto divisions = (beat - origin).inBeats() / increment;
+        const auto steps = rangeEarlier ? nearestRangeDivision(divisions, *rangeEarlier) : std::round(divisions);
+        const auto snapped = sequence.toTime(origin + te::BeatDuration::fromBeats(steps * increment));
+        if (rangeEarlier && snapped > te::Edit::getMaximumEditEnd())
+            return sequence.toTime(origin + te::BeatDuration::fromBeats((steps - 1.0) * increment)).inSeconds();
+        return snapped.inSeconds();
     }
 
     void seek(double seconds, bool quantise = true)
@@ -5160,7 +5561,8 @@ private:
     }
 
     int rowHeight(int row = -1) const { return heightForTrack(row >= 0 ? trackAt(row) : nullptr); }
-    static constexpr int headerWidth = 244, rulerHeight = 42;
+    static constexpr int headerWidth = 244, rulerHeight = 102;
+    static constexpr int rulerLabelHeight = 42, rulerHandleHeight = 27;
 
     int rowTop(int row) const
     {
@@ -5388,7 +5790,7 @@ private:
         if (!editingStopped() || !track)
             return;
         const auto id = track->itemID;
-        const bool armed = inputBadges(*track).armed;
+        const bool armed = trackIsArmed(*track);
         auto& undo = edit->getUndoManager();
         undo.beginNewTransaction(armed ? "Disarm track" : "Arm track");
         for (auto* input : edit->getAllInputDevices())
@@ -5402,26 +5804,12 @@ private:
         updateControls();
     }
 
-    struct InputBadges
+    bool trackIsArmed(const te::AudioTrack& track) const
     {
-        bool armed = false;
-        std::array<bool, 2> channels {};
-    };
-
-    InputBadges inputBadges(const te::AudioTrack& track) const
-    {
-        InputBadges badges;
         for (auto* input : edit->getAllInputDevices())
-        {
-            if (!isArmed(*input, track.itemID))
-                continue;
-            badges.armed = true;
-            if (const auto* wave = dynamic_cast<te::WaveInputDevice*>(&input->getInputDevice()))
-                for (const auto& channel : wave->getChannels())
-                    if (channel.indexInDevice >= 0 && channel.indexInDevice < 2)
-                        badges.channels[static_cast<size_t>(channel.indexInDevice)] = true;
-        }
-        return badges;
+            if (isArmed(*input, track.itemID))
+                return true;
+        return false;
     }
 
     void pollMeters()
@@ -5526,6 +5914,17 @@ private:
         return drumMaster::isLane(track) ? bounds.withTrimmedLeft(18) : bounds;
     }
 
+    ju::String trackListTitle(const te::AudioTrack& track) const
+    {
+        if (drumMaster::isDrum(track))
+            return track.getName();
+        const auto type = trackType(track);
+        const auto number = ju::String(ordinaryTrackNumber(track));
+        if (type == TrackType::mixed)
+            return number + " [Mixed] " + track.getName();
+        return number + (type == TrackType::midi ? "M " : "A ") + track.getName();
+    }
+
     void paintTrack(ju::Graphics& g, te::AudioTrack& track, int row, int y, ju::Colour colour)
     {
         const auto selected = trackIsHighlighted(track);
@@ -5541,8 +5940,7 @@ private:
         }
         auto indicators = bounds.removeFromRight(24).reduced(3, 2);
         const auto indicatorHeight = indicators.getHeight() / 3;
-        const auto inputs = inputBadges(track);
-        const bool states[] = { track.isMuted(false), track.isSolo(false), inputs.armed };
+        const bool states[] = { track.isMuted(false), track.isSolo(false), trackIsArmed(track) };
         const ju::Colour light[] = { ju::Colours::yellow, ju::Colours::limegreen, ju::Colours::red };
         const ju::String letters[] = { "M", "S", "R" };
         g.setFont(ju::FontOptions(10.0f, ju::Font::bold));
@@ -5553,16 +5951,6 @@ private:
             g.fillRect(led);
             g.setColour(states[i] && i != 2 ? ju::Colours::black : ju::Colours::white);
             g.drawText(letters[i], led, ju::Justification::centred);
-        }
-        auto inputArea = bounds.removeFromRight(46).withSizeKeepingCentre(46, 20);
-        g.setFont(ju::FontOptions(13.0f, ju::Font::bold));
-        for (size_t i = 0; i < inputs.channels.size(); ++i)
-        {
-            auto badge = inputArea.removeFromLeft(23).reduced(2, 0);
-            g.setColour(inputs.channels[i] ? ju::Colour(0xffab1f29) : ju::Colour(0xff484848));
-            g.fillRoundedRectangle(badge.toFloat(), 3.0f);
-            g.setColour(ju::Colours::white);
-            g.drawText(ju::String(static_cast<int>(i) + 1), badge, ju::Justification::centred);
         }
         auto body = bounds.reduced(5, 3);
         auto meter = body.removeFromBottom(8).reduced(1, 1);
@@ -5583,9 +5971,7 @@ private:
         }
         g.setColour(ju::Colours::white);
         g.setFont(ju::FontOptions(17.0f, ju::Font::bold));
-        const auto label = drumMaster::isDrum(track) ? track.getName()
-            : ju::String(ordinaryTrackNumber(track)) + "  [" + trackTypeName(trackType(track)) + "] " + track.getName();
-        g.drawFittedText(label,
+        g.drawFittedText(trackListTitle(track),
                          body.reduced(5, 0),
                          ju::Justification::centredLeft, 1);
     }
@@ -6051,7 +6437,7 @@ private:
         }
         const ju::Graphics::ScopedSaveState state(g);
         g.reduceClipRegion(area.withTrimmedLeft(headerWidth));
-        if (const auto& range = rangePreview ? rangePreview : timeSelection)
+        if (const auto& range = displayedWindow())
         {
             const auto left = timeX(range->getStart());
             const auto right = timeX(range->getEnd());
@@ -6069,6 +6455,21 @@ private:
                                  static_cast<float>(cursorX + 5), 0.0f,
                                  static_cast<float>(cursorX), 7.0f);
         g.fillPath(cursorMarker);
+        g.setFont(ju::FontOptions(13.0f, ju::Font::bold));
+        for (auto handle : { RulerHandle::cursor, RulerHandle::centre, RulerHandle::start, RulerHandle::end })
+        {
+            const auto bounds = rulerHandle(handle).reduced(2, 1).toFloat();
+            if (bounds.isEmpty())
+                continue;
+            g.setColour(ju::Colour(0xff30475b));
+            g.fillRoundedRectangle(bounds, 4.0f);
+            g.setColour(ju::Colour(0xffa5c5dd));
+            if (handle == RulerHandle::start || handle == RulerHandle::end)
+                g.drawVerticalLine(ju::roundToInt(bounds.getCentreX()), bounds.getY() + 5.0f, bounds.getBottom() - 5.0f);
+            else
+                g.drawText(handle == RulerHandle::cursor ? "Edit cursor" : "Time window", bounds.toNearestInt(),
+                           ju::Justification::centred);
+        }
         if (edit->getTransport().isPlaying() || paused)
         {
             g.setColour(edit->getTransport().isRecording() ? ju::Colours::red : ju::Colours::limegreen);
@@ -6079,6 +6480,17 @@ private:
 
     void mouseDown(const ju::MouseEvent& event) override
     {
+        auto* surface = event.eventComponent;
+        if (surface == &pianoRoll || surface == &effectsEditor
+            || surface == &inspector || surface == &inspectorControls)
+        {
+            if (tryOpenContextToolbar(event))
+                return;
+            if (contextMode && surface != &pianoRoll && surface->isShowing()
+                && (event.mods.isLeftButtonDown() || event.mods.isRightButtonDown()))
+                surface->grabKeyboardFocus();
+        }
+
         if (!edit || (!event.mods.isLeftButtonDown() && !event.mods.isRightButtonDown()))
             return;
         if (event.eventComponent == &inspector || event.eventComponent == &inspectorControls
@@ -6095,7 +6507,7 @@ private:
         }
         else if (event.eventComponent == &effectsEditor || effectsEditor.isParentOf(event.eventComponent))
             actionSelection.requestedArea = EditingArea::window;
-        else if (event.eventComponent == &pianoRoll || pianoRoll.isParentOf(event.eventComponent))
+        else if (pianoRoll.isParentOf(event.eventComponent))
             return focusPianoRoll();
         else if (drumEditor.isParentOf(event.eventComponent))
             return focusDrumEditor();
@@ -6109,11 +6521,38 @@ private:
 
     te::TimeRange displayedClipRange(const te::Clip& clip) const
     {
-        const auto range = clip.getPosition().time;
-        if (dragPreview && actionSelection.clips.contains(clip.itemID))
-            if (auto* anchor = te::findClipForID(*edit, dragItem))
-                return range + (*dragPreview - anchor->getPosition().getStart());
-        return range;
+        for (const auto& change : clipDragPlan)
+            if (change.clip == &clip)
+                return change.position.time;
+        return clip.getPosition().time;
+    }
+
+    te::Clip* arrangementClipAt(ju::Point<int> point) const
+    {
+        if (point.x < headerWidth || point.y < rulerHeight)
+            return nullptr;
+        const auto row = rowAt(point.y);
+        if (auto* track = trackAt(row))
+        {
+            const auto clips = track->getClips();
+            for (int i = clips.size(); --i >= 0;)
+                if (clipBounds(clips[i]->getPosition().time, rowTop(row), rowHeight(row)).contains(point))
+                    return clips[i];
+        }
+        return nullptr;
+    }
+
+    ClipDragEdge clipEdgeAt(const te::Clip& clip, int x) const
+    {
+        const auto left = timeX(clip.getPosition().getStart());
+        const auto right = timeX(clip.getPosition().getEnd());
+        if (right - left < 16)
+            return ClipDragEdge::none;
+        if (x - left < 6)
+            return ClipDragEdge::start;
+        if (right - x <= 6)
+            return ClipDragEdge::end;
+        return ClipDragEdge::none;
     }
 
     ju::Rectangle<int> clipBounds(te::TimeRange range, int y, int height) const
@@ -6201,30 +6640,126 @@ private:
         }
     }
 
+    const std::optional<te::TimeRange>& displayedWindow() const
+    {
+        return rulerDragged && pressedRulerHandle != RulerHandle::cursor ? rangeFeedback : timeSelection;
+    }
+
+    ju::Rectangle<int> rulerHandle(RulerHandle handle) const
+    {
+        const auto width = arrangement.getWidth() - headerWidth;
+        if (width <= 0 || handle == RulerHandle::none)
+            return {};
+        const auto right = arrangement.getWidth() - 1;
+        if (handle == RulerHandle::cursor)
+        {
+            const auto x = timeX(editCursor);
+            if (x < headerWidth || x > right)
+                return {};
+            const auto handleWidth = std::min(width, 82);
+            return { std::clamp(x - handleWidth / 2, headerWidth, right + 1 - handleWidth),
+                     rulerLabelHeight + 1, handleWidth, rulerHandleHeight };
+        }
+
+        const auto& range = displayedWindow();
+        constexpr int boundaryWidth = 26;
+        if (!range || range->isEmpty() || width <= 2 * boundaryWidth)
+            return {};
+        const auto left = std::clamp(timeX(range->getStart()), headerWidth, right);
+        const auto end = std::clamp(timeX(range->getEnd()), headerWidth, right);
+        const auto centreWidth = std::min(112, width - 2 * boundaryWidth);
+        const auto centreX = std::clamp(left + (end - left - centreWidth) / 2,
+            headerWidth + boundaryWidth, right + 1 - boundaryWidth - centreWidth);
+        const auto y = rulerLabelHeight + rulerHandleHeight + 4;
+        if (handle == RulerHandle::centre)
+            return { centreX, y, centreWidth, rulerHandleHeight };
+        const auto x = handle == RulerHandle::start
+            ? std::clamp(left - boundaryWidth / 2, headerWidth, centreX - boundaryWidth)
+            : std::clamp(end - boundaryWidth / 2, centreX + centreWidth, right + 1 - boundaryWidth);
+        return { x, y, boundaryWidth, rulerHandleHeight };
+    }
+
+    RulerHandle rulerHandleAt(ju::Point<int> point) const
+    {
+        for (auto handle : { RulerHandle::cursor, RulerHandle::centre, RulerHandle::start, RulerHandle::end })
+            if (rulerHandle(handle).contains(point))
+                return handle;
+        return RulerHandle::none;
+    }
+
+    void arrangementDoubleClick(const ju::MouseEvent& event)
+    {
+        if (event.mods.isLeftButtonDown() && !event.mods.isShiftDown() && editingStopped())
+        {
+            switch (rulerHandleAt(event.getPosition()))
+            {
+                case RulerHandle::cursor:
+                    editCursor = {};
+                    reveal(editCursor);
+                    updateControls();
+                    return;
+                case RulerHandle::centre:
+                    clearTimeSelection();
+                    return;
+                default: break;
+            }
+        }
+        openClipEditor(event);
+    }
+
     void arrangementDown(const ju::MouseEvent& event)
     {
         if (!edit || (!event.mods.isLeftButtonDown() && !event.mods.isRightButtonDown()))
             return;
-        if (arrangement.isShowing())
-            arrangement.grabKeyboardFocus();
         const bool toggle = event.mods.isRightButtonDown();
         const auto area = event.x < headerWidth ? EditingArea::tracks : EditingArea::timeline;
-        actionSelection.requestedArea = area;
-        draggingRange = false;
-        rangePreview.reset();
+        resetRulerDrag();
         dragPreview.reset();
+        clipDragPlan.clear();
+        clipDragSelection.reset();
+        clipDragEdge = ClipDragEdge::none;
+        clipDragged = false;
         dragError.clear();
         dragRowDelta = 0;
         dragItem = {};
         boxAnchor.reset();
         selectionBox = {};
+        arrangementRightPress = arrangementRightWheel = arrangementRightDragged = arrangementRightPan = false;
+        rightArrangementItem = {};
         const auto row = rowAt(event.y);
         const auto y = rowTop(row);
         auto* track = event.y >= rulerHeight ? trackAt(row) : nullptr;
-
+        const auto hitTrack = track && trackBounds(y, rowHeight(row)).contains(event.getPosition());
+        if (toggle)
+        {
+            arrangementRightPress = true;
+            rightArrangementArea = area;
+            if (area == EditingArea::tracks && hitTrack)
+                rightArrangementItem = track->itemID;
+            else if (auto* clip = arrangementClipAt(event.getPosition()))
+                rightArrangementItem = clip->itemID;
+            arrangementRightPan = area == EditingArea::timeline && event.y >= rulerHeight && !rightArrangementItem.isValid();
+            return;
+        }
+        if (area == EditingArea::timeline && event.y < rulerHeight)
+        {
+            pressedRulerHandle = rulerHandleAt(event.getPosition());
+            if (pressedRulerHandle != RulerHandle::none)
+                dragAnchor = editCursor.inSeconds();
+            else
+            {
+                draggingRange = editingStopped();
+                dragAnchor = timeAt(event.x);
+                seek(dragAnchor);
+            }
+            return;
+        }
+        if (arrangement.isShowing())
+            arrangement.grabKeyboardFocus();
+        actionSelection.requestedArea = area;
         if (area == EditingArea::tracks)
         {
-            if (track && trackBounds(y, rowHeight(row)).contains(event.getPosition()))
+            if (hitTrack)
             {
                 if (effectsEditor.target && effectsEditor.target->track != track->itemID)
                     closeEffectsEditor();
@@ -6232,62 +6767,45 @@ private:
                 selectDrumVelocityLane(track);
                 selection = row;
             }
-            else if (!toggle)
+            else
             {
                 actionSelection.track = {};
                 selection = -1;
             }
         }
-        else if (event.y < rulerHeight || event.mods.isShiftDown())
+        else if (auto* clip = arrangementClipAt(event.getPosition()))
         {
-            if (!toggle)
+            if (effectsEditor.isVisible())
             {
-                draggingRange = !edit->getTransport().isPlaying();
+                if (dynamic_cast<te::MidiClip*>(clip))
+                {
+                    const auto outgoing = effectsSnapshot();
+                    suspendEffectsEditor();
+                    slideEditorOut(outgoing);
+                }
+                else
+                    closeEffectsEditor();
+            }
+            selection = row;
+            // Keep an existing group until a click resolves or a drag starts.
+            const bool draggable = dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip);
+            const bool wasSelected = actionSelection.clips.contains(clip->itemID);
+            if (!draggable || !wasSelected)
+                ActionSelection::click(actionSelection.clips, clip->itemID, false);
+            if (draggable)
+            {
+                dragItem = clip->itemID;
+                clipDragSelection = actionSelection.clips;
+                if (wasSelected)
+                    clipDragEdge = clipEdgeAt(*clip, event.x);
                 dragAnchor = timeAt(event.x);
-                seek(dragAnchor);
             }
         }
         else
         {
-            if (track)
-            {
-                const auto clips = track->getClips();
-                for (int index = clips.size(); --index >= 0;)
-                {
-                    auto* clip = clips[index];
-                    if (!clipBounds(clip->getPosition().time, y, rowHeight(row)).contains(event.getPosition()))
-                        continue;
-                    if (effectsEditor.isVisible())
-                    {
-                        if (dynamic_cast<te::MidiClip*>(clip))
-                        {
-                            const auto outgoing = effectsSnapshot();
-                            suspendEffectsEditor();
-                            slideEditorOut(outgoing);
-                        }
-                        else
-                            closeEffectsEditor();
-                    }
-                    selection = row;
-                    // Keep an existing group until a click resolves or a drag starts.
-                    const bool draggable = dynamic_cast<te::WaveAudioClip*>(clip) || dynamic_cast<te::MidiClip*>(clip);
-                    if (toggle || !draggable || !actionSelection.clips.contains(clip->itemID))
-                        ActionSelection::click(actionSelection.clips, clip->itemID, toggle);
-                    if (!toggle && draggable)
-                    {
-                        dragItem = clip->itemID;
-                        dragAnchor = timeAt(event.x);
-                    }
-                    updateControls();
-                    return;
-                }
-            }
-            if (!toggle)
-            {
-                selection = track ? row : -1;
-                actionSelection.clips.clear();
-                boxAnchor = event.getPosition();
-            }
+            selection = track ? row : -1;
+            actionSelection.clips.clear();
+            boxAnchor = event.getPosition();
         }
         updateControls();
     }
@@ -6308,102 +6826,293 @@ private:
             closeEffectsEditor();
     }
 
+    te::TimePosition snapRulerPosition(double time, bool earlier) const
+    {
+        const auto limit = te::Edit::getMaximumEditEnd().inSeconds();
+        time = std::clamp(time, 0.0, limit);
+        if (snap.getSelectedId() > snapOff)
+            return te::TimePosition::fromSeconds(snapSeconds(time, earlier));
+        constexpr double offIncrement = 0.010;
+        return te::TimePosition::fromSeconds(
+            std::min(nearestRangeDivision(time / offIncrement, earlier), std::floor(limit / offIncrement)) * offIncrement);
+    }
+
+    static std::optional<te::TimeRange> windowBetween(te::TimePosition first, te::TimePosition second)
+    {
+        if (first == second)
+            return {};
+        return te::TimeRange(std::min(first, second), std::max(first, second));
+    }
+
+    void resetRulerDrag()
+    {
+        draggingRange = rulerDragged = false;
+        pressedRulerHandle = RulerHandle::none;
+        rangePreview.reset();
+        rangeFeedback.reset();
+    }
+
     void updateDragPreview(double pointerTime, std::optional<int> pointerRow = std::nullopt)
     {
         if (draggingRange)
         {
-            const auto a = te::TimePosition::fromSeconds(snapSeconds(dragAnchor));
-            const auto b = te::TimePosition::fromSeconds(snapSeconds(pointerTime));
-            rangePreview = te::TimeRange(std::min(a, b), std::max(a, b));
+            const auto limit = te::Edit::getMaximumEditEnd().inSeconds();
+            const auto anchor = std::clamp(dragAnchor, 0.0, limit);
+            const auto pointer = std::clamp(pointerTime, 0.0, limit);
+            const auto displacement = pointer - anchor;
+            const auto origin = snapRulerPosition(anchor, false);
+            const auto destination = snapRulerPosition(origin.inSeconds() + displacement, displacement < 0.0);
+            rangePreview = windowBetween(origin, destination);
+            rangeFeedback = windowBetween(te::TimePosition::fromSeconds(anchor), te::TimePosition::fromSeconds(pointer));
         }
         else if (dragItem.isValid())
         {
             dragPreview.reset();
+            clipDragPlan.clear();
             dragError.clear();
             const auto tracks = visibleTracks();
             auto* anchor = te::findClipForID(*edit, dragItem);
-            if (!anchor || (pointerRow && !tracks[*pointerRow]))
+            if (!anchor)
+                return;
+            if (clipDragSelection && *clipDragSelection != actionSelection.clips)
+                return;
+            const auto clips = selectedClips();
+            const auto edge = clipDragEdge;
+            if (edge == ClipDragEdge::none && pointerRow && !tracks[*pointerRow])
                 return;
             auto* source = dynamic_cast<te::AudioTrack*>(anchor->getTrack());
             if (!source)
                 return;
-            dragRowDelta = pointerRow ? *pointerRow - tracks.indexOf(source) : 0;
+            dragRowDelta = edge == ClipDragEdge::none && pointerRow ? *pointerRow - tracks.indexOf(source) : 0;
+            if (clipDragSelection && dragRowDelta != 0)
+                for (auto* clip : clips)
+                {
+                    const auto row = tracks.indexOf(dynamic_cast<te::AudioTrack*>(clip->getTrack()));
+                    if (row < 0)
+                        return;
+                    dragRowDelta = std::clamp(dragRowDelta, -row, tracks.size() - 1 - row);
+                }
             const auto start = anchor->getPosition().getStart();
-            const auto target = te::TimePosition::fromSeconds(snapSeconds(start.inSeconds() + pointerTime - dragAnchor));
-            if (!movePlan(selectedClips(), dragRowDelta, target - start, &dragError).empty())
-                dragPreview = target;
+            const auto reference = edge == ClipDragEdge::end ? anchor->getPosition().getEnd() : start;
+            const auto raw = pointerTime - dragAnchor;
+            const auto gridOrigin = snapRulerPosition(reference.inSeconds(), false);
+            const auto delta = raw == 0.0 ? te::TimeDuration{}
+                : snapRulerPosition(gridOrigin.inSeconds() + raw, raw < 0.0) - gridOrigin;
+            const auto plan = [&](te::TimeDuration shift) {
+                if (edge == ClipDragEdge::none)
+                    return movePlan(clips, dragRowDelta, shift, &dragError);
+
+                std::vector<ClipChange> combined;
+                for (auto* clip : clips)
+                {
+                    const auto members = resizeClip(*clip, edge == ClipDragEdge::start, shift);
+                    if (members.empty())
+                        return std::vector<ClipChange>{};
+                    for (const auto& change : members)
+                    {
+                        const auto existing = std::find_if(combined.begin(), combined.end(),
+                            [&](const auto& item) { return item.clip == change.clip; });
+                        if (existing == combined.end())
+                            combined.push_back(change);
+                        else if (existing->position != change.position || existing->loopTime != change.loopTime
+                            || existing->loopBeats != change.loopBeats)
+                            return std::vector<ClipChange>{};
+                    }
+                }
+                return combined;
+            };
+
+            clipDragPlan = plan(delta);
+            auto applied = delta;
+            if (clipDragPlan.empty() && delta != te::TimeDuration{} && dragError.isEmpty() && !plan({}).empty())
+            {
+                // Find the first collective time/source limit without mutating any clips.
+                double allowed = 0.0, rejected = 1.0;
+                for (int i = 0; i < 42; ++i)
+                {
+                    const auto fraction = (allowed + rejected) * 0.5;
+                    if (plan(te::TimeDuration::fromSeconds(fraction * delta.inSeconds())).empty())
+                        rejected = fraction;
+                    else
+                        allowed = fraction;
+                }
+                applied = te::TimeDuration::fromSeconds(allowed * delta.inSeconds());
+                clipDragPlan = plan(applied);
+            }
+            if (applied == te::TimeDuration{} && dragRowDelta == 0)
+                clipDragPlan.clear();
+            if (!clipDragPlan.empty())
+                dragPreview = start + applied;
         }
     }
 
     int dragTargetRow(const ju::MouseEvent& event) const
     {
-        if (event.x < headerWidth || event.y < rulerHeight || !arrangement.getLocalBounds().contains(event.getPosition()))
+        if (trackCount() == 0 || arrangement.getHeight() <= rulerHeight)
             return -1;
-        return rowAt(event.y);
+        const auto y = std::clamp(event.y, rulerHeight, arrangement.getHeight() - 1);
+        return std::clamp(rowAt(y), 0, trackCount() - 1);
+    }
+
+    bool updateRulerGesture(const ju::MouseEvent& event)
+    {
+        if (!draggingRange && pressedRulerHandle == RulerHandle::none)
+            return false;
+        if (!editingStopped())
+        {
+            resetRulerDrag();
+            arrangement.repaint();
+            return true;
+        }
+
+        const auto displacement = event.getDistanceFromDragStartX() / pixelsPerSecond;
+        rulerDragged = rulerDragged || displacement != 0.0;
+        if (!rulerDragged)
+            return true;
+        if (draggingRange)
+            updateDragPreview(dragAnchor + displacement);
+        else if (pressedRulerHandle == RulerHandle::cursor)
+        {
+            editCursor = displacement == 0.0 ? te::TimePosition::fromSeconds(dragAnchor)
+                : snapRulerPosition(dragAnchor + displacement, displacement < 0.0);
+        }
+        else if (timeSelection)
+        {
+            const auto start = timeSelection->getStart();
+            const auto end = timeSelection->getEnd();
+            const auto limit = te::Edit::getMaximumEditEnd();
+            rangePreview = timeSelection;
+            if (displacement != 0.0)
+            {
+                const auto anchor = pressedRulerHandle == RulerHandle::end ? end : start;
+                const auto requested = anchor.inSeconds() + displacement;
+                const auto target = snapRulerPosition(requested, displacement < 0.0);
+                if (pressedRulerHandle == RulerHandle::centre)
+                    rangePreview = *timeSelection + std::clamp(target - start, te::TimePosition{} - start, limit - end);
+                else if (pressedRulerHandle == RulerHandle::start)
+                    rangePreview = windowBetween(requested >= end.inSeconds() ? end : std::min(target, end), end);
+                else
+                    rangePreview = windowBetween(start, requested <= start.inSeconds() ? start : std::max(start, target));
+            }
+            rangeFeedback = rangePreview;
+        }
+        arrangement.repaint();
+        return true;
     }
 
     void arrangementDrag(const ju::MouseEvent& event)
     {
         if (!edit)
             return;
+        if (arrangementRightPress)
+        {
+            arrangementRightDragged |= event.getDistanceFromDragStart() >= 5;
+            return;
+        }
+        if (updateRulerGesture(event))
+            return;
         if (boxAnchor && event.getDistanceFromDragStart() >= 5)
         {
             updateSelectionBox(event.getPosition());
             updateControls();
         }
-        else if (editingStopped() && (dragItem.isValid() ? event.getDistanceFromDragStart() >= 5
-                                                       : std::abs(event.getDistanceFromDragStartX()) >= 5))
+        else if (editingStopped() && dragItem.isValid() && (clipDragged || event.getDistanceFromDragStart() >= 5))
         {
-            updateDragPreview(timeAt(event.x), dragItem.isValid() ? std::optional{ dragTargetRow(event) } : std::nullopt);
+            clipDragged = true;
+            updateDragPreview(timeAt(event.x), dragTargetRow(event));
             arrangement.repaint();
         }
+    }
+
+    void setTimeSelection(te::TimeRange range)
+    {
+        timeSelection = range;
+        edit->getTransport().setLoopRange(range);
+        edit->markAsChanged();
     }
 
     void finishDrag()
     {
         if (rangePreview && !rangePreview->isEmpty())
         {
-            timeSelection = rangePreview;
-            edit->getTransport().setLoopRange(*timeSelection);
-            edit->markAsChanged();
+            setTimeSelection(*rangePreview);
             report("Time selection set");
         }
         else if (dragError.isNotEmpty())
             warnPlacement(dragError);
-        else if (dragItem.isValid() && dragPreview)
-        {
-            if (auto* anchor = te::findClipForID(*edit, dragItem))
-            {
-                const auto delta = *dragPreview - anchor->getPosition().getStart();
-                if (dragRowDelta != 0 || delta != te::TimeDuration{})
-                    applyClipChanges(movePlan(selectedClips(), dragRowDelta, delta), "Move clips");
-            }
-        }
+        else if (!clipDragPlan.empty())
+            applyClipChanges(clipDragPlan, clipDragEdge == ClipDragEdge::none ? "Move clips" : "Resize clips");
     }
 
     void arrangementUp(const ju::MouseEvent& event)
     {
+        if (std::exchange(arrangementRightPress, false))
+        {
+            if (!edit || arrangementRightWheel || arrangementRightDragged || event.getDistanceFromDragStart() >= 5)
+                return;
+            if (rightArrangementArea == EditingArea::timeline)
+            {
+                if (auto* clip = te::findClipForID(*edit, rightArrangementItem))
+                {
+                    selection = visibleTracks().indexOf(dynamic_cast<te::AudioTrack*>(clip->getTrack()));
+                    ActionSelection::click(actionSelection.clips, rightArrangementItem, true);
+                }
+                else
+                    return;
+            }
+            else if (auto* track = trackForID(rightArrangementItem))
+            {
+                if (actionSelection.track == rightArrangementItem)
+                    actionSelection.track = {};
+                else
+                {
+                    actionSelection.track = rightArrangementItem;
+                    selection = visibleTracks().indexOf(track);
+                    selectDrumVelocityLane(track);
+                }
+            }
+            else
+                return;
+            actionSelection.requestedArea = rightArrangementArea;
+            if (arrangement.isShowing())
+                arrangement.grabKeyboardFocus();
+            updateControls();
+            return;
+        }
+        if (updateRulerGesture(event))
+        {
+            const bool rangeChanged = rulerDragged && pressedRulerHandle != RulerHandle::cursor;
+            const auto next = rangePreview;
+            resetRulerDrag();
+            if (rangeChanged && next != timeSelection)
+            {
+                if (next)
+                    setTimeSelection(*next);
+                else
+                    clearTimeSelection();
+            }
+            updateControls();
+            return;
+        }
         if (edit && boxAnchor)
         {
             if (event.getDistanceFromDragStart() >= 5 || !selectionBox.isEmpty())
                 updateSelectionBox(event.getPosition());
-            else if (*actionSelection.requestedArea == EditingArea::timeline)
-                seek(timeAt(event.x));
         }
-        else if (editingStopped() && (dragItem.isValid() ? event.getDistanceFromDragStart() >= 5
-                                                        : std::abs(event.getDistanceFromDragStartX()) >= 5))
+        else if (editingStopped() && dragItem.isValid() && (clipDragged || event.getDistanceFromDragStart() >= 5))
         {
-            updateDragPreview(timeAt(event.x), dragItem.isValid() ? std::optional{ dragTargetRow(event) } : std::nullopt);
+            updateDragPreview(timeAt(event.x), dragTargetRow(event));
             finishDrag();
         }
-        else if (dragItem.isValid() && event.getDistanceFromDragStart() < 5)
+        else if (dragItem.isValid() && !clipDragged && event.getDistanceFromDragStart() < 5)
             actionSelection.clips = { dragItem };
         boxAnchor.reset();
         selectionBox = {};
         dragItem = {};
-        draggingRange = false;
         dragPreview.reset();
-        rangePreview.reset();
+        clipDragPlan.clear();
+        clipDragSelection.reset();
+        resetRulerDrag();
         updateControls();
     }
 
@@ -6560,7 +7269,7 @@ private:
                     assigned.add(input->getInputDevice().getName());
             static_cast<ju::Button*>(trackInputButtons[0])->setButtonText(
                 assigned.isEmpty() ? ju::String("INPUT") : assigned.joinIntoString(", "));
-            static_cast<ju::Button*>(trackInputButtons[1])->setToggleState(inputBadges(*inspectorTrack).armed,
+            static_cast<ju::Button*>(trackInputButtons[1])->setToggleState(trackIsArmed(*inspectorTrack),
                                                                            ju::dontSendNotification);
             trackInputButtons[1]->setEnabled(canEditInspector && !assigned.isEmpty());
         }
@@ -6741,6 +7450,7 @@ private:
             });
         }
         updateControls();
+        refreshContextToolbar();
     }
 
     te::Engine& engine;
@@ -6808,7 +7518,7 @@ private:
         }
     };
     ju::Component inspectorControls;
-    ju::Viewport inspectorViewport;
+    InspectorViewport inspectorViewport { *this };
     InspectorMeter inspectorMeter;
     ju::Label inspectorName, inspectorLoopCount;
     std::unique_ptr<ju::TextButton> drumKitButton;
@@ -6829,7 +7539,6 @@ private:
     DrumEditorSurface drumEditor { *this };
     te::EditItemID drumPatternID;
     std::set<DrumStep> drumSteps;
-    std::map<DrumStep, unsigned> drumPendingClicks;
     ju::Component drumPopup;
     std::array<ju::TextButton, 4> drumSubdivisionButtons;
     std::optional<DrumStep> drumPopupStep;
@@ -6839,7 +7548,6 @@ private:
     double drumViewStart = 0.0, drumPixelsPerSecond = 100.0, drumLeftQuarter = 0.0, drumVisibleQuarters = 0.0;
     double drumPreviousViewStart = 0.0, drumPreviousTimelineScale = 100.0;
     int drumFirstLane = 0;
-    unsigned drumClickSequence = 0;
     int midiInsertBars = 1, drumPopupVelocity = DrumPattern::defaultVelocity;
     te::EditItemID pianoRollClip;
     ju::ComponentAnimator editorAnimator;
@@ -6852,20 +7560,35 @@ private:
     ju::TextButton *undoButton = nullptr, *redoButton = nullptr;
     std::vector<ju::Component*> first, second, panelButtons, historyButtons, inspectorButtons, navigation, pitchNavigation;
     ju::Rectangle<int> navigationBounds;
-    std::array<ActionGroup, 4> actionGroups;
+    std::array<ActionGroup, 3> actionGroups;
     std::vector<ActionButton> actionButtons;
     ActionSelection actionSelection;
+    ContextToolbar contextToolbar;
+    bool contextDispatching = false;
+    RulerHandle pressedRulerHandle = RulerHandle::none;
+    bool rulerDragged = false;
+    bool contextMode = false;
+    std::optional<ContextTarget> contextTarget;
+    ju::Component::SafePointer<ju::Component> contextFocus;
+    bool contextHadFocus = false;
     EditingArea inspectorContext = EditingArea::timeline;
     std::unique_ptr<te::Clipboard::Clips> clipClipboard;
     std::optional<TrackSnapshot> trackClipboard;
     std::optional<TrackSettings> inspectorClipboard;
     std::map<te::EditItemID, std::unique_ptr<Meter>> meters;
-    te::EditItemID dragItem;
+    te::EditItemID dragItem, rightArrangementItem;
+    EditingArea rightArrangementArea = EditingArea::timeline;
+    bool arrangementRightPress = false, arrangementRightWheel = false;
+    bool arrangementRightDragged = false, arrangementRightPan = false;
     std::optional<ju::Point<int>> boxAnchor;
     ju::Rectangle<int> selectionBox;
     te::TimePosition editCursor;
-    std::optional<te::TimeRange> timeSelection, rangePreview;
+    std::optional<te::TimeRange> timeSelection, rangePreview, rangeFeedback;
     std::optional<te::TimePosition> dragPreview;
+    std::vector<ClipChange> clipDragPlan;
+    std::optional<ItemSelection> clipDragSelection;
+    ClipDragEdge clipDragEdge = ClipDragEdge::none;
+    bool clipDragged = false;
     double dragAnchor = 0.0;
     int dragRowDelta = 0;
     ju::String dragError;

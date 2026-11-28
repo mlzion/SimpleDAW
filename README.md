@@ -4,6 +4,18 @@ SimpleDAW is a beginner-friendly recording workstation. The accepted v0.25.1 rel
 
 SimpleDAW is free and open-source software. Its original code is released under the GNU Affero General Public License, version 3. See [LICENSE](LICENSE), [COPYRIGHT](COPYRIGHT), and the [third-party notices](THIRD_PARTY_NOTICES.md).
 
+## v0.26.3 Direct Manipulation & Interaction Standardization
+
+This experimental branch adds direct clip and note edge sizing, individual and group drags, and shared mouse navigation in Classic and Experimental modes. The middle-click toolbar retains Move, Edit and snap. Windows verification is pending. [v0.26.3 specification](docs/CONTEXT_UI_EXPERIMENT.md#v0263--direct-manipulation--interaction-standardization)
+
+## v0.26.2 Context UI Move experiment
+
+On this branch, **Options → Experimental Context UI** enables the middle-click Move and Edit popup. Move opens first and offers context-specific snap arrows. The owner accepted this experimental milestone at `a8fcd4b` (`v0.26.2-experimental`). The G05 ruler isolation finding is deferred to v0.26.3. [Acceptance record](docs/testing/context-ui-move.md#final-owner-acceptance) · [Windows ZIP and matching source](https://github.com/mlzion/SimpleDAW/actions/runs/45890602357/artifacts/15152520441)
+
+## v0.26.1 Context UI Foundation experiment
+
+v0.26.1 Context UI Foundation is the first accepted experimental milestone. The owner passed all C01–C11 Windows live checks. Extract the full Windows x64 Release `/MD` ZIP, launch `SimpleDAW-v0.26.1.exe`, and enable **Options → Experimental Context UI** to try the middle-click Edit popup. The ZIP includes matching source and the drum sample library. [Accepted Windows ZIP](https://github.com/mlzion/SimpleDAW/actions/runs/45731539661/artifacts/15077700824) · [Acceptance record](docs/testing/context-ui-foundation.md) · [Milestone tag](https://github.com/mlzion/SimpleDAW/tree/v0.26.1-experimental)
+
 ## Accepted v0.25.1 download for Windows x64
 
 1. Download the accepted Windows x64 Release `/MD` ZIP. GitHub may ask you to sign in. [SimpleDAW-v0.25.1-Windows-x64.zip](https://github.com/mlzion/SimpleDAW/actions/runs/45701407785/artifacts/15063758284)

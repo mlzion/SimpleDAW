@@ -1,16 +1,52 @@
 # SimpleDAW project status
 
+## v0.26.3 — Direct Manipulation & Interaction Standardization
+
+W06 applies in Classic and Experimental modes. Timeline clips and Piano Roll notes support direct group movement and edge sizing. Drum Pattern Editor has Draw and Select modes, direct group move with atomic replacement, and a bottom velocity panel for active hits. Both musical editors use a shared velocity delta for selected events. The wheel navigates, including right-wheel horizontal pan started over empty editor space. The Size toolbar is removed. Experimental Context UI still opens on Move, cycles with Edit, and retains the snap selector.
+
+The F07 implementation confines Timeline cursor and range gestures to presses in the ruler and preserves the current editing focus and clip selection. Owner Windows live acceptance remains pending. [W06 requirements](docs/WORKFLOW_IMPROVEMENT_LOG.md#w06--global-mouse-interaction-and-direct-editing-v0263) · [Input and engine audit](docs/CONTEXT_UI_MOVE_AUDIT.md#v0263-interaction-audit)
+
+Debian 13 x64 Release under Xvfb passed all 18 CTests. Regression coverage includes ruler isolation in both modes, empty-area wheel ownership, Inspector scrolling, group note and clip sizing with Undo, group velocity limits, and atomic drum replacement and restoration. Native X11 checks verified popup cycling and dismissal, ruler cursor and range gestures, clip-area isolation, Drum Draw/Select, group velocity, and two-axis drum movement. Windows x64 Release `/MD` CI at `f0fa21b` passed 18/18 CTests, ten additional Inspector Clone runs, isolated startup, and package verification. [Windows ZIP and matching source](https://github.com/mlzion/SimpleDAW/actions/runs/45911468096/artifacts/15161026068) · [Owner live checklist](docs/testing/v0.26.3-live-test.md)
+
+## v0.26.2 — Context UI Move CUI2 — ACCEPTED EXPERIMENTAL MILESTONE
+
+The owner accepted `a8fcd4b` as `v0.26.2-experimental`. All A–J Windows live checks passed except G05. F01–F06 are closed. W01–W05 are accepted with one W03 exception, F07 (Timeline ruler interaction isolation), deferred to v0.26.3. [Acceptance record](docs/testing/context-ui-move.md#final-owner-acceptance) · [Accepted Windows ZIP and matching source](https://github.com/mlzion/SimpleDAW/actions/runs/45890602357/artifacts/15152520441)
+
+Move opens first in experimental mode and cycles with Edit. The popup remains anchored across commands while its originating workspace and target remain valid. Move reuses UAT dispatch and includes the workspace-specific snap selector. Classic mode restores the permanent Edit and Move groups. [CUI2 scope and verification](docs/CONTEXT_UI_EXPERIMENT.md#v0262--cui2-move-approved-implementation-scope) · [Movement audit](docs/CONTEXT_UI_MOVE_AUDIT.md)
+
+W01–W05 are implemented within the approved scope. Piano Roll reveals its edited row after layout, ruler handles directly move the edit cursor and move or resize the time window, Timeline snap defaults to 1 Bar, and the Track List uses compact numbered names without input-channel badges. Existing Master Drum Track positioning passed regression coverage. [Workflow Improvement Log](docs/WORKFLOW_IMPROVEMENT_LOG.md)
+
+Debian 13 x64 Release (Clang 19, `-O1`, Xvfb) passed all 18 CTests and three additional runs of `context_toolbar`. Native X11 checks verified Move-first opening, wheel wrap, dismissal, classic restoration and the snap arrow rolling from 1 Bar to OFF without closing the popup. Accepted Windows x64 Release `/MD` CI passed all 18 CTests, ten additional Inspector Clone runs, and runtime and startup verification. [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
+
+Initial Windows x64 Release `/MD` CI at `d38f90b` passed all 18 CTests and portable verification. The owner reported eight clean passes, two passes with findings, and two failures in live testing. Corrections address snap chevrons, post-layout Piano Roll visibility, larger ruler handles, and usable short time-window drags under coarse snap. [Windows acceptance and findings](docs/testing/context-ui-move.md)
+
+Correction CI at `c9a89fd` passed 16 of 18 Windows CTests. The chevron test now closes the graphics session before retrieving pixels. The Inspector Clone fail-fast remains unclassified from the available log. The subsequent accepted run used instrumented checkpoints and the termination did not recur. All 18 Linux CTests and 20 additional runs each of the two focused cases passed. [Failure investigation](docs/testing/context-ui-move.md#windows-failure-investigation-at-c9a89fd)
+
+The owner passed F01–F04 at `e1f9ed9` and reported F05 at `efa4ed2`. Revised W03 restores continuous ruler drag feedback, snaps the committed length, clears zero-length drags and adds direct handle movement, resizing and deletion. The F06 audit confirmed and removed ruler targeting that could override clip commands. The owner closed F05 and F06 in the final acceptance. [Acceptance record](docs/testing/context-ui-move.md#f01f05-owner-results)
+
+## v0.26.1 — Context UI Foundation CUI0/CUI1 — ACCEPTED EXPERIMENTAL MILESTONE
+
+The experimental branch adds a session-only Options toggle, a middle-click Edit popup and a labeled wheel test page. The popup uses the existing UAT availability and dispatch for Cut, Delete, Copy and Paste, and validates editing focus and selection again before dispatching. Classic mode is the startup default. [Implementation brief](docs/CONTEXT_UI_EXPERIMENT.md) · [Baseline command and input audit](docs/CONTEXT_UI_AUDIT.md)
+
+Debian 13 x64 Release (Clang 19, `-O1`, Xvfb) passed all 15 CTests, including the new context toolbar test. A native X11 smoke test verified the Options switch, middle-click opening, wheel wrap in both directions, Escape, outside click and classic restoration. Those results apply to the pre-MD0 experiment at `831a5e1`. Later Context UI phases await separate authorization.
+
+The experiment integrates accepted MD0 from `main` at `94cb467`. The popup keeps the Master and lane UAT protections and routes focused Drum Pattern Editor actions through its own clipboard and hit handlers. It validates the pattern, selected hits and paste step, and consumes the wheel while open, including inertial events addressed to the grid. The accepted menu changes are recorded in the [command and input audit](docs/CONTEXT_UI_AUDIT.md#accepted-md0-changes).
+
+The integrated Debian 13 x64 Release build (Clang 19, `-O1`, Xvfb) passed all 18 CTests, including grid, voices, Master routing and playback, and the extended Context UI regression. A native X11 smoke test passed for the Options switch, popup wheel cycling, dismissal and classic restoration.
+
+The owner passed C01–C10 at `790f532` and C11 at `e1921ec`. The accepted Edit order is Cut | Copy | Paste | Delete. The accepted revision passed all 18 Linux and Windows x64 Release `/MD` CTests, runtime dependency verification, and isolated Windows startup and shutdown. The first experimental milestone is tagged `v0.26.1-experimental` at `e1921ec`. [Acceptance record](docs/testing/context-ui-foundation.md) · [Accepted ZIP and matching source](https://github.com/mlzion/SimpleDAW/actions/runs/45731539661/artifacts/15077700824) · [Draft PR #29](https://github.com/mlzion/SimpleDAW/pull/29)
+
 ## v0.25.1 — Master Drum Track MD0 — ACCEPTED
 
 The owner passed all scheduled Windows live tests and corrective retests, including D63-R9 through R12. The integrated audio render verified D44. All 17 Linux x64 Release and all 17 Windows x64 Release `/MD` CTests passed on accepted commit `25ff152ffbd918ef9eba710939a4cf40730efff8`. Windows verification covered executable version, runtime imports, isolated startup and shutdown, and ZIP contents including matching source and all ten drum WAVs. [Windows run](https://github.com/mlzion/SimpleDAW/actions/runs/45701407785) · [Accepted ZIP](https://github.com/mlzion/SimpleDAW/actions/runs/45701407785/artifacts/15063758284)
 
 [PR #27](https://github.com/mlzion/SimpleDAW/pull/27) merged into `main` at `ba3e4acdd6183a36b7f471d9457cdffc63fde13a`. The merge tree matches the accepted commit. The final controls and the remaining MD1 and Drum Mixer boundaries are documented in the acceptance record and phase plan. [MD0 acceptance](docs/testing/md0-drum-master.md#final-acceptance) · [Development plan](docs/specifications/README.md#md0-master-drum-track--accepted-and-merged)
 
-## Next integration — MX0 Mixer Foundation
+## Deferred integration — MX0 Mixer Foundation
 
-MX0 is the next integration phase after MD0. The Mixer Foundation remains on `feature/mixer-mx0` in draft PR #28. Its reported Linux results apply to the MX0 branch. Integration with the accepted MD0 baseline, Windows x64 `/MD` CI, and live acceptance are pending separate authorization. [Mixer Foundation PR #28](https://github.com/mlzion/SimpleDAW/pull/28)
+MX0 integration is deferred while CUI0/CUI1 takes priority on the experimental branch. The Mixer Foundation remains on `feature/mixer-mx0` in draft PR #28. Its reported Linux results apply to the MX0 branch. Integration with the accepted MD0 baseline, Windows x64 `/MD` CI, and live acceptance are pending separate authorization. [Mixer Foundation PR #28](https://github.com/mlzion/SimpleDAW/pull/28)
 
-MX1 retains FX return routing. MX2 retains Drum Mixer lane expansion. MD1 retains Master Drum Track live recording and monitoring. Experimental Context UI CUI0/CUI1 remains on its separate draft PR #29. [Development plan and scope boundaries](docs/specifications/README.md#next-integration--mx0-mixer-foundation)
+MX1 retains FX return routing. MX2 retains Drum Mixer lane expansion. MD1 retains Master Drum Track live recording and monitoring. Experimental Context UI CUI0/CUI1 remains on its separate draft PR #29. [Development plan and scope boundaries](docs/specifications/README.md#deferred-integration--mx0-mixer-foundation)
 
 ## Historical release — v0.24.1 Piano Roll P0
 
